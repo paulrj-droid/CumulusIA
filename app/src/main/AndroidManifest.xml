@@ -4,7 +4,6 @@
     <uses-permission android.permission.SYSTEM_ALERT_WINDOW />
     <uses-permission android.permission.RECORD_AUDIO />
     <uses-permission android.permission.FOREGROUND_SERVICE />
-    <uses-permission android.permission.FOREGROUND_SERVICE_SPECIAL_USE />
     <uses-permission android.permission.READ_EXTERNAL_STORAGE />
 
     <application
@@ -26,8 +25,7 @@
         <service
             android:name=".FloatingAgentService"
             android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="specialUse" />
+            android:exported="false" />
 
         <service
             android:name=".PhoneControlService"
