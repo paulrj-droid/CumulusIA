@@ -6,11 +6,10 @@
     <uses-permission android.permission.FOREGROUND_SERVICE />
     <uses-permission android.permission.FOREGROUND_SERVICE_SPECIAL_USE />
     <uses-permission android.permission.READ_EXTERNAL_STORAGE />
-    <uses-permission android.permission.MANAGE_EXTERNAL_STORAGE />
 
     <application
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@android:drawable/ic_menu_compass"
         android:label="Cumulus IA"
         android:theme="@style/Theme.AppCompat.NoActionBar">
 
