@@ -21,14 +21,13 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    - name: Setup Gradle
+    - name: Setup Gradle 8.5
       uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '8.5'
 
-    - name: Generar Wrapper y Compilar APK
-      run: |
-        gradle wrapper --gradle-version 8.5
-        chmod +x gradlew
-        ./gradlew assembleDebug --stacktrace
+    - name: Compilar APK Debug
+      run: gradle assembleDebug --stacktrace
 
     - name: Subir APK Generado
       uses: actions/upload-artifact@v4
