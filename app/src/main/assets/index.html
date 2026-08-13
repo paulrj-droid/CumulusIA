@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Cumulus IA</title>
+<style>
+:root {
+  --bg: #090a0f; --card: #14161e; --card2: #1b1e2a; --inp: #11131a; --txt: #f8fafc; --sub: #94a3b8;
+  --border: rgba(255, 255, 255, 0.08); --shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  --blue: #3b82f6; --blue-glow: rgba(59, 130, 246, 0.25); --green: #10b981; --teal: #14b8a6;
+  --orange: #f59e0b; --red: #ef4444; --purple: #8b5cf6; --cyan: #06b6d4;
+}
+body.light-mode {
+  --bg: #f8fafc; --card: #ffffff; --card2: #f1f5f9; --inp: #f8fafc; --txt: #0f172a; --sub: #64748b;
+  --border: rgba(0, 0, 0, 0.08); --shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);
+  --blue: #2563eb; --blue-glow: rgba(37, 99, 235, 0.15);
+}
+*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;-webkit-tap-highlight-color:transparent;transition:background-color 0.25s, color 0.25s}
+body{background:var(--bg);color:var(--txt);height:100vh;overflow:hidden;user-select:none}
+#app{max-width:440px;margin:0 auto;height:100vh;display:flex;flex-direction:column;position:relative}
+header{display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--bg);z-index:6;border-bottom:1px solid var(--border)}
+.sp{flex:1}
+.hbtn{background:var(--card2);border:1px solid var(--border);color:var(--txt);cursor:pointer;display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:12px;font-size:17px}
+#hdr-name{font-size:18px;font-weight:800;display:flex;align-items:center;gap:6px;cursor:pointer}
+#btn-sec{width:38px;height:38px;border-radius:12px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);color:var(--green)}
+#btn-ia{width:42px;height:38px;border-radius:12px;background:linear-gradient(135deg, var(--blue), var(--cyan));color:#fff;font-weight:800;font-size:13px;border:none;cursor:pointer}
+#main{flex:1;overflow-y:auto;position:relative;scrollbar-width:none}
+#main::-webkit-scrollbar{display:none}
+.screen{display:none;flex-direction:column;min-height:100%;padding-bottom:24px}
+.screen.active{display:flex}
+.center{align-items:center;justify-content:center;text-align:center;gap:12px;padding:24px}
+#home-title{font-size:28px;font-weight:900;letter-spacing:-0.5px}
+#home-sub{color:var(--sub);font-size:15px;line-height:1.5}
+#chatbar{display:flex;align-items:flex-end;gap:10px;padding:14px 16px 20px;background:var(--bg);flex-shrink:0;z-index:5;border-top:1px solid var(--border)}
+#inputwrap{flex:1;background:var(--card);border-radius:30px;display:flex;align-items:center;padding:8px 16px;gap:8px;border:1px solid var(--border);min-height:56px}
+#chat-input{flex:1;background:none;border:none;color:var(--txt);font-size:17px;outline:none;resize:none;max-height:140px;line-height:1.4;padding:6px 0}
+.ibtn{background:none;border:none;color:var(--sub);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:8px;font-size:20px}
+.ibtn.on{color:var(--blue)}
+.ibtn.rec{color:var(--red);animation:pulse 1s infinite}
+@keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.15)}100%{transform:scale(1)}}
+#btn-send{width:52px;height:52px;border-radius:20px;background:var(--card2);border:1px solid var(--border);color:var(--sub);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:22px;transition:0.2s;flex-shrink:0}
+#btn-send.ready{background:linear-gradient(135deg, var(--blue), #2563eb);color:#fff;border:none}
+#chat-messages{display:flex;flex-direction:column;gap:14px;padding:16px;overflow-y:auto;flex:1}
+.msg-user{align-self:flex-end;background:linear-gradient(135deg, var(--blue), #2563eb);color:#fff;padding:13px 18px;border-radius:22px 22px 4px 22px;max-width:82%;font-size:15px;line-height:1.45;word-wrap:break-word}
+.msg-ai{align-self:flex-start;background:var(--card);color:var(--txt);padding:14px 18px;border-radius:22px 22px 22px 4px;max-width:86%;font-size:15px;line-height:1.5;border:1px solid var(--border);word-wrap:break-word}
+.sec-title{color:var(--sub);font-weight:800;letter-spacing:0.08em;padding:20px 16px 8px;font-size:12px;text-transform:uppercase}
+.card{background:var(--card);border-radius:20px;margin:0 16px 12px;padding:16px;display:flex;gap:14px;align-items:center;cursor:pointer;border:1px solid var(--border)}
+.card .ic{width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;background:var(--card2);border:1px solid var(--border);overflow:hidden}
+.card .ic img{width:100%;height:100%;object-fit:cover}
+.card .tt{font-weight:800;font-size:15px;color:var(--txt)}
+.card .ss{color:var(--sub);font-size:13px;margin-top:3px}
+.card.sel{border-color:var(--blue);background:var(--card2)}
+.topbar{display:flex;align-items:center;gap:12px;background:var(--bg);padding:16px;position:sticky;top:0;z-index:4;border-bottom:1px solid var(--border)}
+.topbar h1{font-size:18px;font-weight:800;flex:1;text-align:center}
+.back{background:var(--card2);border:1px solid var(--border);color:var(--txt);font-size:18px;cursor:pointer;width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center}
+.tabs{display:flex;align-items:center;gap:12px;background:var(--bg);position:sticky;top:0;z-index:4;padding:0 16px;border-bottom:1px solid var(--border)}
+.tab{flex:1;text-align:center;padding:14px 4px;color:var(--sub);font-weight:800;font-size:14px;cursor:pointer;border-bottom:2px solid transparent}
+.tab.on{color:var(--blue);border-color:var(--blue)}
+.btn{border:none;border-radius:14px;padding:14px;font-size:15px;font-weight:800;cursor:pointer;width:100%;display:flex;align-items:center;justify-content:center;gap:8px}
+.btn.blue{background:linear-gradient(135deg, var(--blue), #2563eb);color:#fff}
+.btn.red{background:linear-gradient(135deg, var(--red), #dc2626);color:#fff}
+.toggle{width:52px;height:30px;border-radius:15px;background:var(--card2);position:relative;cursor:pointer;transition:.2s;flex-shrink:0;border:1px solid var(--border)}
+.toggle::after{content:'';position:absolute;width:24px;height:24px;border-radius:50%;background:#fff;top:2px;left:2px;transition:.2s}
+.toggle.on{background:var(--green);border-color:var(--green)}
+.toggle.on::after{left:24px}
+.inp{width:100%;background:var(--inp);border:1px solid var(--border);border-radius:14px;padding:14px;color:var(--txt);font-size:15px;outline:none;margin:8px 0}
+.formbox{background:var(--card);border-radius:22px;margin:16px;padding:18px;border:1px solid var(--border)}
+.formbox h2{color:var(--blue);font-size:18px;margin-bottom:12px;font-weight:800}
+.drawer{position:absolute;inset:0;background:rgba(0,0,0,.6);z-index:20;display:none;backdrop-filter:blur(6px)}
+.drawer.open{display:block}
+.dpanel{width:82%;max-width:320px;height:100%;background:var(--card);padding:20px;transform:translateX(-100%);transition:.25s ease-out;display:flex;flex-direction:column;gap:8px;border-right:1px solid var(--border)}
+.drawer.open .dpanel{transform:none}
+.dhead{font-size:20px;font-weight:900;display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+.ditem{display:flex;align-items:center;gap:14px;padding:14px 10px;border-radius:14px;font-size:15px;font-weight:800;cursor:pointer}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--card);border-radius:24px 24px 0 0;z-index:30;transform:translateY(105%);transition:.25s ease-out;max-height:75%;overflow-y:auto;padding:20px;border-top:1px solid var(--border)}
+.sheet.open{transform:none}
+.ovl{position:absolute;inset:0;background:rgba(0,0,0,.6);z-index:40;display:none;align-items:center;justify-content:center;padding:24px;backdrop-filter:blur(6px)}
+.ovl.open{display:flex}
+.dlg{background:var(--card);border-radius:22px;padding:22px;max-width:320px;width:100%;border:1px solid var(--border)}
+#bubble{position:absolute;width:62px;height:62px;border-radius:50%;background:#000;border:2px solid var(--cyan);z-index:50;display:none;align-items:center;justify-content:center;cursor:grab;overflow:hidden;box-shadow:0 8px 25px rgba(6,182,212,0.4);top:70px;right:16px}
+#bubble.show{display:flex}
+#bubble img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.chip{display:inline-flex;align-items:center;gap:6px;background:var(--card2);border:1px solid var(--border);border-radius:20px;padding:8px 16px;font-size:14px;font-weight:800;cursor:pointer;margin:0 4px 8px 0}
+.chip.sel{border-color:var(--blue);color:var(--blue);background:var(--blue-glow)}
+.info{border-radius:14px;margin:0 16px 12px;padding:14px;font-size:14px;line-height:1.45}
+.info.g{background:rgba(16,185,129,.12);color:var(--teal);border:1px solid rgba(16,185,129,.3)}
+.info.r{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.3)}
+#toast{position:absolute;top:60px;left:16px;right:16px;z-index:70;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.tst{background:var(--card);border:1px solid var(--blue);color:var(--txt);border-radius:14px;padding:12px 18px;font-size:14px;font-weight:700;animation:tin .25s ease-out}
+@keyframes tin{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+<div id="app">
+<input type="file" id="photo-file-input" accept="image/*" style="display:none">
+
+<header>
+  <button class="hbtn" id="btn-menu">☰</button>
+  <div id="hdr-name"><span id="app-name">Cumulus IA</span> ⌄</div>
+  <div class="sp"></div>
+  <button class="hbtn" id="btn-sec">🛡</button>
+  <button id="btn-ia">IA</button>
+  <button class="hbtn" id="btn-gear">⚙️</button>
+</header>
+<div id="main">
+  <div class="screen center active" id="scr-home">
+    <div id="home-title">Cumulus IA</div>
+    <div id="home-sub" data-i18n="homeSub">Asistente General · Pregúntame lo que sea</div>
+  </div>
+
+  <div class="screen" id="scr-chat">
+    <div id="chat-messages"></div>
+  </div>
+
+  <div class="screen" id="scr-recents">
+    <div class="sec-title" data-i18n="recentsTitle">CHATS RECIENTES</div>
+    <div class="card" onclick="loadChat('Chat con LFM-2.5')"><div class="ic">💬</div><div><div class="tt">Chat con LFM-2.5</div><div class="ss">¿Puedes explicarme código...</div></div><div class="rg">Hoy</div></div>
+  </div>
+
+  <div class="screen" id="scr-settings">
+    <div class="topbar"><button class="back">←</button><h1 data-i18n="settingsTitle">Configuración</h1></div>
+    <div class="sec-title" data-i18n="secAppearance">APARIENCIA Y TEMA</div>
+    <div class="card">
+      <div class="ic">☀️</div>
+      <div><div class="tt" data-i18n="lblLightMode">Modo Claro</div><div class="ss" data-i18n="descLightMode">Cambiar tema claro / oscuro</div></div>
+      <button class="toggle" id="tg-theme" style="margin-left:auto"></button>
+    </div>
+    <div class="sec-title" data-i18n="secLanguage">IDIOMA DE LA APP</div>
+    <div class="card lang-card sel" data-lang="es"><div class="ic">🇪🇸</div><div><div class="tt">Español</div></div></div>
+    <div class="card lang-card" data-lang="en"><div class="ic">🇺🇸</div><div><div class="tt">English</div></div></div>
+    <div class="card lang-card" data-lang="pt"><div class="ic">🇧🇷</div><div><div class="tt">Português</div></div></div>
+    <div class="card lang-card" data-lang="fr"><div class="ic">🇫🇷</div><div><div class="tt">Français</div></div></div>
+    <div class="card lang-card" data-lang="de"><div class="ic">🇩🇪</div><div><div class="tt">Deutsch</div></div></div>
+    <div class="sec-title" data-i18n="secAssistant">🤖 ASISTENTE IA</div>
+    <div class="card" style="flex-direction:column;align-items:stretch">
+      <div style="display:flex;gap:12px;align-items:center"><div class="ic" style="color:var(--orange)">✨</div>
+        <div><div class="tt" data-i18n="lblBubble">Burbuja flotante</div><div class="ss" data-i18n="descBubble">Escucha automática por voz</div></div></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;background:var(--card2);border-radius:14px;padding:12px;margin-top:12px">
+        <b id="bubble-state">Desactivado</b><button class="toggle" id="tg-bubble"></button></div>
+      <div class="card" style="margin:12px 0 0" id="row-photo"><div class="ic"><img id="preview-img-thumb" src="" alt=""></div>
+        <div><div class="small" data-i18n="lblBubblePhoto">Foto de la burbuja</div><div class="tt" data-i18n="descBubblePhoto">Elegir foto de la galería</div></div><div class="rg">›</div></div>
+    </div>
+    <div class="card" style="flex-direction:column;align-items:stretch">
+      <button class="btn" style="background:#0f766e;color:#fff;margin-top:10px" id="btn-authapps" data-i18n="btnAuthApps">⣿ Apps autorizadas</button>
+      <button class="btn red" style="margin-top:10px" id="btn-blockapps" data-i18n="btnBlockApps">🔒 Bloqueo de apps</button>
+    </div>
+  </div>
+
+  <div class="screen" id="scr-models">
+    <div class="topbar"><button class="back">←</button><h1 data-i18n="modelsTitle">Modelos de IA</h1></div>
+    <div class="tabs"><div class="tab on" id="tab-m" onclick="switchTab('m')">Multimodales</div><div class="tab" id="tab-v" onclick="switchTab('v')">Voces</div></div>
+    <div id="pane-m">
+      <div class="desc">Modelos locales en formato .GGUF</div>
+      <div class="mcard"><div class="mhead"><div class="tt">Qwen 2.5 0.5B Instruct</div><span>⌄</span></div><div class="tags"><span class="tg">⚡ Ultra Rápido</span><span class="tg">📱 350 MB</span></div></div>
+      <div class="mcard"><div class="mhead"><div class="tt">Llama 3.2 1B Instruct</div><span>⌄</span></div><div class="tags"><span class="tg">🧠 Razonamiento</span><span class="tg">📱 750 MB</span></div></div>
+    </div>
+    <div id="pane-v" style="display:none">
+      <div class="card"><div class="ic">♀</div><div><div class="tt">Sofía</div><div class="ss">Español · Femenina</div></div></div>
+    </div>
+  </div>
+
+  <div class="screen" id="scr-modelcfg">
+    <div class="topbar"><button class="back">←</button><h1 data-i18n="persTitle">Personalidad</h1></div>
+    <div class="formbox"><h2 data-i18n="persSelect">Selecciona el modo</h2>
+      <div class="card sel pers-card" data-p="general"><div class="ic" style="background:var(--blue);color:#fff">👥</div><div><div class="tt">Asistente General</div><div class="ss">Útil y amigable</div></div><div class="check">✓</div></div>
+      <div class="card pers-card" data-p="coder"><div class="ic" style="background:var(--green);color:#fff">💻</div><div><div class="tt">Programador</div><div class="ss">Experto en código</div></div></div>
+    </div>
+  </div>
+
+  <div class="screen" id="scr-appsauth">
+    <div class="topbar"><button class="back">←</button><h1>Apps autorizadas</h1></div>
+    <div class="info g">El agente puede actuar en estas apps.</div>
+  </div>
+
+  <div class="screen" id="scr-appsblock">
+    <div class="topbar"><button class="back">←</button><h1>Bloqueo de apps</h1></div>
+    <div class="info r">El agente NUNCA podrá acceder a estas apps.</div>
+  </div>
+</div>
+
+<div id="chatbar">
+  <div id="inputwrap">
+    <button class="ibtn" id="btn-play" title="Lectura por voz">▶</button>
+    <textarea id="chat-input" rows="1" placeholder="Pregúntame..."></textarea>
+    <button class="ibtn" id="btn-mic" title="Micrófono">🎙</button>
+  </div>
+  <button id="btn-send">↑</button>
+</div>
+
+<div id="bubble"><img id="bubble-img" src="" alt="AI Avatar"></div>
+
+<div class="sheet" id="sheet-photo">
+  <h3>🖼 Foto de la burbuja <button class="hbtn" style="margin-left:auto" id="close-photo">✕</button></h3>
+  <div class="card" id="btn-default-photo"><div class="ic">🤖</div><div><div class="tt">Rostro Cyber IA</div></div></div>
+  <div class="card sel" id="btn-gallery-photo"><div class="ic">🖼</div><div><div class="tt">Elegir de la galería</div></div></div>
+</div>
+
+<div class="drawer" id="drawer">
+  <div class="dpanel">
+    <div class="dhead"><span>Cumulus IA</span><button class="hbtn" id="d-close">✕</button></div>
+    <div class="ditem" data-go="chat" style="color:var(--blue)">💬 Chat Actual</div>
+    <div class="ditem" data-go="recents" style="color:var(--orange)">🕐 Recientes</div>
+    <div class="ditem" data-go="modelcfg" style="color:var(--teal)">⚙ Configurar IA</div>
+    <div class="ditem" data-go="settings" style="color:var(--purple)">🛠 Ajustes App</div>
+  </div>
+</div>
+
+<div class="ovl" id="ovl-sec"><div class="dlg"><h3>🛡 Estado de seguridad</h3><p>Tus datos están protegidos localmente.</p><div class="ok" id="close-sec">Entendido</div></div></div>
+<div id="toast"></div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const DEFAULT_CYBER_IMG = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=400&q=80";
+
+const I18N = {
+  es: { homeSub: "Asistente General · Pregúntame lo que sea", chatPlaceholder: "Pregúntame...", settingsTitle: "Configuración", secAppearance: "APARIENCIA Y TEMA", lblLightMode: "Modo Claro", descLightMode: "Cambiar tema claro / oscuro", secLanguage: "IDIOMA DE LA APP", secAssistant: "🤖 ASISTENTE IA", lblBubble: "Burbuja flotante", descBubble: "Escucha automática por voz", lblBubblePhoto: "Foto de la burbuja", descBubblePhoto: "Elegir foto de la galería", btnAuthApps: "⣿ Apps autorizadas", btnBlockApps: "🔒 Bloqueo de apps", recentsTitle: "CHATS RECIENTES", modelsTitle: "Modelos de IA", persTitle: "Personalidad", persSelect: "Selecciona el modo" },
+  en: { homeSub: "General Assistant · Ask me anything", chatPlaceholder: "Ask me anything...", settingsTitle: "Settings", secAppearance: "APPEARANCE & THEME", lblLightMode: "Light Mode", descLightMode: "Switch light / dark theme", secLanguage: "APP LANGUAGE", secAssistant: "🤖 AI ASSISTANT", lblBubble: "Floating Bubble", descBubble: "Automatic voice listening", lblBubblePhoto: "Bubble Photo", descBubblePhoto: "Choose photo from gallery", btnAuthApps: "⣿ Authorized Apps", btnBlockApps: "🔒 Blocked Apps", recentsTitle: "RECENT CHATS", modelsTitle: "AI Models", persTitle: "Personality", persSelect: "Select mode" },
+  pt: { homeSub: "Assistente Geral · Pergunte-me qualquer coisa", chatPlaceholder: "Pergunte-me...", settingsTitle: "Configurações", secAppearance: "APARÊNCIA E TEMA", lblLightMode: "Modo Claro", descLightMode: "Alternar tema claro / escuro", secLanguage: "IDIOMA DO APP", secAssistant: "🤖 ASSISTENTE IA", lblBubble: "Bolha Flutuante", descBubble: "Escuta automática por voz", lblBubblePhoto: "Foto da Bolha", descBubblePhoto: "Escolher foto da galeria", btnAuthApps: "⣿ Apps Autorizados", btnBlockApps: "🔒 Bloqueio de Apps", recentsTitle: "CHATS RECENTES", modelsTitle: "Modelos de IA", persTitle: "Personalidade", persSelect: "Selecionar modo" },
+  fr: { homeSub: "Assistant Général · Posez-moi vos questions", chatPlaceholder: "Posez-moi une question...", settingsTitle: "Paramètres", secAppearance: "APPARENCE ET THÈME", lblLightMode: "Mode Clair", descLightMode: "Changer de thème clair / sombre", secLanguage: "LANGUE DE L'APPLICATION", secAssistant: "🤖 ASSISTANT IA", lblBubble: "Bulle Flottante", descBubble: "Écoute vocale automatique", lblBubblePhoto: "Photo de la Bulle", descBubblePhoto: "Choisir depuis la galerie", btnAuthApps: "⣿ Apps Autorisées", btnBlockApps: "🔒 Apps Bloquées", recentsTitle: "DISCUSSIONS RÉCENTES", modelsTitle: "Modèles IA", persTitle: "Personnalité", persSelect: "Sélectionner le mode" },
+  de: { homeSub: "Allgemeiner Assistent · Frag mich alles", chatPlaceholder: "Frag mich etwas...", settingsTitle: "Einstellungen", secAppearance: "ERSCHEINUNGSBILD & THEMA", lblLightMode: "Heller Modus", descLightMode: "Helles / dunkles Thema wechseln", secLanguage: "APP-SPRACHE", secAssistant: "🤖 KI-ASSISTENT", lblBubble: "Schwebende Blase", descBubble: "Automatisches Sprachzuhören", lblBubblePhoto: "Blasen-Foto", descBubblePhoto: "Foto aus Galerie wählen", btnAuthApps: "⣿ Autorisierte Apps", btnBlockApps: "🔒 Blockierte Apps", recentsTitle: "LETZTE CHATS", modelsTitle: "KI-Modelle", persTitle: "Persönlichkeit", persSelect: "Modus wählen" }
+};
+
+let S = { screen: 'home', bubbleOn: false, play: false, mic: false, aiName: 'Cumulus IA', pers: 'general', theme: localStorage.getItem('cumulus_theme') || 'dark', lang: localStorage.getItem('cumulus_lang') || 'es', bubbleImg: localStorage.getItem('cumulus_bubble_img') || DEFAULT_CYBER_IMG };
+
+function applyTheme(theme) { S.theme = theme; document.body.classList.toggle('light-mode', theme === 'light'); $('#tg-theme').classList.toggle('on', theme === 'light'); localStorage.setItem('cumulus_theme', theme); }
+applyTheme(S.theme);
+$('#tg-theme').onclick = () => applyTheme(S.theme === 'dark' ? 'light' : 'dark');
+
+function applyLanguage(lang) {
+  if (!I18N[lang]) return; S.lang = lang; localStorage.setItem('cumulus_lang', lang);
+  $$('[data-i18n]').forEach(el => { if (I18N[lang][el.dataset.i18n]) el.textContent = I18N[lang][el.dataset.i18n]; });
+  $('#chat-input').placeholder = I18N[lang].chatPlaceholder;
+}
+$$('.lang-card').forEach(card => card.onclick = () => applyLanguage(card.dataset.lang));
+applyLanguage(S.lang);
+
+function setBubbleImage(srcUrl) { S.bubbleImg = srcUrl; $('#bubble-img').src = srcUrl; $('#preview-img-thumb').src = srcUrl; localStorage.setItem('cumulus_bubble_img', srcUrl); }
+setBubbleImage(S.bubbleImg);
+
+$('#row-photo').onclick = () => $('#sheet-photo').classList.add('open');
+$('#close-photo').onclick = () => $('#sheet-photo').classList.remove('open');
+$('#btn-gallery-photo').onclick = () => { $('#sheet-photo').classList.remove('open'); $('#photo-file-input').click(); };
+$('#btn-default-photo').onclick = () => { $('#sheet-photo').classList.remove('open'); setBubbleImage(DEFAULT_CYBER_IMG); };
+$('#photo-file-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) { const reader = new FileReader(); reader.onload = evt => setBubbleImage(evt.target.result); reader.readAsDataURL(file); }
+});
+
+function show(id){ S.screen = id; $$('.screen').forEach(s => s.classList.remove('active')); $('#scr-' + id).classList.add('active'); $('#chatbar').style.display = (id==='chat'||id==='home') ? 'flex' : 'none'; }
+$('#btn-menu').onclick = () => $('#drawer').classList.add('open');
+$('#d-close').onclick = () => $('#drawer').classList.remove('open');
+$$('.ditem').forEach(d => d.onclick = () => { $('#drawer').classList.remove('open'); show(d.dataset.go); });
+$$('.back').forEach(b => b.onclick = () => show('home'));
+$('#btn-ia').onclick = () => show('models');
+$('#btn-gear').onclick = () => show('settings');
+$('#btn-sec').onclick = () => $('#ovl-sec').classList.add('open');
+$('#close-sec').onclick = () => $('#ovl-sec').classList.remove('open');
+$('#btn-authapps').onclick = () => show('appsauth');
+$('#btn-blockapps').onclick = () => show('appsblock');
+
+$('#tg-bubble').onclick = () => {
+  S.bubbleOn = !S.bubbleOn;
+  $('#tg-bubble').classList.toggle('on', S.bubbleOn);
+  $('#bubble').classList.toggle('show', S.bubbleOn);
+  if (window.CumulusNative) window.CumulusNative.toggleBubbleService(S.bubbleOn);
+};
+
+$('#btn-send').onclick = () => send($('#chat-input').value);
+function send(txt) {
+  txt = (txt || '').trim(); if (!txt) return;
+  if (S.screen === 'home') show('chat');
+  const u = document.createElement('div'); u.className = 'msg-user'; u.textContent = txt; $('#chat-messages').appendChild(u);
+  $('#chat-input').value = ''; scrollToBottom();
+
+  if (window.CumulusNative) {
+    window.CumulusNative.sendPromptToGGUF(txt);
+  } else {
+    setTimeout(() => window.onAIResponse(`🤖 [${S.aiName}]: Processing "${txt}"...`), 600);
+  }
+}
+
+window.onAIResponse = function(replyText) {
+  const a = document.createElement('div'); a.className = 'msg-ai'; a.textContent = replyText; $('#chat-messages').appendChild(a); scrollToBottom();
+};
+
+function scrollToBottom() { const el = $('#chat-messages'); if (el) el.scrollTop = el.scrollHeight; }
+function toast(m) { const d = document.createElement('div'); d.className = 'tst'; d.textContent = m; $('#toast').appendChild(d); setTimeout(() => d.remove(), 2600); }
+show('home');
+</script>
+</body>
+</html>
