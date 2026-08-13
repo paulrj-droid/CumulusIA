@@ -6,7 +6,6 @@ plugins {
 android {
     namespace = "com.cumulus.agent"
     compileSdk = 34
-    ndkVersion = "26.1.10909125"
 
     defaultConfig {
         applicationId = "com.cumulus.agent"
@@ -14,24 +13,12 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
-
-        externalNativeBuild {
-            cmake {
-                cppFlags("")
-            }
-        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-        }
-    }
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
         }
     }
     compileOptions {
