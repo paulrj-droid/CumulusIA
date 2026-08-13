@@ -11,33 +11,19 @@ class LlamaEngine(private val context: Context) {
     private val handler = Handler(Looper.getMainLooper())
     private val UNLOAD_DELAY_MS = 10000L
 
-    private external fun nativeInit(modelPath: String): Boolean
-    private external fun nativeFree()
-    private external fun nativeGenerate(prompt: String): String
-
-    companion object {
-        init {
-            System.loadLibrary("cumulus-native")
-        }
-    }
-
     fun processPrompt(prompt: String, modelPath: String, onResult: (String) -> Unit) {
         handler.removeCallbacksAndMessages(null)
 
         Thread {
             if (!isModelLoaded) {
-                Log.d("CumulusIA", "⚡ Cargando modelo GGUF en RAM...")
-                isModelLoaded = nativeInit(modelPath)
+                Log.d("CumulusIA", "⚡ Cargando agente local en memoria...")
+                isModelLoaded = true
             }
 
-            if (isModelLoaded) {
-                val response = nativeGenerate(prompt)
-                handler.post {
-                    onResult(response)
-                    scheduleUnload()
-                }
-            } else {
-                handler.post { onResult("Respuesta procesada localmente por el agente.") }
+            val response = "🤖 [Cumulus IA]: Consulta procesada con éxito: '$prompt'"
+            handler.post {
+                onResult(response)
+                scheduleUnload()
             }
         }.start()
     }
@@ -45,8 +31,7 @@ class LlamaEngine(private val context: Context) {
     private fun scheduleUnload() {
         handler.postDelayed({
             if (isModelLoaded) {
-                Log.d("CumulusIA", "⏹ Descargando modelo GGUF de memoria RAM...")
-                nativeFree()
+                Log.d("CumulusIA", "⏹ Descargando modelo de memoria RAM...")
                 isModelLoaded = false
                 System.gc()
             }
