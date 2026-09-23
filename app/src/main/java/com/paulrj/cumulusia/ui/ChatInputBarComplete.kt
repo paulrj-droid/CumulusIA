@@ -6,7 +6,10 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -109,18 +112,20 @@ fun ChatInputBarComplete(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onPlayPauseToggle) {
-                    Icon(
-                        imageVector = if (isAudioPlaybackEnabled) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = "Play/Pause Voz IA",
-                        tint = if (isAudioPlaybackEnabled) darkBlueColor else LocalContentColor.current
+                    Text(
+                        text = if (isAudioPlaybackEnabled) "PAUSE" else "PLAY",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isAudioPlaybackEnabled) darkBlueColor else LocalContentColor.current
                     )
                 }
 
                 IconButton(onClick = onInternetToggle) {
-                    Icon(
-                        imageVector = if (isInternetEnabled) Icons.Default.Wifi else Icons.Default.WifiOff,
-                        contentDescription = "Internet On/Off",
-                        tint = if (isInternetEnabled) darkBlueColor else LocalContentColor.current
+                    Text(
+                        text = if (isInternetEnabled) "NET:ON" else "NET:OFF",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isInternetEnabled) darkBlueColor else LocalContentColor.current
                     )
                 }
                 
@@ -133,7 +138,7 @@ fun ChatInputBarComplete(
                 }
                 
                 IconButton(onClick = onCameraClick) {
-                    Icon(Icons.Default.PhotoCamera, contentDescription = "Cámara")
+                    Text("CAM", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                 }
                 
                 IconButton(onClick = onVideoClick) {
@@ -141,11 +146,11 @@ fun ChatInputBarComplete(
                 }
                 
                 IconButton(onClick = onVoiceToVoiceClick) {
-                    Icon(Icons.Default.GraphicEq, contentDescription = "Voz a voz")
+                    Text("V2V", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                 }
                 
                 IconButton(onClick = onMicClick) {
-                    Icon(Icons.Default.Mic, contentDescription = "Micrófono")
+                    Text("MIC", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                 }
                 
                 IconButton(onClick = onSendClick) {
