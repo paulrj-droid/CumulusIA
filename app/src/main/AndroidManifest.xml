@@ -23,7 +23,7 @@
             android:required="false" />
         <uses-native-library
             android:name="libOpenCL.so"
-            android:required5="false" />
+            android:required="false" />
 
         <!-- Actividad Principal -->
         <activity
