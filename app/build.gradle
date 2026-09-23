@@ -85,11 +85,20 @@ dependencies {
 
     implementation("xyz.rementia:openwakeword:0.1.3")
 
-    // Dependencias de Jetpack Compose alineadas con Kotlin 1.9.x
+    // Dependencias de Jetpack Compose alineadas
     implementation 'androidx.compose.ui:ui:1.6.0'
     implementation 'androidx.compose.ui:ui-graphics:1.6.0'
     implementation 'androidx.compose.ui:ui-tooling-preview:1.6.0'
     implementation 'androidx.compose.material3:material3:1.2.0'
     implementation 'androidx.activity:activity-compose:1.8.2'
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
+}
+
+// Bloque de seguridad: Forza a todas las librerías a usar la misma versión de Kotlin para neutralizar el conflicto de metadatos (2.4.0)
+configurations.all {
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == 'org.jetbrains.kotlin') {
+            details.useVersion '1.9.22'
+        }
+    }
 }
