@@ -1,141 +1,113 @@
 package com.cumulusia.app.manager
 
-import android.util.Log
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
-import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.concurrent.thread
 
 class ResumableDownloader {
 
-    enum class State {
-        IDLE, DOWNLOADING, PAUSED, FINISHED, FAILED
-    }
+    enum class State { IDLE, DOWNLOADING, PAUSED, FINISHED, FAILED }
 
     interface Listener {
         fun onProgress(downloaded: Long, total: Long, percent: Int)
         fun onStateChanged(state: State)
     }
 
+    @Volatile var state: State = State.IDLE; private set
+    @Volatile private var pauseRequested = false
+    @Volatile private var cancelRequested = false
+
+    private var thread: Thread? = null
+    private var url: String = ""
+    private var outputFile: File? = null
+    private var totalSize: Long = 0
+    private var downloaded: Long = 0
     var listener: Listener? = null
-    var state: State = State.IDLE
-        private set
 
-    private val isPaused = AtomicBoolean(false)
-    private val isCancelled = AtomicBoolean(false)
-    private var downloadThread: Thread? = null
-
-    fun start(urlString: String, targetFile: File) {
+    fun start(url: String, file: File) {
         if (state == State.DOWNLOADING) return
-        isPaused.set(false)
-        isCancelled.set(false)
-        updateState(State.DOWNLOADING)
+        this.url = url
+        this.outputFile = file
+        this.downloaded = if (file.exists()) file.length() else 0L
+        pauseRequested = false
+        cancelRequested = false
+        launchThread()
+    }
 
-        downloadThread = thread {
+    fun pause() { if (state == State.DOWNLOADING) pauseRequested = true }
+
+    fun resume() { if (state == State.PAUSED) launchThread() }
+
+    fun cancel(deleteFile: Boolean = true) {
+        cancelRequested = true
+        pauseRequested = false
+        if (deleteFile && state != State.DOWNLOADING) outputFile?.delete()
+    }
+
+    private fun launchThread() {
+        state = State.DOWNLOADING
+        listener?.onStateChanged(state)
+
+        thread = Thread {
             var connection: HttpURLConnection? = null
-            var inputStream: InputStream? = null
-            var randomAccessFile: RandomAccessFile? = null
-
+            var input: InputStream? = null
+            var output: FileOutputStream? = null
             try {
-                val url = URL(urlString)
-                var downloadedBytes = if (targetFile.exists()) targetFile.length() else 0L
-
-                connection = (url.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 15000
-                    readTimeout = 15000
-                    if (downloadedBytes > 0) {
-                        setRequestProperty("Range", "bytes=$downloadedBytes-")
-                    }
+                val file = outputFile!!
+                connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 30000
+                    readTimeout = 30000
+                    if (downloaded > 0) setRequestProperty("Range", "bytes=$downloaded-")
                     connect()
                 }
 
-                val responseCode = connection.responseCode
-                val fileLength = connection.contentLength.toLong()
-                val totalLength = if (responseCode == HttpURLConnection.HTTP_PARTIAL) {
-                    fileLength + downloadedBytes
-                } else if (responseCode == HttpURLConnection.HTTP_OK) {
-                    downloadedBytes = 0L
-                    fileLength
-                } else {
-                    throw Exception("Servidor respondió con código HTTP $responseCode")
+                val code = connection.responseCode
+                when (code) {
+                    HttpURLConnection.HTTP_OK -> {
+                        totalSize = connection.contentLengthLong
+                        downloaded = 0
+                    }
+                    206 -> {
+                        connection.getHeaderField("Content-Range")
+                            ?.substringAfter('/')?.toLongOrNull()?.let { totalSize = it }
+                    }
+                    else -> throw Exception("HTTP $code")
                 }
 
-                inputStream = connection.inputStream
-                randomAccessFile = RandomAccessFile(targetFile, "rw").apply {
-                    seek(downloadedBytes)
-                }
+                input = connection.inputStream
+                output = FileOutputStream(file, downloaded > 0)
 
                 val buffer = ByteArray(8192)
-                var bytesRead: Int
-
-                while (true) {
-                    if (isCancelled.get()) {
-                        updateState(State.IDLE)
-                        break
-                    }
-                    if (isPaused.get()) {
-                        updateState(State.PAUSED)
-                        break
-                    }
-
-                    bytesRead = inputStream.read(buffer)
-                    if (bytesRead == -1) {
-                        if (totalLength > 0 && targetFile.length() < totalLength) {
-                            throw Exception("La descarga se interrumpió antes de completarse.")
-                        }
-                        updateState(State.FINISHED)
-                        break
-                    }
-
-                    randomAccessFile.write(buffer, 0, bytesRead)
-                    downloadedBytes += bytesRead
-
-                    val percent = if (totalLength > 0) {
-                        ((downloadedBytes * 100) / totalLength).toInt()
-                    } else {
-                        -1
-                    }
-                    listener?.onProgress(downloadedBytes, totalLength, percent)
+                var read: Int
+                while (input.read(buffer).also { read = it } != -1) {
+                    if (cancelRequested) break
+                    output.write(buffer, 0, read)
+                    downloaded += read
+                    val percent = if (totalSize > 0) ((downloaded * 100) / totalSize).toInt() else -1
+                    listener?.onProgress(downloaded, totalSize, percent)
+                    if (pauseRequested) break
                 }
 
-            } catch (e: Throwable) {
-                if (!isCancelled.get() && !isPaused.get()) {
-                    Log.e("ResumableDownloader", "Error en descarga: ${e.message}")
-                    updateState(State.FAILED)
+                output.flush()
+
+                state = when {
+                    cancelRequested -> { file.delete(); State.IDLE }
+                    pauseRequested -> State.PAUSED
+                    else -> State.FINISHED
                 }
+            } catch (e: Exception) {
+                state = State.FAILED
             } finally {
-                try { inputStream?.close() } catch (_: Throwable) {}
-                try { randomAccessFile?.close() } catch (_: Throwable) {}
-                try { connection?.disconnect() } catch (_: Throwable) {}
+                try { input?.close() } catch (_: Exception) {}
+                try { output?.close() } catch (_: Exception) {}
+                try { connection?.disconnect() } catch (_: Exception) {}
+                pauseRequested = false
+                cancelRequested = false
+                listener?.onStateChanged(state)
             }
         }
-    }
-
-    fun pause() {
-        if (state == State.DOWNLOADING) {
-            isPaused.set(true)
-        }
-    }
-
-    fun resume() {
-        if (state == State.PAUSED) {
-            isPaused.set(false)
-        }
-    }
-
-    fun cancel(deleteFile: Boolean = false) {
-        isCancelled.set(true)
-        isPaused.set(false)
-        downloadThread?.interrupt()
-    }
-
-    private fun updateState(newState: State) {
-        state = newState
-        listener?.onStateChanged(newState)
+        thread?.start()
     }
 }
-
