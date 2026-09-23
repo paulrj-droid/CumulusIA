@@ -33,7 +33,6 @@ fun ChatInputBarComplete(
     onVideoClick: () -> Unit,
     onVoiceToVoiceClick: () -> Unit
 ) {
-    // Color azul oscuro solicitado para los botones activos
     val darkBlueColor = Color(0xFF0D47A1)
 
     Surface(
@@ -46,7 +45,6 @@ fun ChatInputBarComplete(
         Column(
             modifier = Modifier.padding(12.dp)
         ) {
-            // 1. VISTA PREVIA DE ADJUNTOS CON LA "X"
             if (attachedUris.isNotEmpty()) {
                 LazyRow(
                     modifier = Modifier
@@ -90,7 +88,6 @@ fun ChatInputBarComplete(
                 }
             }
 
-            // 2. CAMPO DE TEXTO ("Pregúntame...")
             OutlinedTextField(
                 value = text,
                 onValueChange = onTextChanged,
@@ -106,7 +103,6 @@ fun ChatInputBarComplete(
             
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 3. FILA DE BOTONES Y ACCIONES
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -159,3 +155,4 @@ fun ChatInputBarComplete(
         }
     }
 }
+
