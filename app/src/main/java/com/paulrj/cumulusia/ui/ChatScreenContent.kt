@@ -1,7 +1,11 @@
+package com.paulrj.cumulusia.ui
+
 import android.Manifest
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import java.io.File
 
@@ -13,9 +17,14 @@ fun ChatScreenContent(
     onAddUri: (Uri) -> Unit,
     onRemoveUri: (Uri) -> Unit,
     onSendClick: () -> Unit,
-    // ... demas estados (audio, internet, etc.)
+    isAudioPlaybackEnabled: Boolean,
+    onPlayPauseToggle: () -> Unit,
+    isInternetEnabled: Boolean,
+    onInternetToggle: () -> Unit,
+    onMicClick: () -> Unit,
+    onVoiceToVoiceClick: () -> Unit
 ) {
-    val context = androidx.ui.core.LocalContext.current // O androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
 
     // Estado temporal para guardar la Uri de la foto tomada con la cámara
     var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
@@ -67,25 +76,26 @@ fun ChatScreenContent(
         text = text,
         onTextChanged = onTextChanged,
         onSendClick = onSendClick,
-        onMicClick = { /* Lógica de micrófono */ },
-        isAudioPlaybackEnabled = false,
-        onPlayPauseToggle = { /* Toggle voz IA */ },
-        isInternetEnabled = true,
-        onInternetToggle = { /* Toggle internet */ },
+        onMicClick = onMicClick,
+        isAudioPlaybackEnabled = isAudioPlaybackEnabled,
+        onPlayPauseToggle = onPlayPauseToggle,
+        isInternetEnabled = isInternetEnabled,
+        onInternetToggle = onInternetToggle,
         attachedUris = attachedUris,
         onRemoveAttachment = { uriToRemove -> onRemoveUri(uriToRemove) },
         onFileClick = { 
-            fileLauncher.launch("*/*") // Permite cualquier archivo general
+            fileLauncher.launch("*/*") 
         },
         onImageClick = { 
-            imageLauncher.launch("image/*") // Filtra solo imágenes
+            imageLauncher.launch("image/*") 
         },
         onCameraClick = {
             permissionLauncher.launch(Manifest.permission.CAMERA)
         },
         onVideoClick = { 
-            videoLauncher.launch("video/*") // Filtra solo videos
+            videoLauncher.launch("video/*") 
         },
-        onVoiceToVoiceClick = { /* Lógica voz a voz */ }
+        onVoiceToVoiceClick = onVoiceToVoiceClick
     )
 }
+
