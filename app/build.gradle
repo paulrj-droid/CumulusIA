@@ -1,6 +1,6 @@
 plugins {
     id 'com.android.application'
-    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.android' version '2.0.21'
 }
 
 android {
@@ -94,11 +94,12 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
 }
 
-// Bloque de seguridad: Forza a todas las librerías a usar la misma versión de Kotlin para neutralizar el conflicto de metadatos (2.4.0)
+// Configuración alineada a la versión 2.0.21 para evitar conflictos de metadatos en dependencias de IA
 configurations.all {
     resolutionStrategy.eachDependency { details ->
         if (details.requested.group == 'org.jetbrains.kotlin') {
-            details.useVersion '1.9.22'
+            details.useVersion '2.0.21'
         }
     }
 }
+
