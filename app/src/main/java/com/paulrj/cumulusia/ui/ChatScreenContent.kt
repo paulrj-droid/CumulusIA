@@ -26,7 +26,6 @@ fun ChatScreenContent(
     onVoiceToVoiceClick: () -> Unit
 ) {
     val context = LocalContext.current
-
     var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
 
     val fileLauncher = rememberLauncherForActivityResult(
@@ -77,18 +76,10 @@ fun ChatScreenContent(
         onInternetToggle = onInternetToggle,
         attachedUris = attachedUris,
         onRemoveAttachment = { uriToRemove -> onRemoveUri(uriToRemove) },
-        onFileClick = { 
-            fileLauncher.launch("*/*") 
-        },
-        onImageClick = { 
-            imageLauncher.launch("image/*") 
-        },
-        onCameraClick = {
-            permissionLauncher.launch(Manifest.permission.CAMERA)
-        },
-        onVideoClick = { 
-            videoLauncher.launch("video/*") 
-        },
+        onFileClick = { fileLauncher.launch("*/*") },
+        onImageClick = { imageLauncher.launch("image/*") },
+        onCameraClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+        onVideoClick = { videoLauncher.launch("video/*") },
         onVoiceToVoiceClick = onVoiceToVoiceClick
     )
 }
