@@ -15,7 +15,6 @@ class CumulusEngine {
         }
     }
 
-    // Método nativo JNI vinculado con C++
     private external fun runNativeInference(prompt: String): String
 
     suspend fun generateResponse(prompt: String): String = withContext(Dispatchers.IO) {
@@ -34,3 +33,4 @@ class CumulusEngine {
         }
     }
 }
+
