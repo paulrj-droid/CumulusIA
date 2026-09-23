@@ -3,4 +3,3 @@
     <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@drawable/cumulus_icon" />
 </adaptive-icon>
-
