@@ -26,31 +26,26 @@ fun ChatScreenContent(
 ) {
     val context = LocalContext.current
 
-    // Estado temporal para guardar la Uri de la foto tomada con la cámara
     var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
 
-    // 1. Launcher para Archivos generales (Botón A)
     val fileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { onAddUri(it) }
     }
 
-    // 2. Launcher para Imágenes/Fotos de la galería (Botón F)
     val imageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { onAddUri(it) }
     }
 
-    // 3. Launcher para Videos (Botón V)
     val videoLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { onAddUri(it) }
     }
 
-    // 4. Launcher para la Cámara (Icono de Cámara)
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
@@ -59,7 +54,6 @@ fun ChatScreenContent(
         }
     }
 
-    // Launcher para pedir permiso de cámara si es necesario
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -71,7 +65,6 @@ fun ChatScreenContent(
         }
     }
 
-    // Llamada a tu barra de chat conectando cada botón con su respectiva acción
     ChatInputBarComplete(
         text = text,
         onTextChanged = onTextChanged,
@@ -98,4 +91,3 @@ fun ChatScreenContent(
         onVoiceToVoiceClick = onVoiceToVoiceClick
     )
 }
-
