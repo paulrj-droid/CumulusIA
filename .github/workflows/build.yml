@@ -1,0 +1,65 @@
+name: Build Android APK (CPU)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/snapdragon-toolchain/arm64-android:v0.7
+
+    env:
+      LLAMA_GIT_TAG: v0.2.0
+      HEXAGON_SDK_ROOT: /opt/hexagon/6.6.0.0
+      ANDROID_HOME: /opt/android-sdk
+
+    steps:
+      - name: Install JDK, node y herramientas
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends openjdk-17-jdk-headless nodejs ca-certificates git || \
+          apt-get install -y --no-install-recommends openjdk-21-jdk-headless nodejs ca-certificates git
+          java -version 2>&1 || true
+
+      - name: Install Gradle 8.7
+        run: |
+          curl -sL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q /tmp/gradle.zip -d /opt
+          echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
+
+      - name: Clone repository
+        run: |
+          git clone --depth 1 --branch "${{ github.ref_name }}" \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
+            "$GITHUB_WORKSPACE/repo"
+
+      - name: Prepare Android SDK licenses
+        run: |
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf '24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n' > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf '84831b9409646a918e30573bab4c9c91346d8abd\n' > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+
+      - name: Build APK (CPU)
+        working-directory: ${{ github.workspace }}/repo
+        env:
+          HEXAGON_SDK_ROOT: /opt/hexagon/6.6.0.0
+        run: |
+          set +e
+          gradle assembleDebug --no-daemon --console=plain | tee /tmp/build.log
+          CODE=${PIPESTATUS[0]}
+          if [ "$CODE" -ne 0 ]; then
+            echo '================= ERROR CMAKE (diagnostico) ================='
+            grep -B 5 -A 25 'CMake Error' /tmp/build.log | head -n 120
+            echo '============================================================='
+          fi
+          exit $CODE
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-full-debug
+          path: ${{ github.workspace }}/repo/app/build/outputs/apk/debug/app-debug.apk
+
