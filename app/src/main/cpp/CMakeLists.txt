@@ -25,11 +25,11 @@ if (DEFINED ENV{HEXAGON_SDK_ROOT} AND NOT DEFINED HEXAGON_SDK_ROOT)
     set(HEXAGON_SDK_ROOT "$ENV{HEXAGON_SDK_ROOT}" CACHE PATH "")
 endif()
 
-set(CUMULUS_HAS_VULKAN ON)
+set(CUMULUS_HAS_VULKAN OFF)
 set(CUMULUS_HAS_OPENCL OFF)
-set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
 set(GGML_OPENCL OFF CACHE BOOL "" FORCE)
-message(STATUS "GPU Android activada mediante Vulkan")
+message(STATUS "GPU Android desactivada, compilando por CPU")
 
 FetchContent_Declare(
     llama
