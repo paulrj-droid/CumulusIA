@@ -1,93 +1,95 @@
-package com.paulrj.cumulusia.ui
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
 
-import android.Manifest
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.*
-import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.FileProvider
-import java.io.File
+android {
+    namespace 'com.cumulusia.app'
+    compileSdk 34
 
-@Composable
-fun ChatScreenContent(
-    text: String,
-    onTextChanged: (String) -> Unit,
-    attachedUris: List<Uri>,
-    onAddUri: (Uri) -> Unit,
-    onRemoveUri: (Uri) -> Unit,
-    onSendClick: () -> Unit,
-    isAudioPlaybackEnabled: Boolean,
-    onPlayPauseToggle: () -> Unit,
-    isInternetEnabled: Boolean,
-    onInternetToggle: () -> Unit,
-    onMicClick: () -> Unit,
-    onVoiceToVoiceClick: () -> Unit
-) {
-    val context = LocalContext.current
+    ndkVersion "25.1.8937393"
 
-    var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
+    defaultConfig {
+        applicationId "com.cumulusia.app"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
 
-    val fileLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let { onAddUri(it) }
-    }
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
 
-    val imageLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let { onAddUri(it) }
-    }
-
-    val videoLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let { onAddUri(it) }
-    }
-
-    val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicture()
-    ) { success ->
-        if (success) {
-            tempCameraUri?.let { onAddUri(it) }
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c++17"
+                arguments "-DCMAKE_C_FLAGS_RELEASE=-O3",
+                          "-DCMAKE_CXX_FLAGS_RELEASE=-O3"
+            }
         }
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            val photoFile = File(context.cacheDir, "camera_photo_${System.currentTimeMillis()}.jpg")
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", photoFile)
-            tempCameraUri = uri
-            cameraLauncher.launch(uri)
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
         }
     }
 
-    ChatInputBarComplete(
-        text = text,
-        onTextChanged = onTextChanged,
-        onSendClick = onSendClick,
-        onMicClick = onMicClick,
-        isAudioPlaybackEnabled = isAudioPlaybackEnabled,
-        onPlayPauseToggle = onPlayPauseToggle,
-        isInternetEnabled = isInternetEnabled,
-        onInternetToggle = onInternetToggle,
-        attachedUris = attachedUris,
-        onRemoveAttachment = { uriToRemove -> onRemoveUri(uriToRemove) },
-        onFileClick = { 
-            fileLauncher.launch("*/*") 
-        },
-        onImageClick = { 
-            imageLauncher.launch("image/*") 
-        },
-        onCameraClick = {
-            permissionLauncher.launch(Manifest.permission.CAMERA)
-        },
-        onVideoClick = { 
-            videoLauncher.launch("video/*") 
-        },
-        onVoiceToVoiceClick = onVoiceToVoiceClick
-    )
+    buildFeatures {
+        viewBinding true
+        dataBinding true
+        compose true
+    }
+
+    composeOptions {
+        kotlinCompilerExtensionVersion '1.5.8'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'androidx.drawerlayout:drawerlayout:1.2.0'
+    
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'com.google.ai.edge.litertlm:litertlm-android:0.17.0'
+    implementation 'com.qualcomm.qti:qnn-runtime:2.42.0'
+    implementation 'com.qualcomm.qti:qnn-litert-delegate:2.42.0'
+
+    implementation("xyz.rementia:openwakeword:0.1.3")
+
+    // Dependencias de Jetpack Compose alineadas y estables para Kotlin 1.9.x
+    implementation 'androidx.compose.ui:ui:1.6.0'
+    implementation 'androidx.compose.ui:ui-graphics:1.6.0'
+    implementation 'androidx.compose.ui:ui-tooling-preview:1.6.0'
+    implementation 'androidx.compose.material3:material3:1.2.0'
+    implementation 'androidx.activity:activity-compose:1.8.2'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
 }
