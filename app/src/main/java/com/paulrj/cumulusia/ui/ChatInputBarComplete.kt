@@ -1,4 +1,4 @@
-package com.paulrj.cumulusia.ui.components // Ajusta tu paquete según corresponda
+package com.paulrj.cumulusia.ui.components
 
 import android.net.Uri
 import androidx.compose.foundation.layout.*
@@ -46,7 +46,7 @@ fun ChatInputBarComplete(
         Column(
             modifier = Modifier.padding(12.dp)
         ) {
-            // 1. VISTA PREVIA DE ADJUNTOS CON LA "X" (Arriba de "Pregúntame...")
+            // 1. VISTA PREVIA DE ADJUNTOS CON LA "X"
             if (attachedUris.isNotEmpty()) {
                 LazyRow(
                     modifier = Modifier
@@ -60,7 +60,6 @@ fun ChatInputBarComplete(
                                 .size(75.dp)
                                 .padding(4.dp)
                         ) {
-                            // Tarjeta contenedora de la miniatura del archivo/foto/video
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
                                 color = MaterialTheme.colorScheme.primaryContainer,
@@ -74,7 +73,6 @@ fun ChatInputBarComplete(
                                 }
                             }
                             
-                            // Botón "X" flotante para eliminar el adjunto y no enviarlo
                             IconButton(
                                 onClick = { onRemoveAttachment(uri) },
                                 modifier = Modifier
@@ -108,13 +106,12 @@ fun ChatInputBarComplete(
             
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 3. FILA DE BOTONES TRANSPARENTES Y ACCIONES
+            // 3. FILA DE BOTONES Y ACCIONES
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Botón Play / Pause (Se vuelve azul oscuro cuando la IA habla automáticamente)
                 IconButton(onClick = onPlayPauseToggle) {
                     Icon(
                         imageVector = if (isAudioPlaybackEnabled) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -123,7 +120,6 @@ fun ChatInputBarComplete(
                     )
                 }
 
-                // Botón On/Off Internet (Se vuelve azul oscuro cuando está habilitado)
                 IconButton(onClick = onInternetToggle) {
                     Icon(
                         imageVector = if (isInternetEnabled) Icons.Default.Wifi else Icons.Default.WifiOff,
@@ -132,37 +128,30 @@ fun ChatInputBarComplete(
                     )
                 }
                 
-                // Botón A (Archivos)
                 IconButton(onClick = onFileClick) {
                     Text("A", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
                 }
                 
-                // Botón F (Fotos)
                 IconButton(onClick = onImageClick) {
                     Text("F", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
                 }
                 
-                // Botón Cámara
                 IconButton(onClick = onCameraClick) {
                     Icon(Icons.Default.PhotoCamera, contentDescription = "Cámara")
                 }
                 
-                // Botón V (Videos)
                 IconButton(onClick = onVideoClick) {
                     Text("V", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyLarge)
                 }
                 
-                // Botón Voz a Voz (Barras)
                 IconButton(onClick = onVoiceToVoiceClick) {
                     Icon(Icons.Default.GraphicEq, contentDescription = "Voz a voz")
                 }
                 
-                // Botón Micrófono
                 IconButton(onClick = onMicClick) {
                     Icon(Icons.Default.Mic, contentDescription = "Micrófono")
                 }
                 
-                // Botón Enviar
                 IconButton(onClick = onSendClick) {
                     Icon(Icons.Default.Send, contentDescription = "Enviar")
                 }
@@ -170,4 +159,3 @@ fun ChatInputBarComplete(
         }
     }
 }
-
