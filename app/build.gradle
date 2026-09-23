@@ -1,6 +1,6 @@
 plugins {
     id 'com.android.application'
-    id 'org.jetbrains.kotlin.android' version '2.0.21'
+    id 'org.jetbrains.kotlin.android'
 }
 
 android {
@@ -85,7 +85,7 @@ dependencies {
 
     implementation("xyz.rementia:openwakeword:0.1.3")
 
-    // Dependencias de Jetpack Compose alineadas
+    // Dependencias de Jetpack Compose alineadas con Kotlin 1.9.x
     implementation 'androidx.compose.ui:ui:1.6.0'
     implementation 'androidx.compose.ui:ui-graphics:1.6.0'
     implementation 'androidx.compose.ui:ui-tooling-preview:1.6.0'
@@ -94,12 +94,10 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
 }
 
-// Configuración alineada a la versión 2.0.21 para evitar conflictos de metadatos en dependencias de IA
 configurations.all {
     resolutionStrategy.eachDependency { details ->
         if (details.requested.group == 'org.jetbrains.kotlin') {
-            details.useVersion '2.0.21'
+            details.useVersion '1.9.22'
         }
     }
 }
-
