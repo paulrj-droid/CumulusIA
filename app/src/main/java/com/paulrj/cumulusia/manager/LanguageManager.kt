@@ -1,4 +1,4 @@
-package com.cumulusia.app.manager
+package com.paulrj.cumulusia.manager
 
 import android.content.Context
 import android.view.View
@@ -85,4 +85,3 @@ object LanguageManager {
         )
     )
 }
-
