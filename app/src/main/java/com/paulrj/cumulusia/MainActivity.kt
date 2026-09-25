@@ -1,9 +1,9 @@
-package com.cumulus.ia
+package com.paulrj.cumulusia
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
-import com.cumulus.ia.engine.LiteRtLmEngineManager
-import com.cumulus.ia.utils.LanguageManager
+import com.paulrj.cumulusia.engine.LiteRtLmEngineManager
+import com.paulrj.cumulusia.utils.LanguageManager
 
 class MainActivity : AppCompatActivity() {
 
@@ -20,4 +20,3 @@ class MainActivity : AppCompatActivity() {
         // Inicialización de componentes principales de Cumulus IA
     }
 }
-
