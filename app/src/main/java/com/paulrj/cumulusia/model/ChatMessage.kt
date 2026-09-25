@@ -1,4 +1,4 @@
-package com.cumulusia.app.model
+package com.paulrj.cumulusia.model
 
 data class ChatMessage(
     val text: String,
