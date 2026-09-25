@@ -1,4 +1,4 @@
-package com.cumulusia.app.adapter
+package com.paulrj.cumulusia.adapter
 
 import android.net.Uri
 import android.view.LayoutInflater
@@ -7,8 +7,8 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import com.cumulusia.app.R
-import com.cumulusia.app.model.ChatMessage
+import com.paulrj.cumulusia.R
+import com.paulrj.cumulusia.model.ChatMessage
 
 class ChatAdapter(
     private val messages: List<ChatMessage>,
@@ -83,4 +83,3 @@ class ChatAdapter(
         }
     }
 }
-
