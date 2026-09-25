@@ -1,4 +1,4 @@
-package com.cumulusia.app.ai
+package com.paulrj.cumulusia.ai
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -33,4 +33,3 @@ class CumulusEngine {
         }
     }
 }
-
