@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace 'com.cumulusia.app'
+    namespace 'com.paulrj.cumulusia'
     compileSdk 34
 
     ndkVersion "25.1.8937393"
@@ -89,4 +89,3 @@ dependencies {
     implementation 'androidx.activity:activity-compose:1.8.2'
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
 }
-
