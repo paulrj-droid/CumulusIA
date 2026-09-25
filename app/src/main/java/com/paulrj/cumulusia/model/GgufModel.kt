@@ -1,4 +1,4 @@
-package com.cumulusia.app.model
+package com.paulrj.cumulusia.model
 
 import java.io.File
 
@@ -30,4 +30,3 @@ data class GgufModel(
         }
     }
 }
-
