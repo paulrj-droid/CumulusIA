@@ -6,6 +6,10 @@ import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
+/**
+ * Descargador con soporte de PAUSA, REANUDAR y ELIMINAR.
+ * Usa cabeceras "Range" para reanudar desde donde se quedó (HuggingFace lo soporta).
+ */
 class ResumableDownloader {
 
     enum class State { IDLE, DOWNLOADING, PAUSED, FINISHED, FAILED }
@@ -77,7 +81,7 @@ class ResumableDownloader {
                 }
 
                 input = connection.inputStream
-                output = FileOutputStream(file, downloaded > 0)
+                output = FileOutputStream(file, downloaded > 0) // reanudar = añadir
 
                 val buffer = ByteArray(8192)
                 var read: Int
