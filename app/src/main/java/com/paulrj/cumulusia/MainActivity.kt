@@ -1,4 +1,4 @@
-package com.cumulusia.app
+package com.paulrj.cumulusia
 
 import android.Manifest
 import android.app.AlertDialog
@@ -51,13 +51,13 @@ import androidx.drawerlayout.widget.DrawerLayout
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
-import com.cumulusia.app.adapter.ChatAdapter
-import com.cumulusia.app.ai.LiteRtLmEngineManager
-import com.cumulusia.app.model.ChatMessage
-import com.cumulusia.app.manager.ResumableDownloader
-import com.cumulusia.app.manager.VoiceManager
-import com.cumulusia.app.manager.LanguageManager
-import com.cumulusia.app.tts.TtsEngineManager
+import com.paulrj.cumulusia.adapter.ChatAdapter
+import com.paulrj.cumulusia.engine.LiteRtLmEngineManager
+import com.paulrj.cumulusia.manager.LanguageManager
+import com.paulrj.cumulusia.manager.ResumableDownloader
+import com.paulrj.cumulusia.model.ChatMessage
+import com.paulrj.cumulusia.tts.TtsEngineManager
+import com.paulrj.cumulusia.VoiceManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedOutputStream
@@ -73,9 +73,6 @@ import java.util.Locale
 import kotlin.concurrent.thread
 import kotlinx.coroutines.runBlocking
 
-// ============================================================================
-// ACTIVIDAD PRINCIPAL (PANTALLA CON PANELES LATERALES ☰ Y ⚙️)
-// ============================================================================
 class MainActivity : AppCompatActivity() {
 
     override fun attachBaseContext(newBase: Context) {
@@ -1302,8 +1299,7 @@ class MainActivity : AppCompatActivity() {
             loadModelIntoMemoryManual()
         }
     }
-
-    private fun showSettingsPage(page: Int) {
+        private fun showSettingsPage(page: Int) {
         settingsPageFlipper?.displayedChild = page
     }
 
