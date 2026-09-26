@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Fondo Blanco Oficial -->
+    <background android:drawable="@android:color/white"/>
+    <!-- Diamante Azul en el Frente -->
+    <foreground android:drawable="@drawable/ic_cumulus_diamond"/>
+</adaptive-icon>
