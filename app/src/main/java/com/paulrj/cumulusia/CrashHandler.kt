@@ -21,6 +21,7 @@ object CrashHandler : Thread.UncaughtExceptionHandler {
     private var defaultHandler: Thread.UncaughtExceptionHandler? = null
     private lateinit var appContext: Context
 
+    /** Llamar al inicio de MainActivity (y de los servicios si quieres). */
     fun install(context: Context) {
         if (installed) return
         synchronized(this) {
@@ -46,6 +47,7 @@ object CrashHandler : Thread.UncaughtExceptionHandler {
                 .edit().putString(KEY, report).apply()
         } catch (ignored: Exception) {
         }
+        // Deja que el sistema cierre la app como siempre
         defaultHandler?.uncaughtException(t, e)
             ?: android.os.Process.killProcess(android.os.Process.myPid())
     }
