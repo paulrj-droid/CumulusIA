@@ -1,4 +1,4 @@
-package com.cumulusia.app
+package com.paulrj.cumulusia
 
 import android.content.Context
 import android.os.Build
@@ -68,4 +68,3 @@ object CrashHandler : Thread.UncaughtExceptionHandler {
         """.trimIndent()
     }
 }
-
