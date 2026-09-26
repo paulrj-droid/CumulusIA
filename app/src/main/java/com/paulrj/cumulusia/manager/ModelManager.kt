@@ -42,24 +42,26 @@ class ModelManager(private val context: Context) {
             return selected
         }
 
-        // Selección automática del primer modelo disponible si no hay uno guardado o válido
-        val firstModel = models.first()
-        setSelectedModel(firstModel)
-        return firstModel
+        // Selección automática si no hay uno válido guardado
+        val defaultModel = models.first()
+        setSelectedModel(defaultModel)
+        return defaultModel
     }
 
+    /**
+     * Permite cambiar y guardar el modelo activo de forma manual.
+     */
     fun setSelectedModel(model: GgufModel) {
         prefs.edit().putString("selected_model_path", model.filePath).apply()
     }
 
-    fun startDownload(url: String, fileName: String, onEnqueue: (Long) -> Unit) {
+    fun downloadModelFromUrl(url: String, onEnqueue: (Long) -> Unit) {
+        val uri = Uri.parse(url)
+        val fileName = uri.lastPathSegment ?: "modelo_${System.currentTimeMillis()}.gguf"
         val destinationFile = File(modelsDir, fileName)
-        if (destinationFile.exists()) {
-            destinationFile.delete()
-        }
 
-        val request = DownloadManager.Request(Uri.parse(url)).apply {
-            setTitle("Descargando modelo GGUF")
+        val request = DownloadManager.Request(uri).apply {
+            setTitle("Cumulus IA - Descargando Modelo")
             setDescription(fileName)
             setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             setDestinationUri(Uri.fromFile(destinationFile))
