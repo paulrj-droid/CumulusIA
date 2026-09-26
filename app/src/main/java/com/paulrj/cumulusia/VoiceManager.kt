@@ -1,4 +1,4 @@
-package com.cumulusia.app.manager
+package com.paulrj.cumulusia.manager
 
 import android.app.DownloadManager
 import android.content.BroadcastReceiver
@@ -7,7 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
 import androidx.core.content.ContextCompat
-import com.cumulusia.app.model.TtsVoice
+import com.paulrj.cumulusia.model.TtsVoice
 import java.io.File
 
 class VoiceManager(private val context: Context) {
