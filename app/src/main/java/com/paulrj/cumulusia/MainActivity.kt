@@ -23,7 +23,6 @@ import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.widget.ViewFlipper
 import com.google.android.material.button.MaterialButton
 import com.paulrj.cumulusia.adapter.ChatAdapter
 import com.paulrj.cumulusia.ai.CumulusEngine
