@@ -41,6 +41,7 @@ class ChatAdapter(
         holder.tvContent.text = message.text
         holder.tvSender.text = if (message.isUser) "Tú" else "Cumulus IA"
 
+        // Mostrar los tokens solo si existen en el mensaje de la IA
         if (!message.isUser && message.tokens.isNotEmpty()) {
             holder.tvTokenInfo.text = message.tokens
             holder.tvTokenInfo.visibility = View.VISIBLE
@@ -49,6 +50,7 @@ class ChatAdapter(
         }
 
         if (message.isUser) {
+            // Mensaje del usuario: Burbuja redondeada, alineado a la derecha, SIN imagen
             holder.container.gravity = Gravity.END
             holder.ivAiAvatar.visibility = View.GONE
             holder.spaceBetween.visibility = View.GONE
@@ -57,6 +59,7 @@ class ChatAdapter(
             holder.tvSender.gravity = Gravity.END
             holder.tvSender.setTextColor(Color.parseColor("#888888"))
         } else {
+            // Mensaje de la IA: Texto plano, alineado a la izquierda, CON imagen
             holder.container.gravity = Gravity.START
             holder.ivAiAvatar.visibility = View.VISIBLE
             holder.spaceBetween.visibility = View.VISIBLE
@@ -65,15 +68,15 @@ class ChatAdapter(
                 try {
                     holder.ivAiAvatar.setImageURI(customAvatarUri)
                     if (holder.ivAiAvatar.drawable == null) {
-                        holder.ivAiAvatar.setImageResource(R.drawable.robot_ia)
+                        holder.ivAiAvatar.setImageResource(R.drawable.ic_cumulus_diamond)
                     }
                 } catch (e: Exception) {
-                    holder.ivAiAvatar.setImageResource(R.drawable.robot_ia)
+                    holder.ivAiAvatar.setImageResource(R.drawable.ic_cumulus_diamond)
                 }
             } else {
-                holder.ivAiAvatar.setImageResource(R.drawable.robot_ia)
+                holder.ivAiAvatar.setImageResource(R.drawable.ic_cumulus_diamond)
             }
-            holder.tvContent.background = null
+            holder.tvContent.background = null // Quitar fondo para que sea texto plano
             holder.tvContent.setTextColor(Color.WHITE)
             holder.tvSender.gravity = Gravity.START
             holder.tvSender.setTextColor(Color.parseColor("#808080"))
