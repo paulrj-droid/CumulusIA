@@ -128,126 +128,298 @@
         </androidx.constraintlayout.widget.ConstraintLayout>
     </LinearLayout>
 
-    <!-- PANEL IZQUIERDO (SERVICIOS Y CONTROL) -->
-    <ScrollView
-        android:layout_width="340dp"
+    <!-- PANEL IZQUIERDO (MENÚ / CONTROLES DE CUMULUS) -->
+    <LinearLayout
+        android:layout_width="300dp"
         android:layout_height="match_parent"
         android:layout_gravity="start"
-        android:background="#1C1C1E">
+        android:orientation="vertical"
+        android:background="#1C1C1E"
+        android:padding="16dp">
+
+        <!-- Encabezado del menú -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="MENÚ"
+            android:textColor="#8A8A93"
+            android:textSize="12sp"
+            android:layout_marginTop="8dp" />
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp">
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="20dp">
 
             <TextView
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:text="SERVICIOS Y CONTROL"
-                android:textColor="#00E676"
-                android:textStyle="bold"
-                android:textSize="14sp"
-                android:layout_marginBottom="20dp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_choose_voices"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Elegir voz TTS"
+                android:layout_weight="1"
+                android:text="Controles de Cumulus"
                 android:textColor="#FFFFFF"
-                android:backgroundTint="#2C2C2E"
-                app:cornerRadius="8dp"
-                android:layout_marginBottom="20dp" />
+                android:textSize="20sp"
+                android:textStyle="bold" />
 
-            <!-- ==================== ELEVENLABS ==================== -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="ELEVENLABS"
-                android:textColor="#3D5AFE"
-                android:textStyle="bold"
-                android:textSize="12sp"
-                android:layout_marginBottom="8dp" />
+            <ImageButton
+                android:id="@+id/btn_close_left_drawer"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="@drawable/bg_rounded_button"
+                android:src="@android:drawable/ic_menu_close_clear_cancel"
+                app:tint="#FFFFFF" />
+        </LinearLayout>
 
-            <EditText
-                android:id="@+id/et_eleven_api_key"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_input_rounded"
-                android:hint="API Key"
-                android:padding="10dp"
-                android:inputType="textPassword"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#808080"
-                android:layout_marginBottom="8dp" />
+        <!-- Imagen de la burbuja -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_card_dark"
+            android:padding="14dp"
+            android:layout_marginBottom="10dp">
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_save_eleven_key"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Guardar API Key"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#3D5AFE"
-                app:cornerRadius="8dp"
-                android:layout_marginBottom="8dp" />
+            <ImageView
+                android:id="@+id/iv_bubble_preview"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@drawable/robot_ia"
+                android:background="@drawable/bg_circle_blue"
+                android:padding="2dp"
+                android:scaleType="centerCrop" />
 
             <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="16dp">
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:paddingStart="12dp">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_eleven_record"
-                    android:layout_width="0dp"
+                <TextView
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Grabar"
+                    android:text="Imagen de la burbuja"
                     android:textColor="#FFFFFF"
-                    android:backgroundTint="#2C2C2E"
-                    app:cornerRadius="8dp" />
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
 
-                <Space android:layout_width="8dp" android:layout_height="1dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_eleven_test"
-                    android:layout_width="0dp"
+                <TextView
+                    android:id="@+id/tv_bubble_image_state"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Probar"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#2C2C2E"
-                    app:cornerRadius="8dp" />
-
-                <Space android:layout_width="8dp" android:layout_height="1dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_eleven_use"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Usar"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#3D5AFE"
-                    app:cornerRadius="8dp" />
-
-                <Space android:layout_width="8dp" android:layout_height="1dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_eleven_delete"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Eliminar"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#C62828"
-                    app:cornerRadius="8dp" />
+                    android:text="Predeterminada activa"
+                    android:textColor="#8A8A93"
+                    android:textSize="12sp" />
             </LinearLayout>
-        </LinearLayout>
-    </ScrollView>
 
-    <!-- PANEL DERECHO (CONFIGURACIÓN) -->
+            <TextView
+                android:id="@+id/btn_choose_bubble_image"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Elegir\npersonalizada"
+                android:textColor="#3D5AFE"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:gravity="end" />
+        </LinearLayout>
+
+        <!-- Burbuja flotante -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_card_dark"
+            android:padding="14dp"
+            android:layout_marginBottom="10dp">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@android:drawable/ic_menu_manage"
+                app:tint="#3D5AFE" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:paddingStart="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Burbuja flotante"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_bubble_state"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Desactivada"
+                    android:textColor="#8A8A93"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switch_floating_bubble"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <!-- Control de accesibilidad -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_card_dark"
+            android:padding="14dp"
+            android:layout_marginBottom="10dp">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@android:drawable/ic_menu_manage"
+                app:tint="#3D5AFE" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:paddingStart="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Control de accesibilidad"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_accessibility_state"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Desactivado"
+                    android:textColor="#8A8A93"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/switch_accessibility_control"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <!-- Aplicaciones autorizadas -->
+        <LinearLayout
+            android:id="@+id/btn_authorized_apps"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_card_dark"
+            android:padding="14dp"
+            android:layout_marginBottom="10dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@android:drawable/ic_menu_myplaces"
+                app:tint="#3D5AFE" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:paddingStart="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Aplicaciones autorizadas"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Gestionar"
+                    android:textColor="#8A8A93"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@android:drawable/arrow_down_float"
+                app:tint="#8A8A93" />
+        </LinearLayout>
+
+        <!-- Voces (ElevenLabs) -->
+        <LinearLayout
+            android:id="@+id/btn_choose_voices"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_card_dark"
+            android:padding="14dp"
+            android:layout_marginBottom="10dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@android:drawable/ic_btn_speak_now"
+                app:tint="#3D5AFE" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:paddingStart="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Voces"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_voice_state"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ElevenLabs"
+                    android:textColor="#8A8A93"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@android:drawable/arrow_down_float"
+                app:tint="#8A8A93" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- PANEL DERECHO (CONFIGURACIÓN PRINCIPAL) -->
     <LinearLayout
         android:layout_width="340dp"
         android:layout_height="match_parent"
@@ -265,13 +437,13 @@
             android:textSize="18sp"
             android:layout_marginBottom="12dp" />
 
-         <TextView
-             android:layout_width="match_parent"
-             android:layout_height="wrap_content"
-             android:text="Motor IA, personalidad, nombres e idiomas"
-             android:textColor="#8A8A93"
-             android:textSize="12sp"
-             android:layout_marginBottom="12dp" />
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Motor IA, personalidad, nombres e idiomas"
+            android:textColor="#8A8A93"
+            android:textSize="12sp"
+            android:layout_marginBottom="12dp" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -320,332 +492,332 @@
                     android:orientation="vertical"
                     android:paddingBottom="40dp">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_model_name"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Nombre del modelo"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#2C2C2E"
-                    app:cornerRadius="12dp"
-                    android:layout_marginBottom="10dp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_model_name"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Nombre del modelo"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#2C2C2E"
+                        app:cornerRadius="12dp"
+                        android:layout_marginBottom="10dp" />
 
-                <Spinner
-                    android:id="@+id/spinner_backend"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/bg_input_rounded"
-                    android:padding="10dp"
-                    android:layout_marginBottom="10dp" />
+                    <Spinner
+                        android:id="@+id/spinner_backend"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_input_rounded"
+                        android:padding="10dp"
+                        android:layout_marginBottom="10dp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_backend"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="CPU / GPU / NPU"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#2C2C2E"
-                    app:cornerRadius="12dp"
-                    android:layout_marginBottom="10dp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_backend"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="CPU / GPU / NPU"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#2C2C2E"
+                        app:cornerRadius="12dp"
+                        android:layout_marginBottom="10dp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_load_model"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Cargar modelo"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#3D5AFE"
-                    app:cornerRadius="12dp"
-                    android:layout_marginBottom="10dp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_load_model"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Cargar modelo"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#3D5AFE"
+                        app:cornerRadius="12dp"
+                        android:layout_marginBottom="10dp" />
 
-                <TextView
-                    android:id="@+id/tv_model_loaded_name"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Modelo: Ninguno"
-                    android:textColor="#808080"
-                    android:textSize="12sp"
-                    android:layout_marginBottom="20dp" />
+                    <TextView
+                        android:id="@+id/tv_model_loaded_name"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Modelo: Ninguno"
+                        android:textColor="#808080"
+                        android:textSize="12sp"
+                        android:layout_marginBottom="20dp" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="CONFIGURACIÓN DEL MODELO"
-                    android:textColor="#3D5AFE"
-                    android:textStyle="bold"
-                    android:textSize="14sp"
-                    android:layout_marginBottom="12dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="CONFIGURACIÓN DEL MODELO"
+                        android:textColor="#3D5AFE"
+                        android:textStyle="bold"
+                        android:textSize="14sp"
+                        android:layout_marginBottom="12dp" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="CONTEXTO"
-                    android:textColor="#FFFFFF"
-                    android:textSize="12sp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="CONTEXTO"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
 
-                <SeekBar
-                    android:id="@+id/seek_context"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:max="10000"
-                    android:progress="7424" />
+                    <SeekBar
+                        android:id="@+id/seek_context"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:max="10000"
+                        android:progress="7424" />
 
-                <TextView
-                    android:id="@+id/tv_context_value"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="7424 tok"
-                    android:textColor="#808080"
-                    android:textSize="11sp"
-                    android:layout_marginBottom="8dp" />
+                    <TextView
+                        android:id="@+id/tv_context_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="7424 tok"
+                        android:textColor="#808080"
+                        android:textSize="11sp"
+                        android:layout_marginBottom="8dp" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="TEMPERATURA"
-                    android:textColor="#FFFFFF"
-                    android:textSize="12sp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="TEMPERATURA"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
 
-                <SeekBar
-                    android:id="@+id/seek_temperature"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:max="100"
-                    android:progress="70" />
+                    <SeekBar
+                        android:id="@+id/seek_temperature"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:max="100"
+                        android:progress="70" />
 
-                <TextView
-                    android:id="@+id/tv_temperature_value"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="0.7"
-                    android:textColor="#808080"
-                    android:textSize="11sp"
-                    android:layout_marginBottom="8dp" />
+                    <TextView
+                        android:id="@+id/tv_temperature_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0.7"
+                        android:textColor="#808080"
+                        android:textSize="11sp"
+                        android:layout_marginBottom="8dp" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="TOP K"
-                    android:textColor="#FFFFFF"
-                    android:textSize="12sp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="TOP K"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
 
-                <SeekBar
-                    android:id="@+id/seek_top_k"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:max="100"
-                    android:progress="40" />
+                    <SeekBar
+                        android:id="@+id/seek_top_k"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:max="100"
+                        android:progress="40" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="TOP P"
-                    android:textColor="#FFFFFF"
-                    android:textSize="12sp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="TOP P"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
 
-                <SeekBar
-                    android:id="@+id/seek_top_p"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:max="100"
-                    android:progress="90" />
+                    <SeekBar
+                        android:id="@+id/seek_top_p"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:max="100"
+                        android:progress="90" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="PERSONALIDAD"
-                    android:textColor="#3D5AFE"
-                    android:textStyle="bold"
-                    android:textSize="14sp"
-                    android:layout_marginTop="24dp"
-                    android:layout_marginBottom="12dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="PERSONALIDAD"
+                        android:textColor="#3D5AFE"
+                        android:textStyle="bold"
+                        android:textSize="14sp"
+                        android:layout_marginTop="24dp"
+                        android:layout_marginBottom="12dp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_personality_general"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Asistente General"
-                    android:textColor="#3D5AFE"
-                    android:backgroundTint="#2A2A2A"
-                    app:cornerRadius="8dp"
-                    android:layout_marginBottom="8dp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_personality_general"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Asistente General"
+                        android:textColor="#3D5AFE"
+                        android:backgroundTint="#2A2A2A"
+                        app:cornerRadius="8dp"
+                        android:layout_marginBottom="8dp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_personality_programmer"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Programador"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#2A2A2A"
-                    app:cornerRadius="8dp"
-                    android:layout_marginBottom="8dp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_personality_programmer"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Programador"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#2A2A2A"
+                        app:cornerRadius="8dp"
+                        android:layout_marginBottom="8dp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_personality_creative"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Creativo"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#2A2A2A"
-                    app:cornerRadius="8dp"
-                    android:layout_marginBottom="8dp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_personality_creative"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Creativo"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#2A2A2A"
+                        app:cornerRadius="8dp"
+                        android:layout_marginBottom="8dp" />
 
-                <EditText
-                    android:id="@+id/et_personality_custom"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/bg_input_rounded"
-                    android:hint="Escribe tu personalidad..."
-                    android:padding="12dp"
-                    android:textColor="#FFFFFF"
-                    android:textColorHint="#808080"
-                    android:layout_marginBottom="8dp" />
+                    <EditText
+                        android:id="@+id/et_personality_custom"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_input_rounded"
+                        android:hint="Escribe tu personalidad..."
+                        android:padding="12dp"
+                        android:textColor="#FFFFFF"
+                        android:textColorHint="#808080"
+                        android:layout_marginBottom="8dp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_save_custom_personality"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="end"
-                    android:text="Guardar"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#3D5AFE"
-                    app:cornerRadius="8dp"
-                    android:layout_marginBottom="8dp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_save_custom_personality"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="end"
+                        android:text="Guardar"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#3D5AFE"
+                        app:cornerRadius="8dp"
+                        android:layout_marginBottom="8dp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_delete_custom_personality"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="end"
-                    android:text="Eliminar"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#C62828"
-                    app:cornerRadius="8dp"
-                    android:layout_marginBottom="20dp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_delete_custom_personality"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="end"
+                        android:text="Eliminar"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#C62828"
+                        app:cornerRadius="8dp"
+                        android:layout_marginBottom="20dp" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="CONFIGURACIÓN DE NOMBRES"
-                    android:textColor="#3D5AFE"
-                    android:textStyle="bold"
-                    android:textSize="14sp"
-                    android:layout_marginTop="24dp"
-                    android:layout_marginBottom="12dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="CONFIGURACIÓN DE NOMBRES"
+                        android:textColor="#3D5AFE"
+                        android:textStyle="bold"
+                        android:textSize="14sp"
+                        android:layout_marginTop="24dp"
+                        android:layout_marginBottom="12dp" />
 
-                <EditText
-                    android:id="@+id/et_ai_name_custom"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/bg_input_rounded"
-                    android:hint="Nombre de la IA"
-                    android:padding="12dp"
-                    android:textColor="#FFFFFF"
-                    android:textColorHint="#808080"
-                    android:layout_marginBottom="8dp" />
+                    <EditText
+                        android:id="@+id/et_ai_name_custom"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_input_rounded"
+                        android:hint="Nombre de la IA"
+                        android:padding="12dp"
+                        android:textColor="#FFFFFF"
+                        android:textColorHint="#808080"
+                        android:layout_marginBottom="8dp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_save_ai_name"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Guardar nombre"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#3D5AFE"
-                    app:cornerRadius="8dp"
-                    android:layout_marginBottom="16dp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_save_ai_name"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Guardar nombre"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#3D5AFE"
+                        app:cornerRadius="8dp"
+                        android:layout_marginBottom="16dp" />
 
-                <EditText
-                    android:id="@+id/et_user_name"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/bg_input_rounded"
-                    android:hint="Nombre del usuario"
-                    android:padding="12dp"
-                    android:textColor="#FFFFFF"
-                    android:textColorHint="#808080"
-                    android:layout_marginBottom="8dp" />
+                    <EditText
+                        android:id="@+id/et_user_name"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_input_rounded"
+                        android:hint="Nombre del usuario"
+                        android:padding="12dp"
+                        android:textColor="#FFFFFF"
+                        android:textColorHint="#808080"
+                        android:layout_marginBottom="8dp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_save_user_name"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Guardar usuario"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#3D5AFE"
-                    app:cornerRadius="8dp"
-                    android:layout_marginBottom="20dp" />
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_save_user_name"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Guardar usuario"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#3D5AFE"
+                        app:cornerRadius="8dp"
+                        android:layout_marginBottom="20dp" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="IDIOMAS"
-                    android:textColor="#3D5AFE"
-                    android:textStyle="bold"
-                    android:textSize="14sp"
-                    android:layout_marginBottom="12dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="IDIOMAS"
+                        android:textColor="#3D5AFE"
+                        android:textStyle="bold"
+                        android:textSize="14sp"
+                        android:layout_marginBottom="12dp" />
 
-                <Button
-                    android:id="@+id/btnLanguageEs"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Español (Español)"
-                    android:textColor="#3D5AFE"
-                    android:backgroundTint="#2A2A2A"
-                    android:stateListAnimator="@null" />
+                    <Button
+                        android:id="@+id/btnLanguageEs"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Español (Español)"
+                        android:textColor="#3D5AFE"
+                        android:backgroundTint="#2A2A2A"
+                        android:stateListAnimator="@null" />
 
-                <Button
-                    android:id="@+id/btnLanguageEn"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Inglés (English)"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#2A2A2A"
-                    android:stateListAnimator="@null" />
+                    <Button
+                        android:id="@+id/btnLanguageEn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Inglés (English)"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#2A2A2A"
+                        android:stateListAnimator="@null" />
 
-                <Button
-                    android:id="@+id/btnLanguageRu"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Ruso (Русский)"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#2A2A2A"
-                    android:stateListAnimator="@null" />
+                    <Button
+                        android:id="@+id/btnLanguageRu"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Ruso (Русский)"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#2A2A2A"
+                        android:stateListAnimator="@null" />
 
-                <Button
-                    android:id="@+id/btnLanguageZh"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Chino (中文)"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#2A2A2A"
-                    android:stateListAnimator="@null" />
+                    <Button
+                        android:id="@+id/btnLanguageZh"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Chino (中文)"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#2A2A2A"
+                        android:stateListAnimator="@null" />
 
-                <Button
-                    android:id="@+id/btnLanguageKo"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Coreano (한국어)"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#2A2A2A"
-                    android:stateListAnimator="@null" />
+                    <Button
+                        android:id="@+id/btnLanguageKo"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Coreano (한국어)"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#2A2A2A"
+                        android:stateListAnimator="@null" />
 
-                <Button
-                    android:id="@+id/btnLanguageJa"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Japonés (日本語)"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#2A2A2A"
-                    android:stateListAnimator="@null" />
+                    <Button
+                        android:id="@+id/btnLanguageJa"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Japonés (日本語)"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#2A2A2A"
+                        android:stateListAnimator="@null" />
 
-                <Button
-                    android:id="@+id/btnLanguagePt"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Portugués (Português)"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="#2A2A2A"
-                    android:stateListAnimator="@null" />
+                    <Button
+                        android:id="@+id/btnLanguagePt"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Portugués (Português)"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#2A2A2A"
+                        android:stateListAnimator="@null" />
 
                 </LinearLayout>
             </ScrollView>
@@ -655,4 +827,3 @@
         </ViewFlipper>
     </LinearLayout>
 </androidx.drawerlayout.widget.DrawerLayout>
-
