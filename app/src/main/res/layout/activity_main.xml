@@ -320,6 +320,7 @@
             android:layout_weight="1"
             android:animateFirstView="false">
 
+            <!-- ================= PAGE 0: CONFIGURACIÓN PRINCIPAL ================= -->
             <ScrollView
                 android:layout_width="match_parent"
                 android:layout_height="match_parent">
@@ -660,8 +661,175 @@
                 </LinearLayout>
             </ScrollView>
 
-            <include layout="@layout/layout_download_gguf" />
-            <include layout="@layout/layout_download_tts" />
+            <!-- ================= PAGE 1: DESCARGAS GGUF ================= -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="14dp">
+
+                    <ImageButton
+                        android:id="@+id/btn_back_from_gguf_download"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:background="@drawable/bg_rounded_button"
+                        android:src="@drawable/ic_back"
+                        app:tint="#FFFFFF" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:text="MODELOS GGUF"
+                        android:textColor="#3D5AFE"
+                        android:textStyle="bold"
+                        android:textSize="16sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="14dp">
+
+                    <EditText
+                        android:id="@+id/et_gguf_url"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_input_rounded"
+                        android:hint="URL del modelo (.gguf / .litertlm)"
+                        android:padding="10dp"
+                        android:textColor="#FFFFFF"
+                        android:textColorHint="#808080"
+                        android:textSize="12sp"
+                        android:inputType="textUri"
+                        android:maxLines="1"
+                        android:layout_marginEnd="8dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_add_gguf_url"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="AÑADIR"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#3D5AFE"
+                        app:cornerRadius="8dp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tv_empty_gguf_downloads"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="No hay descargas de modelos GGUF"
+                    android:textColor="#808080"
+                    android:textSize="12sp"
+                    android:gravity="center"
+                    android:layout_marginTop="20dp" />
+
+                <ScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1">
+
+                    <LinearLayout
+                        android:id="@+id/downloads_container_gguf"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
+                </ScrollView>
+            </LinearLayout>
+
+            <!-- ================= PAGE 2: DESCARGAS TTS ================= -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="14dp">
+
+                    <ImageButton
+                        android:id="@+id/btn_back_from_tts_download"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:background="@drawable/bg_rounded_button"
+                        android:src="@drawable/ic_back"
+                        app:tint="#FFFFFF" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:text="VOCES TTS"
+                        android:textColor="#3D5AFE"
+                        android:textStyle="bold"
+                        android:textSize="16sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="14dp">
+
+                    <EditText
+                        android:id="@+id/et_tts_url"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_input_rounded"
+                        android:hint="URL de la voz TTS (.onnx)"
+                        android:padding="10dp"
+                        android:textColor="#FFFFFF"
+                        android:textColorHint="#808080"
+                        android:textSize="12sp"
+                        android:inputType="textUri"
+                        android:maxLines="1"
+                        android:layout_marginEnd="8dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_add_tts_url"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="AÑADIR"
+                        android:textColor="#FFFFFF"
+                        android:backgroundTint="#3D5AFE"
+                        app:cornerRadius="8dp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tv_empty_tts_downloads"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="No hay descargas de voces TTS"
+                    android:textColor="#808080"
+                    android:textSize="12sp"
+                    android:gravity="center"
+                    android:layout_marginTop="20dp" />
+
+                <ScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1">
+
+                    <LinearLayout
+                        android:id="@+id/downloads_container_tts"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
+                </ScrollView>
+            </LinearLayout>
         </ViewFlipper>
     </LinearLayout>
 </androidx.drawerlayout.widget.DrawerLayout>
