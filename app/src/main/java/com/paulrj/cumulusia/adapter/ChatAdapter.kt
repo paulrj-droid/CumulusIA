@@ -1,4 +1,4 @@
-package com.cumulusia.app.adapter
+package com.paulrj.cumulusia.adapter
 
 import android.graphics.Color
 import android.net.Uri
@@ -11,8 +11,8 @@ import android.widget.LinearLayout
 import android.widget.Space
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
-import com.cumulusia.app.R
-import com.cumulusia.app.model.ChatMessage
+import com.paulrj.cumulusia.R
+import com.paulrj.cumulusia.model.ChatMessage
 
 class ChatAdapter(
     private val messages: List<ChatMessage>,
@@ -83,4 +83,4 @@ class ChatAdapter(
     }
 
     override fun getItemCount(): Int = messages.size
-}
+    }
