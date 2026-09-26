@@ -48,7 +48,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="⏸ Pausar"
+            android:text="â¸ Pausar"
             android:textColor="#FFFFFF"
             android:backgroundTint="#2C2C2E"
             android:layout_marginEnd="6dp" />
@@ -58,7 +58,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="▶ Reanudar"
+            android:text="â–¶ Reanudar"
             android:textColor="#FFFFFF"
             android:backgroundTint="#3D5AFE"
             android:enabled="false"
@@ -69,7 +69,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="🗑 Eliminar"
+            android:text="ðŸ—‘ Eliminar"
             android:textColor="#FFFFFF"
             android:backgroundTint="#C62828" />
     </LinearLayout>
