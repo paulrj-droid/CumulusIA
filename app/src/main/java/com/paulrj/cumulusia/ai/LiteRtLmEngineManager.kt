@@ -24,7 +24,6 @@ object LiteRtLmEngineManager {
     private const val TAG = "CumulusLiteRtLM"
 
     private val engineMutex = Mutex()
-
     @Volatile
     private var engine: Engine? = null
 
