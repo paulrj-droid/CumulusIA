@@ -506,4 +506,3 @@ Java_com_paulrj_cumulusia_MainActivity_nativeReleaseModel(JNIEnv*, jobject) {
     std::lock_guard<std::mutex> lock(g_mutex);
     freeEngine();
 }
-
