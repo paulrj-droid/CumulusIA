@@ -14,7 +14,7 @@
         android:id="@+id/iv_ai_avatar"
         android:layout_width="32dp"
         android:layout_height="32dp"
-        android:src="@drawable/robot_ia"
+        android:src="@drawable/ic_cumulus_diamond"
         android:scaleType="centerCrop"
         android:background="@drawable/bg_circle_blue"
         android:padding="2dp"
