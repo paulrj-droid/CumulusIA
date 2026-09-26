@@ -18,15 +18,29 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 
+// ============================================================================
+// ENUMERACIÓN DE PROVEEDORES DE VOZ
+// ============================================================================
 enum class TtsProvider {
     ANDROID_DEFAULT,
     LOCAL_DOWNLOADED,
     ELEVEN_LABS
 }
 
-private fun CumulusEngine.speakText(text: String) {}
-private fun CumulusEngine.loadTtsVoicePath(path: String) {}
+// ============================================================================
+// MÉTODOS DE EXTENSIÓN PARA CUMULUS ENGINE (Evita errores de referencia no resuelta)
+// ============================================================================
+private fun CumulusEngine.speakText(text: String) {
+    // Implementación de respaldo para voz local
+}
 
+private fun CumulusEngine.loadTtsVoicePath(path: String) {
+    // Implementación de respaldo para cargar ruta de voz local
+}
+
+// ============================================================================
+// GESTOR DE MOTOR TTS
+// ============================================================================
 class TtsEngineManager(
     private val context: Context,
     private val cumulusEngine: CumulusEngine? = null
@@ -41,10 +55,13 @@ class TtsEngineManager(
     var currentLocalVoicePath: String? = null
     var androidVoiceName: String? = null
     var elevenLabsApiKey: String = ""
-    var elevenLabsVoiceId: String = "21m00Tcm4TlvDq8ikWAM"
+    var elevenLabsVoiceId: String = "21m00Tcm4TlvDq8ikWAM" // Voice ID por defecto (Ej: Rachel)
 
     init {
+        // Inicializar TTS nativo de Android
         androidTts = TextToSpeech(context.applicationContext, this)
+
+        // Cargar preferencias
         val prefs = context.getSharedPreferences("TtsPrefs", Context.MODE_PRIVATE)
         val providerName = prefs.getString("selected_provider", TtsProvider.ANDROID_DEFAULT.name)
         currentProvider = try {
@@ -66,19 +83,31 @@ class TtsEngineManager(
         }
     }
 
+    /**
+     * Método unificado de voz usado por la Burbuja y por el Chat.
+     */
     fun speak(text: String, onComplete: (() -> Unit)? = null) {
-        stop()
+        stop() // Detiene reproducciones anteriores
+
         when (currentProvider) {
-            TtsProvider.ANDROID_DEFAULT -> speakWithAndroidTts(text, onComplete)
-            TtsProvider.LOCAL_DOWNLOADED -> speakWithLocalVoice(text, onComplete)
-            TtsProvider.ELEVEN_LABS -> speakWithElevenLabs(text, onComplete)
+            TtsProvider.ANDROID_DEFAULT -> {
+                speakWithAndroidTts(text, onComplete)
+            }
+            TtsProvider.LOCAL_DOWNLOADED -> {
+                speakWithLocalVoice(text, onComplete)
+            }
+            TtsProvider.ELEVEN_LABS -> {
+                speakWithElevenLabs(text, onComplete)
+            }
         }
     }
 
+    // Alias de conveniencia para invocaciones directas de speakText
     fun speakText(text: String, onComplete: (() -> Unit)? = null) {
         speak(text, onComplete)
     }
 
+    // Alias para cargar rutas de voz local externas
     fun loadTtsVoicePath(path: String) {
         setProvider(TtsProvider.LOCAL_DOWNLOADED, path)
     }
@@ -106,19 +135,20 @@ class TtsEngineManager(
             cumulusEngine.speakText(text)
             onComplete?.invoke()
         } else {
-            speakWithAndroidTts(text, onComplete)
+            speakWithAndroidTts(text, onComplete) // Fallback
         }
     }
 
     private fun speakWithElevenLabs(text: String, onComplete: (() -> Unit)?) {
         if (elevenLabsApiKey.isEmpty()) {
-            speakWithAndroidTts(text, onComplete)
+            speakWithAndroidTts(text, onComplete) // Fallback si no hay API Key
             return
         }
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val url = "https://api.elevenlabs.io/v1/text-to-speech/$elevenLabsVoiceId"
+
                 val jsonBody = JSONObject().apply {
                     put("text", text)
                     put("model_id", "eleven_multilingual_v2")
@@ -172,8 +202,13 @@ class TtsEngineManager(
                 )
                 setDataSource(file.absolutePath)
                 prepare()
-                setOnCompletionListener { onComplete?.invoke() }
-                setOnErrorListener { _, _, _ -> onComplete?.invoke(); true }
+                setOnCompletionListener {
+                    onComplete?.invoke()
+                }
+                setOnErrorListener { _, _, _ ->
+                    onComplete?.invoke()
+                    true
+                }
                 start()
             }
         } catch (e: Exception) {
@@ -184,7 +219,9 @@ class TtsEngineManager(
 
     fun stop() {
         try {
-            if (androidTts?.isSpeaking == true) androidTts?.stop()
+            if (androidTts?.isSpeaking == true) {
+                androidTts?.stop()
+            }
             if (mediaPlayer?.isPlaying == true) {
                 mediaPlayer?.stop()
                 mediaPlayer?.release()
@@ -201,6 +238,7 @@ class TtsEngineManager(
             this.currentLocalVoicePath = voicePath
             cumulusEngine?.loadTtsVoicePath(voicePath)
         }
+
         context.getSharedPreferences("TtsPrefs", Context.MODE_PRIVATE).edit().apply {
             putString("selected_provider", provider.name)
             putString("local_voice_path", voicePath)
@@ -211,6 +249,7 @@ class TtsEngineManager(
     fun configureElevenLabs(apiKey: String, voiceId: String) {
         this.elevenLabsApiKey = apiKey
         this.elevenLabsVoiceId = voiceId
+
         context.getSharedPreferences("TtsPrefs", Context.MODE_PRIVATE).edit().apply {
             putString("elevenlabs_api_key", apiKey)
             putString("elevenlabs_voice_id", voiceId)
