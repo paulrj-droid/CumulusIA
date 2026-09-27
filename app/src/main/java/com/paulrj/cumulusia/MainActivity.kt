@@ -91,8 +91,9 @@ class MainActivity : AppCompatActivity() {
     private var settingsPageFlipper: ViewFlipper? = null
     private var btnOpenGgufDownloads: MaterialButton? = null
     private var btnOpenTtsDownloads: MaterialButton? = null
-    private var btnBackFromGgufDownload: MaterialButton? = null
-    private var btnBackFromTtsDownload: MaterialButton? = null
+    private var btnBackFromGgufDownload: ImageButton? = null
+    private var btnBackFromTtsDownload: ImageButton? = null
+    
     private var spinnerBackend: Spinner? = null
     private var btnLoadModel: MaterialButton? = null
     private var btnModelName: MaterialButton? = null
