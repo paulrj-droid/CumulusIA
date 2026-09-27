@@ -17,11 +17,18 @@ jobs:
       ANDROID_HOME: /opt/android-sdk
 
     steps:
-      - name: Install JDK, node y herramientas
+      - name: Install JDK 17, node y herramientas
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends openjdk-17-jdk-headless nodejs ca-certificates git || \
-          apt-get install -y --no-install-recommends openjdk-21-jdk-headless nodejs ca-certificates git
+          apt-get install -y --no-install-recommends nodejs ca-certificates git curl unzip
+          if ! apt-get install -y --no-install-recommends openjdk-17-jdk-headless; then
+            echo "openjdk-17 no disponible via apt, instalando Temurin 17 manualmente..."
+            curl -sL -o /tmp/jdk17.tar.gz "https://api.adoptium.net/v3/binary/latest/17/ga/linux/aarch64/jdk/hotspot/normal/eclipse"
+            mkdir -p /opt/jdk17
+            tar -xzf /tmp/jdk17.tar.gz -C /opt/jdk17 --strip-components=1
+            echo "JAVA_HOME=/opt/jdk17" >> "$GITHUB_ENV"
+            echo "/opt/jdk17/bin" >> "$GITHUB_PATH"
+          fi
           java -version 2>&1 || true
 
       - name: Install Gradle 8.7
@@ -62,4 +69,3 @@ jobs:
         with:
           name: app-full-debug
           path: ${{ github.workspace }}/repo/app/build/outputs/apk/debug/app-debug.apk
-
