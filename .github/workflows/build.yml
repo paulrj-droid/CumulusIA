@@ -60,6 +60,7 @@ jobs:
         working-directory: ${{ github.workspace }}/repo
         env:
           HEXAGON_SDK_ROOT: /opt/hexagon/6.6.0.0
+          GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=1g"
         run: |
           set +e
           gradle assembleDebug --no-daemon --console=plain | tee /tmp/build.log
