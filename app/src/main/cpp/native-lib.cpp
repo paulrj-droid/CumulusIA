@@ -151,6 +151,17 @@ static llama_model* loadModelFile(const char* path, const llama_model_params& pa
 #endif
 }
 
+// ✅ COMPATIBILIDAD DE API: llama_kv_cache_clear fue reemplazada por el nuevo
+//    sistema de memoria (llama_get_memory + llama_memory_clear) en tags nuevos
+//    de llama.cpp (ej. b9222). Tags viejos siguen usando llama_kv_cache_clear.
+static void clearKvCache(llama_context* ctx) {
+#ifdef CUMULUS_USE_MEMORY_API
+    llama_memory_clear(llama_get_memory(ctx), true);
+#else
+    llama_kv_cache_clear(ctx);
+#endif
+}
+
 // ============================================================================
 // Carga del modelo con enrutado CPU / GPU / NPU
 // ============================================================================
@@ -328,7 +339,7 @@ static jstring runInferenceCommon(JNIEnv* env, const std::string& prompt) {
     const int generationLimit = std::min(maxGen, (int)nCtx - n - 1);
     tokens.resize(n);
 
-    llama_kv_cache_clear(g_ctx);
+    clearKvCache(g_ctx);
 
     llama_batch batch = llama_batch_get_one(tokens.data(), n);
     if (llama_decode(g_ctx, batch) != 0) {
