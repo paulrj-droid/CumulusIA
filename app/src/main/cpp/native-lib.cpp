@@ -22,6 +22,19 @@
 #ifdef CUMULUS_HAS_MTMD
 #include "mtmd.h"
 #include "mtmd-helper.h"
+// Decodificador de imágenes (su código ya viene compilado dentro de mtmd)
+#include "stb/stb_image.h"
+// Decodificador de audio: copia privada solo para este archivo
+#define MINIAUDIO_IMPLEMENTATION
+#define MA_NO_ENCODING
+#define MA_NO_DEVICE_IO
+#define MA_NO_RESOURCE_MANAGER
+#define MA_NO_NODE_GRAPH
+#define MA_NO_ENGINE
+#define MA_NO_GENERATION
+#define MA_API static
+#define ma_atomic_global_lock cumulus_ma_atomic_global_lock
+#include "miniaudio/miniaudio.h"
 #endif
 
 // GPU disponible si el build trae Vulkan u OpenCL
@@ -507,6 +520,43 @@ static const std::string kSystemPrompt =
     "Eres Cumulus IA, un asistente útil, claro y conversacional. "
     "Responde en el idioma del usuario.";
 
+#ifdef CUMULUS_HAS_MTMD
+// Carga una imagen o un audio sin depender de las funciones "helper" de mtmd,
+// que cambian de forma entre versiones de llama.cpp
+static mtmd_bitmap* loadMediaBitmap(mtmd_context* ctx, const std::string& path) {
+    // 1) ¿Es audio? (miniaudio detecta wav/mp3/flac)
+    if (mtmd_support_audio(ctx)) {
+        const int sampleRate = mtmd_get_audio_sample_rate(ctx);
+        if (sampleRate > 0) {
+            ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, (ma_uint32)sampleRate);
+            ma_decoder dec;
+            if (ma_decoder_init_file(path.c_str(), &cfg, &dec) == MA_SUCCESS) {
+                std::vector<float> pcm;
+                float chunk[4096];
+                for (;;) {
+                    ma_uint64 got = 0;
+                    if (ma_decoder_read_pcm_frames(&dec, chunk, 4096, &got) != MA_SUCCESS || got == 0) break;
+                    pcm.insert(pcm.end(), chunk, chunk + got);
+                }
+                ma_decoder_uninit(&dec);
+                if (!pcm.empty()) {
+                    LOGI("🎧 Audio decodificado: %zu muestras a %d Hz", pcm.size(), sampleRate);
+                    return mtmd_bitmap_init_from_audio(pcm.size(), pcm.data());
+                }
+            }
+        }
+    }
+    // 2) Imagen (stb_image), convertida a RGB
+    int w = 0, h = 0, ch = 0;
+    unsigned char* rgb = stbi_load(path.c_str(), &w, &h, &ch, 3);
+    if (!rgb) return nullptr;
+    LOGI("👁️ Imagen decodificada: %dx%d", w, h);
+    mtmd_bitmap* bmp = mtmd_bitmap_init((uint32_t)w, (uint32_t)h, rgb);
+    stbi_image_free(rgb);
+    return bmp;
+}
+#endif
+
 // ============================================================================
 // 👁️ INFERENCIA CON IMAGEN (modelos de visión + mmproj)
 // ============================================================================
@@ -524,8 +574,8 @@ static jstring runInferenceWithImageCommon(JNIEnv* env, const std::string& promp
     const llama_vocab* vocab = llama_model_get_vocab(g_model);
     const uint32_t nCtx = llama_n_ctx(g_ctx);
 
-    // Sirve para imágenes (jpg/png/webp/bmp) y audio (wav/mp3/flac)
-    mtmd_bitmap* bmp = mtmd_helper_bitmap_init_from_file(g_mtmd, imagePath.c_str());
+    // Sirve para imágenes (jpg/png/bmp/gif) y audio (wav/mp3/flac)
+    mtmd_bitmap* bmp = loadMediaBitmap(g_mtmd, imagePath);
     if (!bmp) {
         LOGE("📎 No se pudo leer el archivo: %s", imagePath.c_str());
         return env->NewStringUTF("⚠️ No se pudo leer el archivo (formato no soportado).");
@@ -822,4 +872,3 @@ Java_com_paulrj_cumulusia_MainActivity_nativeRunInferenceWithMedia(
         JNIEnv* env, jobject, jstring prompt, jstring mediaPath) {
     return runInferenceWithImageCommon(env, jstringToStd(env, prompt), jstringToStd(env, mediaPath));
 }
-
