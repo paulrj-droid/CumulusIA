@@ -1227,7 +1227,7 @@ class MainActivity : AppCompatActivity() {
             showSettingsPage(PAGE_SETTINGS)
         }
 
-        val backends = arrayOf("⚡ NPU (Hexagon)", "💻 CPU (NEON)", "🎮 GPU (Vulkan)")
+        val backends = arrayOf("⚡ NPU (Hexagon)", "💻 CPU (NEON)", "🎮 GPU (Adreno)")
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, backends)
         spinnerBackend?.adapter = adapter
 
