@@ -194,7 +194,7 @@
                 android:id="@+id/btn_choose_voices"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Elegir voz TTS"
+                android:text="Voces guardadas" 
                 android:textColor="#FFFFFF"
                 android:backgroundTint="#2C2C2E"
                 app:cornerRadius="8dp"
