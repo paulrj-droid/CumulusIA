@@ -25,11 +25,34 @@ if (DEFINED ENV{HEXAGON_SDK_ROOT} AND NOT DEFINED HEXAGON_SDK_ROOT)
     set(HEXAGON_SDK_ROOT "$ENV{HEXAGON_SDK_ROOT}" CACHE PATH "")
 endif()
 
-set(CUMULUS_HAS_VULKAN OFF)
-set(CUMULUS_HAS_OPENCL OFF)
-set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+# ============================================================================
+# 🎮 GPU VULKAN
+# ============================================================================
+# 1) Encabezados de Vulkan (incluye vulkan.hpp, que el NDK no trae)
+FetchContent_Declare(
+    vulkan_headers
+    GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+    GIT_TAG        v1.4.304
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  cumulus_no_build
+)
+FetchContent_MakeAvailable(vulkan_headers)
+set(Vulkan_INCLUDE_DIR "${vulkan_headers_SOURCE_DIR}/include" CACHE PATH "" FORCE)
+message(STATUS "Vulkan headers: ${Vulkan_INCLUDE_DIR}")
+
+# 2) Compilador de shaders glslc (del sistema o, si no hay, el del NDK)
+if (EXISTS "/usr/bin/glslc")
+    set(Vulkan_GLSLC_EXECUTABLE "/usr/bin/glslc" CACHE FILEPATH "" FORCE)
+elseif (DEFINED CMAKE_ANDROID_NDK AND EXISTS "${CMAKE_ANDROID_NDK}/shader-tools/linux-x86_64/glslc")
+    set(Vulkan_GLSLC_EXECUTABLE "${CMAKE_ANDROID_NDK}/shader-tools/linux-x86_64/glslc" CACHE FILEPATH "" FORCE)
+endif()
+message(STATUS "glslc: ${Vulkan_GLSLC_EXECUTABLE}")
+
+set(GGML_VULKAN ON  CACHE BOOL "" FORCE)
 set(GGML_OPENCL OFF CACHE BOOL "" FORCE)
-message(STATUS "GPU Android desactivada, compilando por CPU")
+set(CUMULUS_HAS_VULKAN ON)
+set(CUMULUS_HAS_OPENCL OFF)
+message(STATUS "GPU Android: Vulkan ACTIVADO (CPU como respaldo)")
 
 FetchContent_Declare(
     llama
