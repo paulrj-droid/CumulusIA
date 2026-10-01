@@ -1250,12 +1250,14 @@ class MainActivity : AppCompatActivity() {
                         Toast.makeText(
                             this@MainActivity, 
                             "⚠️ NPU Hexagon aún en desarrollo.\n" +
-                            "La inferencia se ejecutará en GPU (Vulkan) o CPU como fallback.\n" +
+                            "La inferencia se ejecutará en GPU (Adreno) o CPU como fallback.\n" +
                             "La integración completa de NPU requiere SDK QNN de Qualcomm.",
                             Toast.LENGTH_LONG
                         ).show()
-                    } else if (selected == "🎮 GPU (Vulkan)") {
-                        Toast.makeText(this@MainActivity, "🎮 GPU activada — el modelo se cargará en tu GPU Vulkan", Toast.LENGTH_LONG).show()
+                    } else if (selected == "🎮 GPU (Adreno)") {
+                        Toast.makeText(this@MainActivity, "🎮 GPU activada — el modelo se cargará en tu GPU Adreno (OpenCL)", Toast.LENGTH_LONG).show()
+                            
+                        
                     } else if (selected == "💻 CPU (NEON)") {
                         Toast.makeText(this@MainActivity, "💻 CPU activada — modo compatible universal", Toast.LENGTH_SHORT).show()
                     }
