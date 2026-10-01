@@ -1,4 +1,4 @@
-name: Build Android APK (CPU)
+name: Build Android APK (CPU + Vulkan)
 
 on:
   push:
@@ -20,7 +20,8 @@ jobs:
       - name: Install JDK 17, node y herramientas
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends nodejs ca-certificates git curl unzip
+          apt-get install -y --no-install-recommends nodejs ca-certificates git curl unzip g++ glslc
+          glslc --version || echo "glslc no disponible"
           if ! apt-get install -y --no-install-recommends openjdk-17-jdk-headless; then
             echo "openjdk-17 no disponible via apt, instalando Temurin 17 manualmente..."
             ARCH=$(dpkg --print-architecture)
@@ -56,7 +57,7 @@ jobs:
           printf '24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n' > "$ANDROID_HOME/licenses/android-sdk-license"
           printf '84831b9409646a918e30573bab4c9c91346d8abd\n' > "$ANDROID_HOME/licenses/android-sdk-preview-license"
 
-      - name: Build APK (CPU)
+      - name: Build APK (CPU + Vulkan)
         working-directory: ${{ github.workspace }}/repo
         env:
           HEXAGON_SDK_ROOT: /opt/hexagon/6.6.0.0
@@ -66,9 +67,11 @@ jobs:
           gradle assembleDebug --no-daemon --console=plain | tee /tmp/build.log
           CODE=${PIPESTATUS[0]}
           if [ "$CODE" -ne 0 ]; then
-            echo '================= ERROR CMAKE (diagnostico) ================='
+            echo '================= ERRORES (diagnostico) ================='
+            grep -n -E 'CMake Error|error:|Error:|FAILED|not found|Could not' /tmp/build.log | head -n 60
+            echo '================= ERROR CMAKE (detalle) ================='
             grep -B 5 -A 25 'CMake Error' /tmp/build.log | head -n 120
-            echo '============================================================='
+            echo '========================================================='
           fi
           exit $CODE
 
