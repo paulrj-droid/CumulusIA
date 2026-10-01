@@ -60,6 +60,9 @@ set(SPIRV-Headers_FOUND TRUE)
 ")
 set(SPIRV-Headers_DIR "${_SPIRV_CFG_DIR}" CACHE PATH "" FORCE)
 message(STATUS "SPIRV-Headers: ${spirv_headers_SOURCE_DIR}/include")
+# Copia spirv/ junto a los encabezados de Vulkan, que ggml-vulkan ya incluye
+file(COPY "${spirv_headers_SOURCE_DIR}/include/spirv"
+     DESTINATION "${vulkan_headers_SOURCE_DIR}/include")
 
 # 2) Compilador de shaders glslc (del sistema o, si no hay, el del NDK)
 if (EXISTS "/usr/bin/glslc")
