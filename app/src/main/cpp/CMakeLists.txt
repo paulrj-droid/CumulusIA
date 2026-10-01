@@ -106,23 +106,29 @@ add_library(
 # ============================================================================
 set(CUMULUS_MTMD_DIR "${llama_SOURCE_DIR}/tools/mtmd")
 if (EXISTS "${CUMULUS_MTMD_DIR}/mtmd.h")
+    # Se toman todos los .cpp de mtmd (cambian entre versiones de llama.cpp),
+    # menos las herramientas de consola
+    file(GLOB CUMULUS_MTMD_SOURCES "${CUMULUS_MTMD_DIR}/*.cpp")
+    list(FILTER CUMULUS_MTMD_SOURCES EXCLUDE REGEX ".*(-cli|deprecation-warning)\\.cpp$")
     file(GLOB CUMULUS_MTMD_MODEL_SOURCES "${CUMULUS_MTMD_DIR}/models/*.cpp")
     add_library(
         cumulus_mtmd
         STATIC
-        ${CUMULUS_MTMD_DIR}/mtmd.cpp
-        ${CUMULUS_MTMD_DIR}/mtmd-audio.cpp
-        ${CUMULUS_MTMD_DIR}/mtmd-image.cpp
-        ${CUMULUS_MTMD_DIR}/mtmd-helper.cpp
-        ${CUMULUS_MTMD_DIR}/clip.cpp
+        ${CUMULUS_MTMD_SOURCES}
         ${CUMULUS_MTMD_MODEL_SOURCES}
     )
     set_target_properties(cumulus_mtmd PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    target_include_directories(cumulus_mtmd PUBLIC  "${CUMULUS_MTMD_DIR}")
-    target_include_directories(cumulus_mtmd PRIVATE "${llama_SOURCE_DIR}" "${llama_SOURCE_DIR}/vendor")
+    target_include_directories(cumulus_mtmd PUBLIC "${CUMULUS_MTMD_DIR}" "${llama_SOURCE_DIR}/vendor")
+    target_include_directories(cumulus_mtmd PRIVATE "${llama_SOURCE_DIR}")
     target_compile_features(cumulus_mtmd PRIVATE cxx_std_17)
     target_compile_options(cumulus_mtmd PRIVATE -Wno-cast-qual -Wno-missing-prototypes)
     target_link_libraries(cumulus_mtmd PUBLIC llama ggml)
+    # Versiones nuevas de llama.cpp separan estas librerías auxiliares
+    foreach(_vendor_lib vendor::hash vendor::miniaudio vendor::stb vendor::sheredom)
+        if (TARGET ${_vendor_lib})
+            target_link_libraries(cumulus_mtmd PRIVATE ${_vendor_lib})
+        endif()
+    endforeach()
     target_link_libraries(cumulus_native cumulus_mtmd)
     target_compile_definitions(cumulus_native PRIVATE CUMULUS_HAS_MTMD)
     message(STATUS "Visión (mtmd) ACTIVADA")
@@ -170,4 +176,3 @@ if (GGML_HEXAGON)
         ggml-base
     )
 endif()
-
