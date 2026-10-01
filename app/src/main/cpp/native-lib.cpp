@@ -184,7 +184,10 @@ static bool initVisionLocked() {
         return false;
     }
     LOGI("👁️ Visión activada con: %s", g_mmprojPath.c_str());
-    return mtmd_support_vision(g_mtmd);
+    LOGI("👁️ Imágenes: %s | 🎧 Audio: %s",
+         mtmd_support_vision(g_mtmd) ? "SÍ" : "NO",
+         mtmd_support_audio(g_mtmd) ? "SÍ" : "NO");
+    return true;
 #else
     LOGI("👁️ Este build no incluye visión (mtmd)");
     return false;
@@ -521,14 +524,28 @@ static jstring runInferenceWithImageCommon(JNIEnv* env, const std::string& promp
     const llama_vocab* vocab = llama_model_get_vocab(g_model);
     const uint32_t nCtx = llama_n_ctx(g_ctx);
 
+    // Sirve para imágenes (jpg/png/webp/bmp) y audio (wav/mp3/flac)
     mtmd_bitmap* bmp = mtmd_helper_bitmap_init_from_file(g_mtmd, imagePath.c_str());
     if (!bmp) {
-        LOGE("👁️ No se pudo leer la imagen: %s", imagePath.c_str());
-        return env->NewStringUTF("⚠️ No se pudo leer la imagen.");
+        LOGE("📎 No se pudo leer el archivo: %s", imagePath.c_str());
+        return env->NewStringUTF("⚠️ No se pudo leer el archivo (formato no soportado).");
     }
+    const bool isAudio = mtmd_bitmap_is_audio(bmp);
+    if (isAudio && !mtmd_support_audio(g_mtmd)) {
+        mtmd_bitmap_free(bmp);
+        return env->NewStringUTF("⚠️ Este modelo/mmproj no entiende audio, solo imágenes.");
+    }
+    if (!isAudio && !mtmd_support_vision(g_mtmd)) {
+        mtmd_bitmap_free(bmp);
+        return env->NewStringUTF("⚠️ Este modelo/mmproj no entiende imágenes, solo audio.");
+    }
+    LOGI("📎 Archivo multimodal: %s (%s)", imagePath.c_str(), isAudio ? "audio" : "imagen");
 
+    const std::string defaultAsk = isAudio
+        ? std::string("Transcribe y resume este audio.")
+        : std::string("Describe esta imagen.");
     const std::string userText = std::string(mtmd_default_marker()) + "\n" +
-        (prompt.empty() ? std::string("Describe esta imagen.") : prompt);
+        (prompt.empty() ? defaultAsk : prompt);
     const std::string formatted = buildChatPrompt(kSystemPrompt, userText);
 
     mtmd_input_text txt;
@@ -581,6 +598,19 @@ static void setMmprojCommon(const std::string& path) {
     g_mmprojPath = path;
     LOGI("👁️ mmproj seleccionado: %s", path.empty() ? "(ninguno)" : path.c_str());
     if (g_modelLoaded) initVisionLocked(); else freeVision();
+}
+
+// "vision", "audio", "vision,audio" o "" según lo que entienda el mmproj
+static std::string mediaCapsCommon() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    std::string caps;
+#ifdef CUMULUS_HAS_MTMD
+    if (g_mtmd) {
+        if (mtmd_support_vision(g_mtmd)) caps += "vision";
+        if (mtmd_support_audio(g_mtmd)) { if (!caps.empty()) caps += ","; caps += "audio"; }
+    }
+#endif
+    return caps;
 }
 
 static bool hasVisionCommon() {
@@ -780,3 +810,16 @@ Java_com_paulrj_cumulusia_MainActivity_nativeRunInferenceWithImage(
         JNIEnv* env, jobject, jstring prompt, jstring imagePath) {
     return runInferenceWithImageCommon(env, jstringToStd(env, prompt), jstringToStd(env, imagePath));
 }
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_paulrj_cumulusia_MainActivity_nativeGetMediaCaps(JNIEnv* env, jobject) {
+    return env->NewStringUTF(mediaCapsCommon().c_str());
+}
+
+// Igual que nativeRunInferenceWithImage, pero acepta imagen o audio
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_paulrj_cumulusia_MainActivity_nativeRunInferenceWithMedia(
+        JNIEnv* env, jobject, jstring prompt, jstring mediaPath) {
+    return runInferenceWithImageCommon(env, jstringToStd(env, prompt), jstringToStd(env, mediaPath));
+}
+
