@@ -430,14 +430,14 @@
                     android:id="@+id/seek_context"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:max="10000"
-                    android:progress="7424" />
+                    android:max="8192"
+                    android:progress="2048" />
 
                 <TextView
                     android:id="@+id/tv_context_value"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="7424 tok"
+                    android:text="2048 tok"
                     android:textColor="#808080"
                     android:textSize="11sp"
                     android:layout_marginBottom="8dp" />
@@ -454,13 +454,13 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:max="100"
-                    android:progress="70" />
+                    android:progress="50" />
 
                 <TextView
                     android:id="@+id/tv_temperature_value"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="0.7"
+                    android:text="0.5"
                     android:textColor="#808080"
                     android:textSize="11sp"
                     android:layout_marginBottom="8dp" />
@@ -477,7 +477,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:max="100"
-                    android:progress="40" />
+                    android:progress="30" />
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -491,7 +491,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:max="100"
-                    android:progress="90" />
+                    android:progress="50" />
 
                 <TextView
                     android:layout_width="wrap_content"
