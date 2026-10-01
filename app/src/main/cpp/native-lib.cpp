@@ -34,6 +34,9 @@
 #define MA_NO_GENERATION
 #define MA_API static
 #define ma_atomic_global_lock cumulus_ma_atomic_global_lock
+#define ma_android_sdk_version cumulus_ma_android_sdk_version
+#define ma_log_callback_debug cumulus_ma_log_callback_debug
+#define ma_device_enum_callback cumulus_ma_device_enum_callback
 #include "miniaudio/miniaudio.h"
 #endif
 
@@ -872,3 +875,4 @@ Java_com_paulrj_cumulusia_MainActivity_nativeRunInferenceWithMedia(
         JNIEnv* env, jobject, jstring prompt, jstring mediaPath) {
     return runInferenceWithImageCommon(env, jstringToStd(env, prompt), jstringToStd(env, mediaPath));
 }
+
