@@ -99,6 +99,37 @@ add_library(
     native-lib.cpp
 )
 
+# ============================================================================
+# 👁️ VISIÓN (mtmd de llama.cpp): permite que modelos -VL lean imágenes
+#    usando su archivo mmproj. Se compila solo la librería (sin las
+#    herramientas de consola, que necesitan llama-common).
+# ============================================================================
+set(CUMULUS_MTMD_DIR "${llama_SOURCE_DIR}/tools/mtmd")
+if (EXISTS "${CUMULUS_MTMD_DIR}/mtmd.h")
+    file(GLOB CUMULUS_MTMD_MODEL_SOURCES "${CUMULUS_MTMD_DIR}/models/*.cpp")
+    add_library(
+        cumulus_mtmd
+        STATIC
+        ${CUMULUS_MTMD_DIR}/mtmd.cpp
+        ${CUMULUS_MTMD_DIR}/mtmd-audio.cpp
+        ${CUMULUS_MTMD_DIR}/mtmd-image.cpp
+        ${CUMULUS_MTMD_DIR}/mtmd-helper.cpp
+        ${CUMULUS_MTMD_DIR}/clip.cpp
+        ${CUMULUS_MTMD_MODEL_SOURCES}
+    )
+    set_target_properties(cumulus_mtmd PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_include_directories(cumulus_mtmd PUBLIC  "${CUMULUS_MTMD_DIR}")
+    target_include_directories(cumulus_mtmd PRIVATE "${llama_SOURCE_DIR}" "${llama_SOURCE_DIR}/vendor")
+    target_compile_features(cumulus_mtmd PRIVATE cxx_std_17)
+    target_compile_options(cumulus_mtmd PRIVATE -Wno-cast-qual -Wno-missing-prototypes)
+    target_link_libraries(cumulus_mtmd PUBLIC llama ggml)
+    target_link_libraries(cumulus_native cumulus_mtmd)
+    target_compile_definitions(cumulus_native PRIVATE CUMULUS_HAS_MTMD)
+    message(STATUS "Visión (mtmd) ACTIVADA")
+else()
+    message(STATUS "Visión (mtmd) no disponible en este tag de llama.cpp")
+endif()
+
 if (CUMULUS_HAS_VULKAN)
     target_compile_definitions(cumulus_native PRIVATE CUMULUS_HAS_VULKAN)
 endif()
@@ -139,3 +170,4 @@ if (GGML_HEXAGON)
         ggml-base
     )
 endif()
+
