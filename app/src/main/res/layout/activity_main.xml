@@ -385,6 +385,7 @@
                     android:id="@+id/btn_backend"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:visibility="gone"
                     android:text="CPU / GPU / NPU"
                     android:textColor="#FFFFFF"
                     android:backgroundTint="#2C2C2E"
