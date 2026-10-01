@@ -18,6 +18,12 @@
 #include "ggml-backend.h"
 #endif
 
+// 👁️ Visión: mtmd (multimodal) de llama.cpp
+#ifdef CUMULUS_HAS_MTMD
+#include "mtmd.h"
+#include "mtmd-helper.h"
+#endif
+
 // GPU disponible si el build trae Vulkan u OpenCL
 #if defined(CUMULUS_HAS_OPENCL)
 #define CUMULUS_HAS_GPU 1
@@ -43,6 +49,10 @@ static std::string g_backend = "💻 CPU (NEON)";
 static int   g_nCtx  = 1024;
 static float g_temp  = 0.7f;
 static std::mutex g_mutex;
+static std::string g_mmprojPath;
+#ifdef CUMULUS_HAS_MTMD
+static mtmd_context* g_mtmd = nullptr;
+#endif
 
 static std::string jstringToStd(JNIEnv* env, jstring jstr) {
     if (jstr == nullptr) return "";
@@ -142,7 +152,47 @@ static bool validateGgufFile(const std::string& path) {
     return magic[0]=='G' && magic[1]=='G' && magic[2]=='U' && magic[3]=='F';
 }
 
+static void freeVision() {
+#ifdef CUMULUS_HAS_MTMD
+    if (g_mtmd) { mtmd_free(g_mtmd); g_mtmd = nullptr; LOGD("Visión liberada"); }
+#endif
+}
+
+// Carga el mmproj elegido (si hay) para el modelo actual
+static bool initVisionLocked() {
+    freeVision();
+#ifdef CUMULUS_HAS_MTMD
+    if (!g_model || g_mmprojPath.empty()) return false;
+    if (!validateGgufFile(g_mmprojPath)) {
+        LOGE("👁️ mmproj inválido: %s", g_mmprojPath.c_str());
+        return false;
+    }
+    mtmd_context_params p = mtmd_context_params_default();
+    p.use_gpu = g_lastUsedGpu;
+    p.print_timings = false;
+    unsigned hw = std::thread::hardware_concurrency();
+    p.n_threads = (int)std::min(8u, std::max(2u, hw > 1 ? hw - 1 : 2u));
+    p.warmup = false;
+    g_mtmd = mtmd_init_from_file(g_mmprojPath.c_str(), g_model, p);
+    if (!g_mtmd && p.use_gpu) {
+        LOGE("👁️ mmproj falló en GPU; reintentando en CPU");
+        p.use_gpu = false;
+        g_mtmd = mtmd_init_from_file(g_mmprojPath.c_str(), g_model, p);
+    }
+    if (!g_mtmd) {
+        LOGE("👁️ No se pudo cargar el mmproj (¿no corresponde a este modelo?)");
+        return false;
+    }
+    LOGI("👁️ Visión activada con: %s", g_mmprojPath.c_str());
+    return mtmd_support_vision(g_mtmd);
+#else
+    LOGI("👁️ Este build no incluye visión (mtmd)");
+    return false;
+#endif
+}
+
 static void freeEngine() {
+    freeVision();
     if (g_sampler) { llama_sampler_free(g_sampler); g_sampler = nullptr; }
     if (g_ctx)     { llama_free(g_ctx);             g_ctx = nullptr; }
     if (g_model)   { llama_model_free(g_model);     g_model = nullptr; }
@@ -287,6 +337,7 @@ static jboolean loadModelLocked(const std::string& path) {
     llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 
     g_modelLoaded = true;
+    initVisionLocked();
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0).count();
 
@@ -376,6 +427,32 @@ static void trimSpaces(std::string& text) {
     text = text.substr(start, end - start + 1);
 }
 
+// Genera la respuesta token por token (texto e imagen usan lo mismo)
+static std::string generateReply(const llama_vocab* vocab, int generationLimit) {
+    std::string result;
+    char buf[256];
+    for (int i = 0; i < generationLimit; i++) {
+        llama_token tok = llama_sampler_sample(g_sampler, g_ctx, -1);
+        if (tok < 0) break;
+        if (llama_vocab_is_eog(vocab, tok)) break;
+        // special=false: no mostrar tokens de control (<|im_end|>, etc.)
+        int32_t written = llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, false);
+        if (written < 0) break;
+        result.append(buf, (size_t)written);
+
+        // ✋ Si el modelo empieza a inventar otro turno, se corta ahí
+        if (cutAtStopSequence(result)) {
+            LOGI("✋ Turno inventado detectado: respuesta cortada");
+            break;
+        }
+
+        llama_batch next = llama_batch_get_one(&tok, 1);
+        if (llama_decode(g_ctx, next) != 0) break;
+    }
+    trimSpaces(result);
+    return result;
+}
+
 static jstring runInferenceCommon(JNIEnv* env, const std::string& prompt) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_modelLoaded || !g_ctx || !g_model || !g_sampler) {
@@ -414,28 +491,7 @@ static jstring runInferenceCommon(JNIEnv* env, const std::string& prompt) {
         return env->NewStringUTF("⚠️ Error del motor al leer el mensaje.");
     }
 
-    std::string result;
-    char buf[256];
-    for (int i = 0; i < generationLimit; i++) {
-        llama_token tok = llama_sampler_sample(g_sampler, g_ctx, -1);
-        if (tok < 0) break;
-        if (llama_vocab_is_eog(vocab, tok)) break;
-        // special=false: no mostrar tokens de control (<|im_end|>, etc.)
-        int32_t written = llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, false);
-        if (written < 0) break;
-        result.append(buf, (size_t)written);
-
-        // ✋ Si el modelo empieza a inventar otro turno, se corta ahí
-        if (cutAtStopSequence(result)) {
-            LOGI("✋ Turno inventado detectado: respuesta cortada");
-            break;
-        }
-
-        llama_batch next = llama_batch_get_one(&tok, 1);
-        if (llama_decode(g_ctx, next) != 0) break;
-    }
-    trimSpaces(result);
-
+    std::string result = generateReply(vocab, generationLimit);
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0).count();
     LOGI("Inferencia en %ld ms: '%s'", (long)ms, result.c_str());
@@ -443,6 +499,99 @@ static jstring runInferenceCommon(JNIEnv* env, const std::string& prompt) {
     if (result.empty()) result = "(el modelo no generó respuesta)";
     return env->NewStringUTF(result.c_str());
 }
+
+static const std::string kSystemPrompt =
+    "Eres Cumulus IA, un asistente útil, claro y conversacional. "
+    "Responde en el idioma del usuario.";
+
+// ============================================================================
+// 👁️ INFERENCIA CON IMAGEN (modelos de visión + mmproj)
+// ============================================================================
+static jstring runInferenceWithImageCommon(JNIEnv* env, const std::string& prompt,
+                                           const std::string& imagePath) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_modelLoaded || !g_ctx || !g_model || !g_sampler) {
+        return env->NewStringUTF("⚠️ Motor sin modelo cargado todavía.");
+    }
+#ifdef CUMULUS_HAS_MTMD
+    if (!g_mtmd) {
+        return env->NewStringUTF("⚠️ No hay mmproj cargado. Elige el mmproj de este modelo en Configuración.");
+    }
+    auto t0 = std::chrono::steady_clock::now();
+    const llama_vocab* vocab = llama_model_get_vocab(g_model);
+    const uint32_t nCtx = llama_n_ctx(g_ctx);
+
+    mtmd_bitmap* bmp = mtmd_helper_bitmap_init_from_file(g_mtmd, imagePath.c_str());
+    if (!bmp) {
+        LOGE("👁️ No se pudo leer la imagen: %s", imagePath.c_str());
+        return env->NewStringUTF("⚠️ No se pudo leer la imagen.");
+    }
+
+    const std::string userText = std::string(mtmd_default_marker()) + "\n" +
+        (prompt.empty() ? std::string("Describe esta imagen.") : prompt);
+    const std::string formatted = buildChatPrompt(kSystemPrompt, userText);
+
+    mtmd_input_text txt;
+    txt.text = formatted.c_str();
+    txt.add_special = true;
+    txt.parse_special = true;
+
+    mtmd_input_chunks* chunks = mtmd_input_chunks_init();
+    const mtmd_bitmap* bitmaps[1] = { bmp };
+    int32_t res = mtmd_tokenize(g_mtmd, chunks, &txt, bitmaps, 1);
+    mtmd_bitmap_free(bmp);
+    if (res != 0) {
+        mtmd_input_chunks_free(chunks);
+        LOGE("👁️ mtmd_tokenize falló: %d", res);
+        return env->NewStringUTF("⚠️ No se pudo procesar la imagen.");
+    }
+
+    const size_t nTokens = mtmd_helper_get_n_tokens(chunks);
+    if (nTokens + 16 >= nCtx) {
+        mtmd_input_chunks_free(chunks);
+        LOGE("👁️ Imagen + texto = %zu tokens, contexto = %u", nTokens, nCtx);
+        return env->NewStringUTF("⚠️ La imagen no cabe en el contexto. Sube CONTEXTO a 4096 o más.");
+    }
+
+    clearKvCache(g_ctx);
+    llama_pos newPast = 0;
+    res = mtmd_helper_eval_chunks(g_mtmd, g_ctx, chunks, 0, 0,
+                                  (int32_t)llama_n_batch(g_ctx), true, &newPast);
+    mtmd_input_chunks_free(chunks);
+    if (res != 0) {
+        LOGE("👁️ mtmd_helper_eval_chunks falló: %d", res);
+        return env->NewStringUTF("⚠️ Error del motor al leer la imagen.");
+    }
+
+    const int generationLimit = std::min(256, (int)nCtx - (int)newPast - 1);
+    std::string result = generateReply(vocab, generationLimit);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    LOGI("👁️ Inferencia con imagen en %ld ms: '%s'", (long)ms, result.c_str());
+    if (result.empty()) result = "(el modelo no generó respuesta)";
+    return env->NewStringUTF(result.c_str());
+#else
+    (void)prompt; (void)imagePath;
+    return env->NewStringUTF("⚠️ Este build no incluye visión.");
+#endif
+}
+
+static void setMmprojCommon(const std::string& path) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_mmprojPath = path;
+    LOGI("👁️ mmproj seleccionado: %s", path.empty() ? "(ninguno)" : path.c_str());
+    if (g_modelLoaded) initVisionLocked(); else freeVision();
+}
+
+static bool hasVisionCommon() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+#ifdef CUMULUS_HAS_MTMD
+    return g_mtmd != nullptr;
+#else
+    return false;
+#endif
+}
+
 
 // ============================================================================
 // Helpers comunes usados por MainActivity
@@ -612,4 +761,22 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_paulrj_cumulusia_MainActivity_nativeReleaseModel(JNIEnv*, jobject) {
     std::lock_guard<std::mutex> lock(g_mutex);
     freeEngine();
+}
+// ============================================================================
+// 👁️ JNI — Visión (mmproj)
+// ============================================================================
+extern "C" JNIEXPORT void JNICALL
+Java_com_paulrj_cumulusia_MainActivity_nativeSetMmproj(JNIEnv* env, jobject, jstring path) {
+    setMmprojCommon(jstringToStd(env, path));
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_paulrj_cumulusia_MainActivity_nativeHasVision(JNIEnv*, jobject) {
+    return hasVisionCommon() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_paulrj_cumulusia_MainActivity_nativeRunInferenceWithImage(
+        JNIEnv* env, jobject, jstring prompt, jstring imagePath) {
+    return runInferenceWithImageCommon(env, jstringToStd(env, prompt), jstringToStd(env, imagePath));
 }
