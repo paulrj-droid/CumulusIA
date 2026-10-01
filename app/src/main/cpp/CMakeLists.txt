@@ -26,57 +26,45 @@ if (DEFINED ENV{HEXAGON_SDK_ROOT} AND NOT DEFINED HEXAGON_SDK_ROOT)
 endif()
 
 # ============================================================================
-# 🎮 GPU VULKAN
+# 🎮 GPU OPENCL (backend oficial de Qualcomm para GPUs Adreno / Snapdragon)
 # ============================================================================
-# 1) Encabezados de Vulkan (incluye vulkan.hpp, que el NDK no trae)
+# 1) Encabezados oficiales de OpenCL (Khronos)
 FetchContent_Declare(
-    vulkan_headers
-    GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
-    GIT_TAG        v1.4.304
+    opencl_headers
+    GIT_REPOSITORY https://github.com/KhronosGroup/OpenCL-Headers.git
+    GIT_TAG        v2024.10.24
     GIT_SHALLOW    TRUE
     SOURCE_SUBDIR  cumulus_no_build
 )
-FetchContent_MakeAvailable(vulkan_headers)
-set(Vulkan_INCLUDE_DIR "${vulkan_headers_SOURCE_DIR}/include" CACHE PATH "" FORCE)
-message(STATUS "Vulkan headers: ${Vulkan_INCLUDE_DIR}")
+FetchContent_MakeAvailable(opencl_headers)
+message(STATUS "OpenCL headers: ${opencl_headers_SOURCE_DIR}")
 
-# 1b) Encabezados SPIR-V (llama.cpp los pide con find_package(SPIRV-Headers))
+# 2) Cargador OpenCL (solo para enlazar; en el teléfono se usa el del sistema
+#    /vendor/lib64/libOpenCL.so, que se excluye del APK en build.gradle)
+set(OPENCL_ICD_LOADER_HEADERS_DIR "${opencl_headers_SOURCE_DIR}" CACHE PATH "" FORCE)
+set(OPENCL_ICD_LOADER_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPENCL_ICD_LOADER_BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
-    spirv_headers
-    GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Headers.git
-    GIT_TAG        vulkan-sdk-1.4.304.0
+    opencl_icd_loader
+    GIT_REPOSITORY https://github.com/KhronosGroup/OpenCL-ICD-Loader.git
+    GIT_TAG        v2024.10.24
     GIT_SHALLOW    TRUE
-    SOURCE_SUBDIR  cumulus_no_build
 )
-FetchContent_MakeAvailable(spirv_headers)
-set(_SPIRV_CFG_DIR "${CMAKE_BINARY_DIR}/cumulus_spirv_cfg")
-file(WRITE "${_SPIRV_CFG_DIR}/SPIRV-HeadersConfig.cmake"
-"if(NOT TARGET SPIRV-Headers::SPIRV-Headers)
-    add_library(SPIRV-Headers::SPIRV-Headers INTERFACE IMPORTED)
-    set_target_properties(SPIRV-Headers::SPIRV-Headers PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES \"${spirv_headers_SOURCE_DIR}/include\")
+FetchContent_MakeAvailable(opencl_icd_loader)
+if (NOT TARGET OpenCL::OpenCL)
+    add_library(OpenCL::OpenCL ALIAS OpenCL)
 endif()
-set(SPIRV-Headers_FOUND TRUE)
-")
-set(SPIRV-Headers_DIR "${_SPIRV_CFG_DIR}" CACHE PATH "" FORCE)
-message(STATUS "SPIRV-Headers: ${spirv_headers_SOURCE_DIR}/include")
-# Copia spirv/ junto a los encabezados de Vulkan, que ggml-vulkan ya incluye
-file(COPY "${spirv_headers_SOURCE_DIR}/include/spirv"
-     DESTINATION "${vulkan_headers_SOURCE_DIR}/include")
+set(OpenCL_INCLUDE_DIR "${opencl_headers_SOURCE_DIR}" CACHE PATH "" FORCE)
+set(OpenCL_LIBRARY "OpenCL" CACHE STRING "" FORCE)
 
-# 2) Compilador de shaders glslc (del sistema o, si no hay, el del NDK)
-if (EXISTS "/usr/bin/glslc")
-    set(Vulkan_GLSLC_EXECUTABLE "/usr/bin/glslc" CACHE FILEPATH "" FORCE)
-elseif (DEFINED CMAKE_ANDROID_NDK AND EXISTS "${CMAKE_ANDROID_NDK}/shader-tools/linux-x86_64/glslc")
-    set(Vulkan_GLSLC_EXECUTABLE "${CMAKE_ANDROID_NDK}/shader-tools/linux-x86_64/glslc" CACHE FILEPATH "" FORCE)
-endif()
-message(STATUS "glslc: ${Vulkan_GLSLC_EXECUTABLE}")
-
-set(GGML_VULKAN ON  CACHE BOOL "" FORCE)
-set(GGML_OPENCL OFF CACHE BOOL "" FORCE)
-set(CUMULUS_HAS_VULKAN ON)
-set(CUMULUS_HAS_OPENCL OFF)
-message(STATUS "GPU Android: Vulkan ACTIVADO (CPU como respaldo)")
+set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+set(GGML_OPENCL ON  CACHE BOOL "" FORCE)
+set(GGML_OPENCL_USE_ADRENO_KERNELS ON CACHE BOOL "" FORCE)
+set(GGML_OPENCL_EMBED_KERNELS ON CACHE BOOL "" FORCE)
+set(CUMULUS_HAS_VULKAN OFF)
+set(CUMULUS_HAS_OPENCL ON)
+message(STATUS "GPU Android: OpenCL (Adreno) ACTIVADO (CPU como respaldo)")
 
 FetchContent_Declare(
     llama
