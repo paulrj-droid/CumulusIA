@@ -10,6 +10,7 @@
 #include <dlfcn.h>
 #include <unistd.h>
 #include <sys/system_properties.h>
+#include <cstdlib>
 #include "llama.h"
 
 // ✅ PROTEGIDO: ggml-backend.h solo existe en tags nuevos de llama.cpp
@@ -440,6 +441,23 @@ static std::string npuInfoString() {
     out += "Build ggml-hexagon: 🔜 se activa en la Ronda 3 (Docker de Qualcomm)";
 #endif
     return out;
+}
+
+// ============================================================================
+// 🎮 AJUSTES VULKAN PARA GPUs MÓVILES (Adreno / Mali)
+// Se ejecuta al cargar la librería, antes de que ggml inicialice Vulkan.
+// Desactiva funciones que en drivers móviles suelen producir texto basura.
+// ============================================================================
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM*, void*) {
+#ifdef CUMULUS_HAS_VULKAN
+    setenv("GGML_VK_DISABLE_F16", "1", 1);
+    setenv("GGML_VK_DISABLE_COOPMAT", "1", 1);
+    setenv("GGML_VK_DISABLE_COOPMAT2", "1", 1);
+    setenv("GGML_VK_DISABLE_INTEGER_DOT_PRODUCT", "1", 1);
+    setenv("GGML_VK_DISABLE_BFLOAT16", "1", 1);
+    LOGI("🎮 Vulkan: modo compatible para GPU móvil activado");
+#endif
+    return JNI_VERSION_1_6;
 }
 
 // ============================================================================
