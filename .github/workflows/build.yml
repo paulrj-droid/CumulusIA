@@ -10,6 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/snapdragon-toolchain/arm64-android:v0.7
+      volumes:
+        - /usr/share/dotnet:/host_free/dotnet
+        - /usr/local/lib/android:/host_free/android
+        - /opt/ghc:/host_free/ghc
+        - /usr/local/.ghcup:/host_free/ghcup
 
     env:
       LLAMA_GIT_TAG: v0.2.0
@@ -17,6 +22,14 @@ jobs:
       ANDROID_HOME: /opt/android-sdk
 
     steps:
+      - name: Liberar espacio en disco
+        run: |
+          echo "Espacio antes:"
+          df -h / || true
+          rm -rf /host_free/dotnet/* /host_free/android/* /host_free/ghc/* /host_free/ghcup/* || true
+          echo "Espacio despues:"
+          df -h / || true
+
       - name: Install JDK 17, node y herramientas
         run: |
           apt-get update
@@ -43,6 +56,7 @@ jobs:
         run: |
           curl -sL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
           unzip -q /tmp/gradle.zip -d /opt
+          rm -f /tmp/gradle.zip
           echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
 
       - name: Clone repository
@@ -66,9 +80,11 @@ jobs:
           set +e
           gradle assembleDebug --no-daemon --console=plain | tee /tmp/build.log
           CODE=${PIPESTATUS[0]}
+          echo "Espacio al terminar:"
+          df -h / || true
           if [ "$CODE" -ne 0 ]; then
             echo '================= ERRORES (diagnostico) ================='
-            grep -n -E 'CMake Error|error:|Error:|FAILED|not found|Could not' /tmp/build.log | head -n 60
+            grep -n -E 'CMake Error|error:|Error:|FAILED|not found|Could not|No space' /tmp/build.log | head -n 60
             echo '================= ERROR CMAKE (detalle) ================='
             grep -B 5 -A 25 'CMake Error' /tmp/build.log | head -n 120
             echo '========================================================='
