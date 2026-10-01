@@ -736,9 +736,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun getSavedBackend(): String {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString("selected_ai_backend", "💻 CPU (NEON)") ?: "💻 CPU (NEON)"
+        val saved = prefs.getString("selected_ai_backend", "💻 CPU (NEON)") ?: "💻 CPU (NEON)"
+        return if (saved == "🎮 GPU (Vulkan)") "🎮 GPU (Adreno)" else saved
     }
-
+        
     private fun saveBackend(backend: String) {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit().putString("selected_ai_backend", backend).apply()
