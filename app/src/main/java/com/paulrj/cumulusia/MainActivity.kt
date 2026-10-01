@@ -1081,9 +1081,10 @@ class MainActivity : AppCompatActivity() {
         }.toTypedArray()
 
         AlertDialog.Builder(this)
-            .setTitle("Elegir voz para la IA")
-            .setMessage("Puedes elegir una voz del sistema, una TTS descargada o una voz real de ElevenLabs.")
+            .setTitle("Voces guardadas")
             .setSingleChoiceItems(labels, selectedIndex) { dialog, which ->
+            
+            
                 saveSelectedTtsVoice(elevenLabsApiKey, choices[which])
                 Toast.makeText(
                     this,
