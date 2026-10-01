@@ -318,6 +318,64 @@ static jboolean configureAndLoadModelCommon(
     return loadModelLocked(path);
 }
 
+// ============================================================================
+// 💬 FORMATO DE CHAT
+// Usa la plantilla de chat oficial que trae el propio modelo (dentro del GGUF),
+// así el modelo sabe exactamente dónde termina su turno. Si el modelo no trae
+// plantilla, se usa el formato genérico anterior como respaldo.
+// ============================================================================
+static std::string buildChatPrompt(const std::string& system, const std::string& user) {
+#ifdef CUMULUS_HAS_CHAT_TEMPLATE
+    const char* tmpl = llama_model_chat_template(g_model, nullptr);
+    if (tmpl != nullptr) {
+        llama_chat_message msgs[2] = {
+            { "system", system.c_str() },
+            { "user",   user.c_str()   },
+        };
+        std::vector<char> buf(system.size() + user.size() + 2048);
+        int32_t len = llama_chat_apply_template(tmpl, msgs, 2, true, buf.data(), (int32_t)buf.size());
+        if (len > (int32_t)buf.size()) {
+            buf.resize((size_t)len + 1);
+            len = llama_chat_apply_template(tmpl, msgs, 2, true, buf.data(), (int32_t)buf.size());
+        }
+        if (len > 0) {
+            LOGI("💬 Usando la plantilla de chat oficial del modelo");
+            return std::string(buf.data(), (size_t)len);
+        }
+        LOGE("⚠️ Plantilla del modelo no soportada; usando formato genérico");
+    } else {
+        LOGI("ℹ️ El modelo no trae plantilla de chat; usando formato genérico");
+    }
+#endif
+    return "### Sistema:\n" + system + "\n\n### Usuario:\n" + user + "\n\n### Asistente:\n";
+}
+
+// Corta la respuesta si el modelo empieza a escribir un turno nuevo por su cuenta
+static bool cutAtStopSequence(std::string& text) {
+    static const char* STOPS[] = {
+        "### Usuario", "### Sistema", "### Asistente", "###Usuario",
+        "\nUsuario:", "\nUser:", "\nTú:",
+        "<|im_start|>", "<|im_end|>", "<|endoftext|>", "<|eot_id|>",
+        "<|start_header_id|>", "<end_of_turn>", "<start_of_turn>"
+    };
+    size_t cut = std::string::npos;
+    for (const char* s : STOPS) {
+        size_t p = text.find(s);
+        if (p != std::string::npos && p < cut) cut = p;
+    }
+    if (cut == std::string::npos) return false;
+    text.erase(cut);
+    return true;
+}
+
+static void trimSpaces(std::string& text) {
+    const char* WS = " \t\r\n";
+    size_t start = text.find_first_not_of(WS);
+    if (start == std::string::npos) { text.clear(); return; }
+    size_t end = text.find_last_not_of(WS);
+    text = text.substr(start, end - start + 1);
+}
+
 static jstring runInferenceCommon(JNIEnv* env, const std::string& prompt) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_modelLoaded || !g_ctx || !g_model || !g_sampler) {
@@ -330,11 +388,10 @@ static jstring runInferenceCommon(JNIEnv* env, const std::string& prompt) {
     const uint32_t nCtx = llama_n_ctx(g_ctx);
     const int maxGen = 256;
 
-    const std::string formattedPrompt =
-        "### Sistema:\n"
+    const std::string systemPrompt =
         "Eres Cumulus IA, un asistente útil, claro y conversacional. "
-        "Responde en el idioma del usuario.\n\n"
-        "### Usuario:\n" + prompt + "\n\n### Asistente:\n";
+        "Responde en el idioma del usuario.";
+    const std::string formattedPrompt = buildChatPrompt(systemPrompt, prompt);
     std::vector<llama_token> tokens((size_t)nCtx);
     int n = llama_tokenize(vocab, formattedPrompt.c_str(), (int32_t)formattedPrompt.size(),
                            tokens.data(), (int32_t)tokens.size(), true, true);
@@ -358,18 +415,26 @@ static jstring runInferenceCommon(JNIEnv* env, const std::string& prompt) {
     }
 
     std::string result;
-    char buf[128];
+    char buf[256];
     for (int i = 0; i < generationLimit; i++) {
         llama_token tok = llama_sampler_sample(g_sampler, g_ctx, -1);
         if (tok < 0) break;
         if (llama_vocab_is_eog(vocab, tok)) break;
-        int32_t written = llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, true);
-        if (written <= 0) break;
+        // special=false: no mostrar tokens de control (<|im_end|>, etc.)
+        int32_t written = llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, false);
+        if (written < 0) break;
         result.append(buf, (size_t)written);
+
+        // ✋ Si el modelo empieza a inventar otro turno, se corta ahí
+        if (cutAtStopSequence(result)) {
+            LOGI("✋ Turno inventado detectado: respuesta cortada");
+            break;
+        }
 
         llama_batch next = llama_batch_get_one(&tok, 1);
         if (llama_decode(g_ctx, next) != 0) break;
     }
+    trimSpaces(result);
 
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0).count();
