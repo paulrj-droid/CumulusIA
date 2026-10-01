@@ -40,6 +40,27 @@ FetchContent_MakeAvailable(vulkan_headers)
 set(Vulkan_INCLUDE_DIR "${vulkan_headers_SOURCE_DIR}/include" CACHE PATH "" FORCE)
 message(STATUS "Vulkan headers: ${Vulkan_INCLUDE_DIR}")
 
+# 1b) Encabezados SPIR-V (llama.cpp los pide con find_package(SPIRV-Headers))
+FetchContent_Declare(
+    spirv_headers
+    GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Headers.git
+    GIT_TAG        vulkan-sdk-1.4.304.0
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  cumulus_no_build
+)
+FetchContent_MakeAvailable(spirv_headers)
+set(_SPIRV_CFG_DIR "${CMAKE_BINARY_DIR}/cumulus_spirv_cfg")
+file(WRITE "${_SPIRV_CFG_DIR}/SPIRV-HeadersConfig.cmake"
+"if(NOT TARGET SPIRV-Headers::SPIRV-Headers)
+    add_library(SPIRV-Headers::SPIRV-Headers INTERFACE IMPORTED)
+    set_target_properties(SPIRV-Headers::SPIRV-Headers PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES \"${spirv_headers_SOURCE_DIR}/include\")
+endif()
+set(SPIRV-Headers_FOUND TRUE)
+")
+set(SPIRV-Headers_DIR "${_SPIRV_CFG_DIR}" CACHE PATH "" FORCE)
+message(STATUS "SPIRV-Headers: ${spirv_headers_SOURCE_DIR}/include")
+
 # 2) Compilador de shaders glslc (del sistema o, si no hay, el del NDK)
 if (EXISTS "/usr/bin/glslc")
     set(Vulkan_GLSLC_EXECUTABLE "/usr/bin/glslc" CACHE FILEPATH "" FORCE)
