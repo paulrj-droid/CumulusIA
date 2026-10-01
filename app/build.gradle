@@ -23,10 +23,11 @@ android {
 
         externalNativeBuild {
             cmake {
-                cppFlags "-std=c++17"
+                cppFlags "-std=c++17", "-g0"
+                cFlags "-g0"
                 arguments "-DCMAKE_BUILD_TYPE=Release",
-                          "-DCMAKE_C_FLAGS_RELEASE=-O3",
-                          "-DCMAKE_CXX_FLAGS_RELEASE=-O3"
+                          "-DCMAKE_C_FLAGS_RELEASE=-O3 -g0",
+                          "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -g0"
             }
         }
     }
