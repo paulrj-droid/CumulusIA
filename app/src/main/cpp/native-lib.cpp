@@ -18,6 +18,15 @@
 #include "ggml-backend.h"
 #endif
 
+// GPU disponible si el build trae Vulkan u OpenCL
+#if defined(CUMULUS_HAS_OPENCL)
+#define CUMULUS_HAS_GPU 1
+#define CUMULUS_GPU_LABEL "🎮 GPU (OpenCL Adreno)"
+#elif defined(CUMULUS_HAS_VULKAN)
+#define CUMULUS_HAS_GPU 1
+#define CUMULUS_GPU_LABEL "🎮 GPU (Vulkan)"
+#endif
+
 #define LOG_TAG "CumulusNativeEngine"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -209,19 +218,19 @@ static jboolean loadModelLocked(const std::string& path) {
         LOGI("⚡ NPU solicitada, pero este build aún no incluye GGML_HEXAGON");
 #endif
         if (gpuLayers == 0) {
-#ifdef CUMULUS_HAS_VULKAN
+#ifdef CUMULUS_HAS_GPU
             gpuLayers = 999;
-            LOGI("⚡→ Fallback: NPU se ejecuta en GPU (Vulkan)");
+            LOGI("⚡→ Fallback: NPU se ejecuta en %s", CUMULUS_GPU_LABEL);
 #else
             LOGI("⚡→💻 Fallback: NPU se ejecuta en CPU");
 #endif
         }
     } else if (gpuReq) {
-#ifdef CUMULUS_HAS_VULKAN
+#ifdef CUMULUS_HAS_GPU
         gpuLayers = 999;
-        LOGI("🎮 Offloading completo al GPU (Vulkan)");
+        LOGI("🎮 Offloading completo a %s", CUMULUS_GPU_LABEL);
 #else
-        LOGE("⚠️ Usuario pidió GPU pero Vulkan NO está compilado, usando CPU");
+        LOGE("⚠️ Usuario pidió GPU pero no hay GPU compilada, usando CPU");
 #endif
     } else {
         LOGI("💻 Configurando para CPU solamente");
@@ -257,7 +266,7 @@ static jboolean loadModelLocked(const std::string& path) {
 
     g_ctx = llama_init_from_model(g_model, cparams);
     if (!g_ctx && usingGpu) {
-        LOGE("⚠️ Falló el contexto Vulkan; reintentando modelo y contexto en CPU");
+        LOGE("⚠️ Falló el contexto GPU; reintentando modelo y contexto en CPU");
         llama_model_free(g_model);
         g_model = nullptr;
         mparams.n_gpu_layers = 0;
@@ -285,7 +294,7 @@ static jboolean loadModelLocked(const std::string& path) {
     LOGI("✅ MODELO CARGADO en %ld ms", (long)ms);
     LOGI("Hardware real: %s",
          g_npuRequested ? (g_lastUsedGpu ? "⚡ NPU/HTP (o fallback GPU)" : "⚡→💻 fallback CPU")
-                        : (g_lastUsedGpu ? "🎮 GPU (Vulkan)" : "💻 CPU (NEON)"));
+                        : (g_lastUsedGpu ? "🎮 GPU" : "💻 CPU (NEON)"));
     LOGI("═══════════════════════════════════════════════════");
     return JNI_TRUE;
 }
@@ -405,17 +414,19 @@ static std::string engineInfoString() {
         }
         return "⚡ NPU→💻 CPU (fallback)";
     }
-    if (g_lastUsedGpu) return "🎮 GPU (Vulkan)";
+#ifdef CUMULUS_HAS_GPU
+    if (g_lastUsedGpu) return CUMULUS_GPU_LABEL;
+#endif
     return "💻 CPU (NEON)";
 }
 
 static std::string deviceCapsString() {
     NpuStatus npu = detectNpu();
     std::string caps = "💻 CPU: ✅ | ";
-#ifdef CUMULUS_HAS_VULKAN
-    caps += "🎮 GPU (Vulkan): ✅ | ";
+#ifdef CUMULUS_HAS_GPU
+    caps += std::string(CUMULUS_GPU_LABEL) + ": ✅ | ";
 #else
-    caps += "🎮 GPU (Vulkan): ❌ | ";
+    caps += "🎮 GPU: ❌ | ";
 #endif
 #ifdef CUMULUS_HAS_HEXAGON
     caps += "⚡ NPU (Hexagon): ✅ build con ggml-hexagon";
@@ -476,6 +487,8 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_paulrj_cumulusia_MainActivity_stringFromJNI(JNIEnv* env, jobject) {
 #ifdef CUMULUS_HAS_HEXAGON
     return env->NewStringUTF("Cumulus Native Engine v9 (CPU+Vulkan+Hexagon)");
+#elif defined(CUMULUS_HAS_OPENCL)
+    return env->NewStringUTF("Cumulus Native Engine v9 (CPU+OpenCL)");
 #elif defined(CUMULUS_HAS_VULKAN)
     return env->NewStringUTF("Cumulus Native Engine v9 (CPU+Vulkan)");
 #else
