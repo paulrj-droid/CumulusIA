@@ -38,45 +38,77 @@ if (DEFINED ENV{HEXAGON_SDK_ROOT} AND NOT DEFINED HEXAGON_SDK_ROOT)
 endif()
 
 # ============================================================================
-# 🎮 GPU OPENCL (backend oficial de Qualcomm para GPUs Adreno / Snapdragon)
+# 🎮 GPU VULKAN (Adreno). OpenCL quedó fuera: era más lento que la CPU.
 # ============================================================================
-# 1) Encabezados oficiales de OpenCL (Khronos)
+# Lo que necesita ggml-vulkan para compilar en Android:
+#  1) vulkan.hpp  -> el NDK solo trae vulkan.h, así que se bajan los Vulkan-Headers
+#  2) SPIRV-Headers
+#  3) glslc       -> viene dentro del NDK (shader-tools)
+#  4) libvulkan   -> la del sistema Android (sysroot del NDK)
+#  5) compilador del PC (gcc/clang) para generar los shaders: GitHub Actions lo trae
+set(CUMULUS_HAS_VULKAN OFF)
+set(CUMULUS_HAS_OPENCL OFF)
+set(GGML_OPENCL OFF CACHE BOOL "" FORCE)
+set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+
 FetchContent_Declare(
-    opencl_headers
-    GIT_REPOSITORY https://github.com/KhronosGroup/OpenCL-Headers.git
-    GIT_TAG        v2024.10.24
+    vulkan_headers
+    GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+    GIT_TAG        vulkan-sdk-1.4.350.1
     GIT_SHALLOW    TRUE
     SOURCE_SUBDIR  cumulus_no_build
 )
-FetchContent_MakeAvailable(opencl_headers)
-message(STATUS "OpenCL headers: ${opencl_headers_SOURCE_DIR}")
+FetchContent_MakeAvailable(vulkan_headers)
 
-# 2) Cargador OpenCL (solo para enlazar; en el teléfono se usa el del sistema
-#    /vendor/lib64/libOpenCL.so, que se excluye del APK en build.gradle)
-set(OPENCL_ICD_LOADER_HEADERS_DIR "${opencl_headers_SOURCE_DIR}" CACHE PATH "" FORCE)
-set(OPENCL_ICD_LOADER_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(OPENCL_ICD_LOADER_BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
-    opencl_icd_loader
-    GIT_REPOSITORY https://github.com/KhronosGroup/OpenCL-ICD-Loader.git
-    GIT_TAG        v2024.10.24
+    spirv_headers
+    GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Headers.git
+    GIT_TAG        vulkan-sdk-1.4.350.1
     GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  cumulus_no_build
 )
-FetchContent_MakeAvailable(opencl_icd_loader)
-if (NOT TARGET OpenCL::OpenCL)
-    add_library(OpenCL::OpenCL ALIAS OpenCL)
-endif()
-set(OpenCL_INCLUDE_DIR "${opencl_headers_SOURCE_DIR}" CACHE PATH "" FORCE)
-set(OpenCL_LIBRARY "OpenCL" CACHE STRING "" FORCE)
+FetchContent_MakeAvailable(spirv_headers)
 
-set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
-set(GGML_OPENCL ON  CACHE BOOL "" FORCE)
-set(GGML_OPENCL_USE_ADRENO_KERNELS ON CACHE BOOL "" FORCE)
-set(GGML_OPENCL_EMBED_KERNELS ON CACHE BOOL "" FORCE)
-set(CUMULUS_HAS_VULKAN OFF)
-set(CUMULUS_HAS_OPENCL ON)
-message(STATUS "GPU Android: OpenCL (Adreno) ACTIVADO (CPU como respaldo)")
+# glslc del NDK
+if (CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+    set(_cumulus_host_tag "windows-x86_64")
+    set(_cumulus_exe ".exe")
+elseif (CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+    set(_cumulus_host_tag "darwin-x86_64")
+    set(_cumulus_exe "")
+else()
+    set(_cumulus_host_tag "linux-x86_64")
+    set(_cumulus_exe "")
+endif()
+set(_cumulus_glslc "${ANDROID_NDK}/shader-tools/${_cumulus_host_tag}/glslc${_cumulus_exe}")
+
+# libvulkan.so del sistema (según el minSdk)
+find_library(CUMULUS_VULKAN_LIB vulkan)
+
+if (EXISTS "${_cumulus_glslc}" AND CUMULUS_VULKAN_LIB)
+    set(Vulkan_INCLUDE_DIR "${vulkan_headers_SOURCE_DIR}/include" CACHE PATH "" FORCE)
+    set(Vulkan_LIBRARY "${CUMULUS_VULKAN_LIB}" CACHE FILEPATH "" FORCE)
+    set(Vulkan_GLSLC_EXECUTABLE "${_cumulus_glslc}" CACHE FILEPATH "" FORCE)
+
+    # ggml-vulkan pide find_package(SPIRV-Headers): se le entrega un config mínimo
+    set(_cumulus_spirv_cfg "${CMAKE_BINARY_DIR}/cumulus-spirv")
+    file(WRITE "${_cumulus_spirv_cfg}/SPIRV-HeadersConfig.cmake"
+"if (NOT TARGET SPIRV-Headers::SPIRV-Headers)
+    add_library(SPIRV-Headers::SPIRV-Headers INTERFACE IMPORTED)
+    set_target_properties(SPIRV-Headers::SPIRV-Headers PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES \"${spirv_headers_SOURCE_DIR}/include\")
+endif()
+include_directories(\"${spirv_headers_SOURCE_DIR}/include\")
+set(SPIRV-Headers_FOUND TRUE)
+")
+    set(SPIRV-Headers_DIR "${_cumulus_spirv_cfg}" CACHE PATH "" FORCE)
+
+    set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+    set(CUMULUS_HAS_VULKAN ON)
+    message(STATUS "GPU Android: Vulkan ACTIVADO (glslc: ${_cumulus_glslc})")
+else()
+    message(WARNING "Vulkan desactivado: falta glslc (${_cumulus_glslc}) o libvulkan. Solo CPU.")
+endif()
 
 FetchContent_Declare(
     llama
@@ -85,6 +117,13 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(llama)
+
+# Los shaders de Vulkan generan archivos enormes (100+ MB): se compilan de a 2
+# para que GitHub Actions no se quede sin memoria
+if (TARGET ggml-vulkan)
+    set_property(GLOBAL APPEND PROPERTY JOB_POOLS cumulus_vk_pool=2)
+    set_property(TARGET ggml-vulkan PROPERTY JOB_POOL_COMPILE cumulus_vk_pool)
+endif()
 
 set(CUMULUS_NEW_LOAD_API OFF)
 set(CUMULUS_USE_MEMORY_API OFF)
