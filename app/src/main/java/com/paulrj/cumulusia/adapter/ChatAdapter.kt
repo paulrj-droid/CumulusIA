@@ -21,7 +21,9 @@ import com.paulrj.cumulusia.model.ChatMessage
 
 class ChatAdapter(
     private val messages: List<ChatMessage>,
-    private val getAiAvatarUri: () -> Uri? = { null }
+    private val getAiAvatarUri: () -> Uri? = { null },
+    private val getAiName: () -> String = { "Cumulus IA" },  // nombre elegido para la IA
+    private val getUserName: () -> String = { "Tú" }          // nombre elegido por el usuario
 ) :
     RecyclerView.Adapter<ChatAdapter.ChatViewHolder>() {
 
@@ -123,6 +125,69 @@ class ChatAdapter(
 
     private data class CodeBlock(val language: String, val code: String)
 
+    // Convierte el formato de la IA (**negrita**, *cursiva*, # títulos, `código`, viñetas)
+    // en texto con estilo, sin mostrar los asteriscos
+    private fun renderMarkdown(text: String): CharSequence {
+        val out = android.text.SpannableStringBuilder()
+        val codeRegex = Regex("```[\\w+#.-]*[ \\t]*\\r?\\n?(.*?)```", RegexOption.DOT_MATCHES_ALL)
+        var last = 0
+        for (m in codeRegex.findAll(text)) {
+            appendInlineBlock(out, text.substring(last, m.range.first))
+            val start = out.length
+            out.append(m.groupValues[1].trimEnd())
+            out.setSpan(android.text.style.TypefaceSpan("monospace"), start, out.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            out.setSpan(android.text.style.ForegroundColorSpan(Color.parseColor("#8C9EFF")), start, out.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            out.append("\n")
+            last = m.range.last + 1
+        }
+        appendInlineBlock(out, text.substring(last))
+        while (out.isNotEmpty() && out[out.length - 1] == '\n') out.delete(out.length - 1, out.length)
+        return out
+    }
+
+    private fun appendInlineBlock(out: android.text.SpannableStringBuilder, block: String) {
+        val lines = block.split("\n")
+        lines.forEachIndexed { idx, raw ->
+            var line = raw
+            var header = 0
+            Regex("^\\s*(#{1,6})\\s+").find(line)?.let { header = it.groupValues[1].length; line = line.substring(it.range.last + 1) }
+            Regex("^(\\s*)[-*+]\\s+").find(line)?.let { line = it.groupValues[1] + "• " + line.substring(it.range.last + 1) }
+            val lineStart = out.length
+            appendInline(out, line)
+            if (header > 0) {
+                out.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), lineStart, out.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                out.setSpan(android.text.style.RelativeSizeSpan(if (header <= 2) 1.2f else 1.1f), lineStart, out.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            if (idx < lines.lastIndex) out.append("\n")
+        }
+    }
+
+    private fun appendInline(out: android.text.SpannableStringBuilder, line: String) {
+        val token = Regex("\\*\\*(.+?)\\*\\*|__(.+?)__|`([^`]+)`|(?<![\\w*])\\*(?!\\s)(.+?)(?<!\\s)\\*(?![\\w*])|(?<!\\w)_(?!\\s)(.+?)(?<!\\s)_(?!\\w)")
+        var last = 0
+        for (m in token.findAll(line)) {
+            out.append(line.substring(last, m.range.first).replace("**", ""))
+            val g = m.groupValues
+            val start = out.length
+            when {
+                g[1].isNotEmpty() || g[2].isNotEmpty() -> {
+                    out.append(g[1].ifEmpty { g[2] })
+                    out.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), start, out.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                g[3].isNotEmpty() -> {
+                    out.append(g[3])
+                    out.setSpan(android.text.style.TypefaceSpan("monospace"), start, out.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                else -> {
+                    out.append(g[4].ifEmpty { g[5] })
+                    out.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.ITALIC), start, out.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+            }
+            last = m.range.last + 1
+        }
+        out.append(line.substring(last).replace("**", ""))   // asteriscos sueltos sin pareja
+    }
+
     // Encuentra los bloques ```lenguaje ... ``` que escribió la IA
     private fun findCodeBlocks(text: String): List<CodeBlock> =
         Regex("```([\\w+#.-]*)[ \\t]*\\r?\\n(.*?)```", RegexOption.DOT_MATCHES_ALL)
@@ -160,8 +225,10 @@ class ChatAdapter(
         }
 
         holder.messageActions.visibility = View.VISIBLE
-        holder.btnCopy.setOnClickListener { copyToClipboard(context, "Cumulus IA", message.text) }
-        holder.btnShare.setOnClickListener { shareText(context, message.text) }
+        // Se copia/comparte sin los asteriscos del formato
+        val cleanText = renderMarkdown(message.text).toString()
+        holder.btnCopy.setOnClickListener { copyToClipboard(context, "Cumulus IA", cleanText) }
+        holder.btnShare.setOnClickListener { shareText(context, cleanText) }
 
         // Un botón por cada bloque de código: copia solo el código
         val blocks = findCodeBlocks(message.text)
@@ -206,14 +273,15 @@ class ChatAdapter(
     override fun onBindViewHolder(holder: ChatViewHolder, position: Int) {
         val message = messages[position]
 
-        holder.tvContent.text = message.text
+        // Las respuestas de la IA se muestran con formato (sin asteriscos)
+        holder.tvContent.text = if (message.isUser) message.text else renderMarkdown(message.text)
         // Si solo enviaste adjuntos sin texto, no se muestra una burbuja vacía
         holder.tvContent.visibility = if (message.text.isBlank() && message.attachments.isNotEmpty()) View.GONE else View.VISIBLE
         bindAttachments(holder, message)
         // Mantén presionado para seleccionar una parte y copiarla
         holder.tvContent.setTextIsSelectable(true)
         bindActions(holder, message)
-        holder.tvSender.text = if (message.isUser) "Tú" else "Cumulus IA"
+        holder.tvSender.text = if (message.isUser) getUserName() else getAiName()
 
         // Mostrar los tokens solo si existen en el mensaje de la IA
         if (!message.isUser && message.tokens.isNotEmpty()) {
@@ -261,3 +329,4 @@ class ChatAdapter(
 
     override fun getItemCount(): Int = messages.size
     }
+
