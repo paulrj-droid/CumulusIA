@@ -64,10 +64,18 @@ jobs:
       - name: Instalar glslc de NDK r29 (Vulkan compatible con Adreno 830)
         run: |
           curl -sL -o /tmp/ndk29.zip https://dl.google.com/android/repository/android-ndk-r29-linux.zip
-          mkdir -p /opt/glslc29
-          unzip -q -j /tmp/ndk29.zip "android-ndk-r29/shader-tools/linux-x86_64/glslc" -d /opt/glslc29
+          mkdir -p /opt/glslc29/bin /opt/glslc29/lib
+          # glslc + todo lo de shader-tools
+          unzip -q -o -j /tmp/ndk29.zip "android-ndk-r29/shader-tools/linux-x86_64/*" -d /opt/glslc29/bin
+          # glslc necesita libc++.so del NDK (antes fallÃ³ por esto)
+          unzip -Z1 /tmp/ndk29.zip | grep -E 'prebuilt/linux-x86_64/lib(64)?/libc\+\+\.so(\.[0-9]+)?$' > /tmp/libcxx.txt || true
+          cat /tmp/libcxx.txt
+          while read -r f; do unzip -q -o -j /tmp/ndk29.zip "$f" -d /opt/glslc29/lib; done < /tmp/libcxx.txt
           rm -f /tmp/ndk29.zip
-          chmod +x /opt/glslc29/glslc
+          ls -la /opt/glslc29/bin /opt/glslc29/lib
+          # Envoltorio: carga libc++ del NDK y ejecuta el glslc real
+          printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/opt/glslc29/lib:/opt/glslc29/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\nexec /opt/glslc29/bin/glslc "$@"\n' > /opt/glslc29/glslc
+          chmod +x /opt/glslc29/glslc /opt/glslc29/bin/glslc
           /opt/glslc29/glslc --version | head -n 3
           echo "CUMULUS_GLSLC=/opt/glslc29/glslc" >> "$GITHUB_ENV"
 
