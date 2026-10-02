@@ -7,6 +7,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 
+# ============================================================================
+# ⚡ VELOCIDAD: el motor siempre se compila optimizado (-O3), aunque el APK sea
+#    "debug". Sin esto, en debug el motor queda sin optimizar y es ~10 veces más lento.
+# ============================================================================
+set(CMAKE_C_FLAGS_DEBUG   "-O3 -DNDEBUG" CACHE STRING "" FORCE)
+set(CMAKE_CXX_FLAGS_DEBUG "-O3 -DNDEBUG" CACHE STRING "" FORCE)
+set(CMAKE_C_FLAGS_RELEASE   "-O3 -DNDEBUG" CACHE STRING "" FORCE)
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG" CACHE STRING "" FORCE)
+# Instrucciones rápidas del Snapdragon 8 Elite (S25): dotprod + i8mm + fp16
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+i8mm+fp16" CACHE STRING "" FORCE)
+
 set(LLAMA_BUILD_COMMON   OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
