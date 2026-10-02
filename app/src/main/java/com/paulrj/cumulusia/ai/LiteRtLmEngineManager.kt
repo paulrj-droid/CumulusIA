@@ -219,6 +219,36 @@ object LiteRtLmEngineManager {
         false
     }
 
+    // 📊 Medición de la última respuesta
+    @Volatile private var lastMs: Long = 0
+    @Volatile private var lastPromptChars: Int = 0
+    @Volatile private var lastReplyChars: Int = 0
+    fun lastStats(): String {
+        if (lastMs <= 0) return ""
+        val tok = lastReplyChars / 4.0   // aproximado: ~4 letras por token
+        val tps = tok * 1000.0 / lastMs
+        return String.format(java.util.Locale.US, "lee ≈%d tok · escribe ≈%.1f tok/s", lastPromptChars / 4, tps)
+    }
+
+    // Conversación NUEVA en cada mensaje: la app ya le manda todo el historial,
+    // así el motor no lo duplica en su propia memoria
+    suspend fun generateFresh(prompt: String): String = engineMutex.withLock {
+        val currentEngine = engine
+            ?: throw IllegalStateException("LiteRT-LM no tiene un modelo cargado")
+        try { conversation?.close() } catch (_: Throwable) {}
+        conversation = currentEngine.createConversation()
+        val t0 = System.currentTimeMillis()
+        val response = conversation!!.sendMessage(prompt)
+        val text = response.contents.contents
+            .filterIsInstance<Content.Text>()
+            .joinToString(separator = "") { it.text }
+            .ifBlank { response.toString() }
+        lastMs = System.currentTimeMillis() - t0
+        lastPromptChars = prompt.length
+        lastReplyChars = text.length
+        text
+    }
+
     suspend fun generate(prompt: String): String = engineMutex.withLock {
         val currentConversation = conversation
             ?: throw IllegalStateException("LiteRT-LM no tiene un modelo cargado")
