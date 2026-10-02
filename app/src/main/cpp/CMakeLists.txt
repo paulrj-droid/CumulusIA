@@ -32,9 +32,21 @@ else()
     message(STATUS "llama.cpp tag (por defecto): ${LLAMA_GIT_TAG}")
 endif()
 
+# ============================================================================
+# ⚡ NPU HEXAGON (Snapdragon): backend oficial ggml-hexagon de llama.cpp.
+#    El contenedor de GitHub (snapdragon-toolchain) trae el Hexagon SDK 6.6.
+# ============================================================================
 set(CUMULUS_HAS_HEXAGON OFF)
+set(GGML_HEXAGON OFF CACHE BOOL "" FORCE)
 if (DEFINED ENV{HEXAGON_SDK_ROOT} AND NOT DEFINED HEXAGON_SDK_ROOT)
     set(HEXAGON_SDK_ROOT "$ENV{HEXAGON_SDK_ROOT}" CACHE PATH "")
+endif()
+if (HEXAGON_SDK_ROOT AND IS_DIRECTORY "${HEXAGON_SDK_ROOT}" AND EXISTS "${HEXAGON_SDK_ROOT}/build/cmake/hexagon_fun.cmake")
+    set(GGML_HEXAGON ON CACHE BOOL "" FORCE)
+    set(CUMULUS_HAS_HEXAGON ON)
+    message(STATUS "NPU Hexagon ACTIVADA (SDK: ${HEXAGON_SDK_ROOT})")
+else()
+    message(STATUS "NPU Hexagon desactivada: no se encontró el Hexagon SDK")
 endif()
 
 # ============================================================================
@@ -252,11 +264,6 @@ target_link_libraries(
     ${log-lib}
 )
 
-if (GGML_HEXAGON)
-    target_link_libraries(
-        cumulus_native
-        ggml-hexagon
-        ggml-base
-    )
-endif()
-
+# El motor ggml-hexagon queda enlazado dentro de libllama/libggml (no hace falta enlazarlo aparte).
+# Las librerías que corren DENTRO de la NPU (libggml-htp-v79.so, etc.) las copia
+# el workflow de GitHub a jniLibs para que vayan en el APK.
