@@ -1,4 +1,4 @@
-name: Build Android APK (CPU + GPU Vulkan)
+name: Build Android APK (CPU + GPU Vulkan + NPU Hexagon)
 
 on:
   push:
@@ -59,7 +59,7 @@ jobs:
           rm -f /tmp/gradle.zip
           echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
 
-      # ðŸŽ® glslc del NDK r29: el de NDK viejos genera shaders que hacen
+      # 🎮 glslc del NDK r29: el de NDK viejos genera shaders que hacen
       #    cerrar la app en la GPU Adreno 830 (llama.cpp issue #28635)
       - name: Instalar glslc de NDK r29 (Vulkan compatible con Adreno 830)
         shell: bash
@@ -67,7 +67,7 @@ jobs:
           set -eo pipefail
           curl -sL -o /tmp/ndk29.zip https://dl.google.com/android/repository/android-ndk-r29-linux.zip
           mkdir -p /opt/ndk29
-          # Se extrae con sus carpetas originales: glslc encuentra solo sus librerÃ­as
+          # Se extrae con sus carpetas originales: glslc encuentra solo sus librerías
           unzip -q -o /tmp/ndk29.zip "android-ndk-r29/shader-tools/*" -d /opt/ndk29
           unzip -q -o /tmp/ndk29.zip "android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/lib/*" -d /opt/ndk29 || true
           unzip -q -o /tmp/ndk29.zip "android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/lib64/*" -d /opt/ndk29 || true
@@ -83,10 +83,10 @@ jobs:
             ln -sf "$ONE" /opt/glslc29/lib/libc++.so
           fi
           ls -la /opt/glslc29/lib
-          # Lanzador que le indica a glslc dÃ³nde estÃ¡ libc++
+          # Lanzador que le indica a glslc dónde está libc++
           printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/opt/glslc29/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\nexec %s "$@"\n' "$REAL" > /opt/glslc29/glslc
           chmod +x /opt/glslc29/glslc "$REAL"
-          # Prueba real: si glslc no arranca, el build se detiene aquÃ­
+          # Prueba real: si glslc no arranca, el build se detiene aquí
           /opt/glslc29/glslc --version
           echo "CUMULUS_GLSLC=/opt/glslc29/glslc" >> "$GITHUB_ENV"
 
@@ -102,7 +102,7 @@ jobs:
           printf '24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n' > "$ANDROID_HOME/licenses/android-sdk-license"
           printf '84831b9409646a918e30573bab4c9c91346d8abd\n' > "$ANDROID_HOME/licenses/android-sdk-preview-license"
 
-      - name: Build APK (CPU + GPU Vulkan)
+      - name: Build APK (CPU + GPU Vulkan + NPU Hexagon)
         working-directory: ${{ github.workspace }}/repo
         env:
           HEXAGON_SDK_ROOT: /opt/hexagon/6.6.0.0
@@ -110,12 +110,33 @@ jobs:
         run: |
           set +e
           echo "glslc para Vulkan: $CUMULUS_GLSLC"
+          # ⚡ NPU: la app necesita permiso para usar libcdsprpc.so (canal hacia la NPU)
+          MANI=app/src/main/AndroidManifest.xml
+          if [ -f "$MANI" ] && ! grep -q 'libcdsprpc.so' "$MANI"; then
+            sed -i 's#</application>#    <uses-native-library android:name="libcdsprpc.so" android:required="false" />\n    </application>#' "$MANI"
+            echo "Manifest: agregado libcdsprpc.so"
+          fi
           gradle assembleDebug --no-daemon --console=plain | tee /tmp/build.log
           CODE=${PIPESTATUS[0]}
+          # ⚡ NPU: las librerías que corren dentro de la NPU (libggml-htp-v79.so...)
+          #    se copian al APK y se vuelve a empaquetar (segunda pasada, rápida)
+          if [ "$CODE" -eq 0 ]; then
+            SKELS=$(find app/.cxx -name 'libggml-htp-v*.so' 2>/dev/null | sort -u)
+            if [ -n "$SKELS" ]; then
+              mkdir -p app/src/main/jniLibs/arm64-v8a
+              for f in $SKELS; do cp -f "$f" app/src/main/jniLibs/arm64-v8a/; done
+              echo '================= NPU (librerías HTP) ================='
+              ls -la app/src/main/jniLibs/arm64-v8a/ | grep htp
+              gradle assembleDebug --no-daemon --console=plain | tee -a /tmp/build.log
+              CODE=${PIPESTATUS[0]}
+            else
+              echo "⚠️ No se generaron librerías HTP (la NPU no quedará activa)"
+            fi
+          fi
           echo "Espacio al terminar:"
           df -h / || true
           echo '================= VULKAN ================='
-          grep -n -E 'glslc elegido|Vulkan ACTIVADO|Vulkan desactivado' /tmp/build.log | head -n 10
+          grep -n -E 'glslc elegido|Vulkan ACTIVADO|Vulkan desactivado|NPU Hexagon|hexagon: using' /tmp/build.log | head -n 12
           if [ "$CODE" -ne 0 ]; then
             echo '================= ERRORES (diagnostico) ================='
             grep -n -E 'CMake Error|error:|Error:|FAILED|not found|Could not|No space' /tmp/build.log | head -n 60
