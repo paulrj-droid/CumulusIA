@@ -62,21 +62,32 @@ jobs:
       # ðŸŽ® glslc del NDK r29: el de NDK viejos genera shaders que hacen
       #    cerrar la app en la GPU Adreno 830 (llama.cpp issue #28635)
       - name: Instalar glslc de NDK r29 (Vulkan compatible con Adreno 830)
+        shell: bash
         run: |
+          set -eo pipefail
           curl -sL -o /tmp/ndk29.zip https://dl.google.com/android/repository/android-ndk-r29-linux.zip
-          mkdir -p /opt/glslc29/bin /opt/glslc29/lib
-          # glslc + todo lo de shader-tools
-          unzip -q -o -j /tmp/ndk29.zip "android-ndk-r29/shader-tools/linux-x86_64/*" -d /opt/glslc29/bin
-          # glslc necesita libc++.so del NDK (antes fallÃ³ por esto)
-          unzip -Z1 /tmp/ndk29.zip | grep -E 'prebuilt/linux-x86_64/lib(64)?/libc\+\+\.so(\.[0-9]+)?$' > /tmp/libcxx.txt || true
-          cat /tmp/libcxx.txt
-          while read -r f; do unzip -q -o -j /tmp/ndk29.zip "$f" -d /opt/glslc29/lib; done < /tmp/libcxx.txt
+          mkdir -p /opt/ndk29
+          # Se extrae con sus carpetas originales: glslc encuentra solo sus librerÃ­as
+          unzip -q -o /tmp/ndk29.zip "android-ndk-r29/shader-tools/*" -d /opt/ndk29
+          unzip -q -o /tmp/ndk29.zip "android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/lib/*" -d /opt/ndk29 || true
+          unzip -q -o /tmp/ndk29.zip "android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/lib64/*" -d /opt/ndk29 || true
           rm -f /tmp/ndk29.zip
-          ls -la /opt/glslc29/bin /opt/glslc29/lib
-          # Envoltorio: carga libc++ del NDK y ejecuta el glslc real
-          printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/opt/glslc29/lib:/opt/glslc29/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\nexec /opt/glslc29/bin/glslc "$@"\n' > /opt/glslc29/glslc
-          chmod +x /opt/glslc29/glslc /opt/glslc29/bin/glslc
-          /opt/glslc29/glslc --version | head -n 3
+          NDK=/opt/ndk29/android-ndk-r29
+          REAL=$NDK/shader-tools/linux-x86_64/glslc
+          # Carpeta con libc++ (con el nombre exacto libc++.so que pide glslc)
+          mkdir -p /opt/glslc29/lib
+          find $NDK -name 'libc++.so*' -path '*linux-x86_64*' -not -path '*sysroot*' | tee /tmp/libcxx.txt
+          while read -r f; do cp -f "$f" /opt/glslc29/lib/; done < /tmp/libcxx.txt
+          if [ ! -e /opt/glslc29/lib/libc++.so ]; then
+            ONE=$(ls /opt/glslc29/lib/libc++.so* | head -n 1)
+            ln -sf "$ONE" /opt/glslc29/lib/libc++.so
+          fi
+          ls -la /opt/glslc29/lib
+          # Lanzador que le indica a glslc dÃ³nde estÃ¡ libc++
+          printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/opt/glslc29/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\nexec %s "$@"\n' "$REAL" > /opt/glslc29/glslc
+          chmod +x /opt/glslc29/glslc "$REAL"
+          # Prueba real: si glslc no arranca, el build se detiene aquÃ­
+          /opt/glslc29/glslc --version
           echo "CUMULUS_GLSLC=/opt/glslc29/glslc" >> "$GITHUB_ENV"
 
       - name: Clone repository
