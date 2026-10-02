@@ -56,6 +56,10 @@ object LiteRtLmEngineManager {
 
     fun engineInfo(): String = activeBackendLabel
 
+    // 📋 Errores del último intento de carga (para mostrarlos en pantalla)
+    @Volatile private var lastLoadErrors: String = ""
+    fun lastLoadErrors(): String = lastLoadErrors
+
     fun deviceNpuInfo(context: Context): String {
         val socModel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             Build.SOC_MODEL.orEmpty()
@@ -174,6 +178,10 @@ object LiteRtLmEngineManager {
             )
         }
 
+        val errors = StringBuilder()
+        errors.append("Chip: ").append(socModel).append(" · ").append(Build.HARDWARE)
+            .append("\nDispatch Qualcomm: ").append(if (hasQualcommDispatch) "sí" else "NO")
+            .append(" · QNN HTP V79: ").append(if (hasQnnHtp) "sí" else "NO").append("\n\n")
         for (candidate in candidates) {
             var candidateEngine: Engine? = null
             try {
@@ -196,6 +204,8 @@ object LiteRtLmEngineManager {
                 return@withLock true
             } catch (error: Throwable) {
                 Log.w(TAG, "No se pudo iniciar ${candidate.label}: ${error.message}")
+                errors.append("• ").append(candidate.label).append(":\n   ")
+                    .append((error.message ?: error.javaClass.simpleName).take(400)).append("\n")
                 try {
                     candidateEngine?.close()
                 } catch (_: Throwable) {
@@ -203,6 +213,7 @@ object LiteRtLmEngineManager {
             }
         }
 
+        lastLoadErrors = errors.toString()
         closeLocked()
         owners.remove(owner)
         false
