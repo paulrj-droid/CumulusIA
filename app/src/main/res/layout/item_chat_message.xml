@@ -53,6 +53,51 @@
             android:padding="12dp"
             android:maxWidth="300dp"/>
 
+        <!-- 📋 Botones de copiar código (uno por cada bloque ``` ) -->
+        <LinearLayout
+            android:id="@+id/codeActions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="8dp"
+            android:visibility="gone" />
+
+        <!-- 📋 Copiar / 🔗 Compartir (solo en respuestas de la IA) -->
+        <LinearLayout
+            android:id="@+id/messageActions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingHorizontal="8dp"
+            android:layout_marginTop="2dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/btnCopyMessage"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:background="@drawable/bg_input_rounded"
+                android:backgroundTint="#2C2C2E"
+                android:text="📋 Copiar"
+                android:textColor="#D0D0D0"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/btnShareMessage"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="8dp"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:background="@drawable/bg_input_rounded"
+                android:backgroundTint="#2C2C2E"
+                android:text="🔗 Compartir"
+                android:textColor="#D0D0D0"
+                android:textSize="13sp" />
+        </LinearLayout>
+
         <!-- Texto de "tokens" o detalles (para ponerlo debajo) -->
         <TextView
             android:id="@+id/tvTokenInfo"
@@ -64,3 +109,4 @@
     </LinearLayout>
 
 </LinearLayout>
+
