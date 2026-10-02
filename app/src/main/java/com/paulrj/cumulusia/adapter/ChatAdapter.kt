@@ -46,8 +46,8 @@ class ChatAdapter(
         val spaceBetween: Space = view.findViewById(R.id.space_between)
         val codeActions: LinearLayout = view.findViewById(R.id.codeActions)
         val messageActions: LinearLayout = view.findViewById(R.id.messageActions)
-        val btnCopy: TextView = view.findViewById(R.id.btnCopyMessage)
-        val btnShare: TextView = view.findViewById(R.id.btnShareMessage)
+        val btnCopy: View = view.findViewById(R.id.btnCopyMessage)
+        val btnShare: View = view.findViewById(R.id.btnShareMessage)
         val attachmentsScroll: View = view.findViewById(R.id.messageAttachmentsScroll)
         val attachmentsRow: LinearLayout = view.findViewById(R.id.messageAttachments)
     }
@@ -329,4 +329,3 @@ class ChatAdapter(
 
     override fun getItemCount(): Int = messages.size
     }
-
