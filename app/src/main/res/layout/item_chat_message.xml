@@ -88,30 +88,26 @@
             android:layout_marginTop="2dp"
             android:visibility="gone">
 
-            <TextView
+            <ImageButton
                 android:id="@+id/btnCopyMessage"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:gravity="center"
-                android:paddingHorizontal="12dp"
-                android:background="@drawable/bg_input_rounded"
-                android:backgroundTint="#2C2C2E"
-                android:text="📋 Copiar"
-                android:textColor="#D0D0D0"
-                android:textSize="13sp" />
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_action_copy"
+                android:scaleType="center"
+                android:contentDescription="Copiar"
+                android:tint="#9A9A9A" />
 
-            <TextView
+            <ImageButton
                 android:id="@+id/btnShareMessage"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:layout_marginStart="8dp"
-                android:gravity="center"
-                android:paddingHorizontal="12dp"
-                android:background="@drawable/bg_input_rounded"
-                android:backgroundTint="#2C2C2E"
-                android:text="🔗 Compartir"
-                android:textColor="#D0D0D0"
-                android:textSize="13sp" />
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginStart="6dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_action_share"
+                android:scaleType="center"
+                android:contentDescription="Compartir"
+                android:tint="#9A9A9A" />
         </LinearLayout>
 
         <!-- Texto de "tokens" o detalles (para ponerlo debajo) -->
@@ -125,4 +121,3 @@
     </LinearLayout>
 
 </LinearLayout>
-
