@@ -31,6 +31,16 @@ class ChatAdapter(
         val tvTokenInfo: TextView = view.findViewById(R.id.tvTokenInfo)
         val container: LinearLayout = view.findViewById(R.id.messageContainer)
         val ivAiAvatar: ImageView = view.findViewById(R.id.iv_ai_avatar)
+
+        init {
+            // Avatar redondo (recorta la imagen en círculo)
+            ivAiAvatar.clipToOutline = true
+            ivAiAvatar.outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(v: View, outline: android.graphics.Outline) {
+                    outline.setOval(0, 0, v.width, v.height)
+                }
+            }
+        }
         val spaceBetween: Space = view.findViewById(R.id.space_between)
         val codeActions: LinearLayout = view.findViewById(R.id.codeActions)
         val messageActions: LinearLayout = view.findViewById(R.id.messageActions)
@@ -232,13 +242,13 @@ class ChatAdapter(
                 try {
                     holder.ivAiAvatar.setImageURI(customAvatarUri)
                     if (holder.ivAiAvatar.drawable == null) {
-                        holder.ivAiAvatar.setImageResource(R.drawable.ic_cumulus_diamond)
+                        holder.ivAiAvatar.setImageResource(R.drawable.cumulus_icon)
                     }
                 } catch (e: Exception) {
-                    holder.ivAiAvatar.setImageResource(R.drawable.ic_cumulus_diamond)
+                    holder.ivAiAvatar.setImageResource(R.drawable.cumulus_icon)
                 }
             } else {
-                holder.ivAiAvatar.setImageResource(R.drawable.ic_cumulus_diamond)
+                holder.ivAiAvatar.setImageResource(R.drawable.cumulus_icon)
             }
             holder.tvContent.background = null // Quitar fondo para que sea texto plano
             holder.tvContent.setTextColor(Color.WHITE)
@@ -251,4 +261,3 @@ class ChatAdapter(
 
     override fun getItemCount(): Int = messages.size
     }
-
