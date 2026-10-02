@@ -82,6 +82,38 @@ else()
 endif()
 set(_cumulus_glslc "${ANDROID_NDK}/shader-tools/${_cumulus_host_tag}/glslc${_cumulus_exe}")
 
+# ⚠️ IMPORTANTE (llama.cpp issue #28635): el glslc de NDK 26 o anterior genera
+# shaders que la GPU Adreno 830 (Galaxy S25) rechaza -> la app se cierra.
+# Con el glslc de NDK 28/29 funciona. Se busca el NDK más nuevo instalado y se usa
+# SU glslc (el resto de la app sigue compilando con el NDK normal).
+set(_cumulus_ndk_roots "")
+foreach(_envvar ANDROID_HOME ANDROID_SDK_ROOT)
+    if (DEFINED ENV{${_envvar}})
+        list(APPEND _cumulus_ndk_roots "$ENV{${_envvar}}/ndk")
+    endif()
+endforeach()
+get_filename_component(_cumulus_ndk_parent "${ANDROID_NDK}" DIRECTORY)
+list(APPEND _cumulus_ndk_roots "${_cumulus_ndk_parent}")
+set(_cumulus_best_ver "0")
+foreach(_root IN LISTS _cumulus_ndk_roots)
+    file(GLOB _cands "${_root}/*/shader-tools/${_cumulus_host_tag}/glslc${_cumulus_exe}")
+    foreach(_c IN LISTS _cands)
+        string(REGEX MATCH "/([0-9]+\\.[0-9]+\\.[0-9]+)/shader-tools/" _m "${_c}")
+        if (CMAKE_MATCH_1 AND CMAKE_MATCH_1 VERSION_GREATER _cumulus_best_ver)
+            set(_cumulus_best_ver "${CMAKE_MATCH_1}")
+            set(_cumulus_glslc "${_c}")
+        endif()
+    endforeach()
+endforeach()
+if (DEFINED ENV{CUMULUS_GLSLC} AND EXISTS "$ENV{CUMULUS_GLSLC}")
+    set(_cumulus_glslc "$ENV{CUMULUS_GLSLC}")
+    set(_cumulus_best_ver "env")
+endif()
+message(STATUS "glslc elegido (NDK ${_cumulus_best_ver}): ${_cumulus_glslc}")
+if (_cumulus_best_ver VERSION_LESS "28.0.0" AND NOT _cumulus_best_ver STREQUAL "env")
+    message(WARNING "⚠️ glslc de NDK ${_cumulus_best_ver}: puede cerrar la app en Adreno 830. Instala NDK 29 (ver workflow).")
+endif()
+
 # libvulkan.so del sistema (según el minSdk)
 find_library(CUMULUS_VULKAN_LIB vulkan)
 
@@ -227,3 +259,4 @@ if (GGML_HEXAGON)
         ggml-base
     )
 endif()
+
