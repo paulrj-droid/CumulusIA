@@ -18,6 +18,10 @@ jobs:
 
     env:
       LLAMA_GIT_TAG: v0.2.0
+      # ⚡ Versión de las librerías QNN de Qualcomm (NPU). Cámbiala aquí si hace falta.
+      QNN_VERSION: 2.47.0
+      # LiteRT-LM 0.17.x está compilado con QAIRT 2.47 → Dispatch de LiteRT v2.2.0 (también QAIRT 2.47)
+      LITERT_NPU_TAG: v2.2.0
       HEXAGON_SDK_ROOT: /opt/hexagon/6.6.0.0
       ANDROID_HOME: /opt/android-sdk
 
@@ -107,19 +111,22 @@ jobs:
           set +e
           mkdir -p app/src/main/jniLibs/arm64-v8a
           URLS=$(curl -sL -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/google-ai-edge/LiteRT/releases?per_page=10" \
+            "https://api.github.com/repos/google-ai-edge/LiteRT/releases?per_page=30" \
             | python3 -c "import json,sys
           for r in json.load(sys.stdin):
               for a in r.get('assets', []):
                   if a['name'] == 'litert_npu_runtime_libraries.zip':
-                      print(r['tag_name'] + ' ' + a['browser_download_url'])" | head -n 1)
+                      print(r['tag_name'] + ' ' + a['browser_download_url'])" > /tmp/npu_rel.txt; \
+            (grep "^$LITERT_NPU_TAG " /tmp/npu_rel.txt || head -n 1 /tmp/npu_rel.txt) | head -n 1)
           echo "Release elegida: $URLS"
           URL=$(echo "$URLS" | awk '{print $2}')
           if [ -n "$URL" ]; then
             curl -sL -o /tmp/npu.zip "$URL"
             mkdir -p /tmp/npu && unzip -q -o /tmp/npu.zip -d /tmp/npu
             find /tmp/npu -name 'libLiteRtDispatch_Qualcomm.so' | head -n 5
-            F=$(find /tmp/npu -path '*arm64*' -name 'libLiteRtDispatch_Qualcomm.so' | head -n 1)
+            # Preferir la versión para el Snapdragon 8 Elite (Hexagon v79)
+            F=$(find /tmp/npu -path '*v79*' -name 'libLiteRtDispatch_Qualcomm.so' | head -n 1)
+            [ -z "$F" ] && F=$(find /tmp/npu -path '*arm64*' -name 'libLiteRtDispatch_Qualcomm.so' | head -n 1)
             [ -z "$F" ] && F=$(find /tmp/npu -name 'libLiteRtDispatch_Qualcomm.so' | head -n 1)
             if [ -n "$F" ]; then
               cp -f "$F" app/src/main/jniLibs/arm64-v8a/
@@ -131,9 +138,16 @@ jobs:
             echo "⚠️ No se encontró litert_npu_runtime_libraries.zip en las releases de LiteRT"
           fi
           # Librerías QNN de Qualcomm: el modelo sm8750 pide QnnSystem >= 1.8 (QAIRT 2.45+)
+          echo "QNN_VERSION=$QNN_VERSION"
           for G in app/build.gradle app/build.gradle.kts; do
             if [ -f "$G" ]; then
-              sed -i -E 's/(com\.qualcomm\.qti:qnn-runtime:)[0-9.]+/\12.45.0/; s/(com\.qualcomm\.qti:qnn-litert-delegate:)[0-9.]+/\12.45.0/' "$G"
+              sed -i -E 's/(com\.qualcomm\.qti:qnn-runtime:)[0-9.]+/\1'"$QNN_VERSION"'/' "$G"
+              # el delegate solo se sube si esa versión existe en Maven Central
+              if curl -sfI "https://repo1.maven.org/maven2/com/qualcomm/qti/qnn-litert-delegate/$QNN_VERSION/qnn-litert-delegate-$QNN_VERSION.pom" > /dev/null; then
+                sed -i -E 's/(com\.qualcomm\.qti:qnn-litert-delegate:)[0-9.]+/\1'"$QNN_VERSION"'/' "$G"
+              else
+                echo "⚠️ qnn-litert-delegate $QNN_VERSION no existe en Maven: se deja la versión anterior"
+              fi
               grep -n 'qnn-' "$G" || true
             fi
           done
