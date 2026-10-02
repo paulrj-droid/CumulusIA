@@ -14,10 +14,10 @@
         android:id="@+id/iv_ai_avatar"
         android:layout_width="32dp"
         android:layout_height="32dp"
-        android:src="@drawable/ic_cumulus_diamond"
+        android:src="@drawable/cumulus_icon"
         android:scaleType="centerCrop"
         android:background="@drawable/bg_circle_blue"
-        android:padding="2dp"
+        android:padding="0dp"
         android:contentDescription="Avatar de la IA"
         android:visibility="gone" />
 
@@ -125,3 +125,4 @@
     </LinearLayout>
 
 </LinearLayout>
+
