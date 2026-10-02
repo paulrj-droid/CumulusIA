@@ -230,38 +230,164 @@ class ChatAdapter(
         holder.btnCopy.setOnClickListener { copyToClipboard(context, "Cumulus IA", cleanText) }
         holder.btnShare.setOnClickListener { shareText(context, cleanText) }
 
-        // Un botón por cada bloque de código: copia solo el código
+        // Si la respuesta trae código, se arma por partes: texto normal + cuadros de código
         val blocks = findCodeBlocks(message.text)
         if (blocks.isEmpty()) {
             holder.codeActions.visibility = View.GONE
             return
         }
+        holder.tvContent.visibility = View.GONE
         holder.codeActions.visibility = View.VISIBLE
+        holder.codeActions.setPadding(0, 0, 0, 0)
         val density = context.resources.displayMetrics.density
-        blocks.forEachIndexed { index, block ->
-            val name = block.language.ifBlank { "código" }
-            val label = if (blocks.size > 1) "💻 Copiar $name (${index + 1})" else "💻 Copiar $name"
-            val row = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, (4 * density).toInt(), 0, 0)
+        val codeRegex = Regex("```([\\w+#.-]*)[ \\t]*\\r?\\n?(.*?)```", RegexOption.DOT_MATCHES_ALL)
+        var last = 0
+        for (m in codeRegex.findAll(message.text)) {
+            addTextSegment(holder.codeActions, message.text.substring(last, m.range.first), density)
+            val code = m.groupValues[2].trimEnd()
+            if (code.isNotBlank()) {
+                holder.codeActions.addView(buildCodeCard(context, m.groupValues[1].trim(), code, density))
             }
-            fun chip(text: String, action: () -> Unit) = TextView(context).apply {
-                this.text = text
-                textSize = 13f
-                setTextColor(Color.parseColor("#8C9EFF"))
-                gravity = Gravity.CENTER
-                background = context.getDrawable(R.drawable.bg_input_rounded)
-                backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#1E2A5A"))
-                setPadding((12 * density).toInt(), 0, (12 * density).toInt(), 0)
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, (32 * density).toInt()
-                ).apply { marginEnd = (8 * density).toInt() }
-                setOnClickListener { action() }
-            }
-            row.addView(chip(label) { copyToClipboard(context, name, block.code) })
-            row.addView(chip("🔗") { shareText(context, block.code) })
-            holder.codeActions.addView(row)
+            last = m.range.last + 1
         }
+        addTextSegment(holder.codeActions, message.text.substring(last), density)
+    }
+
+    private fun addTextSegment(container: LinearLayout, raw: String, density: Float) {
+        if (raw.isBlank()) return
+        container.addView(TextView(container.context).apply {
+            text = renderMarkdown(raw.trim('\n'))
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setLineSpacing(4 * density, 1f)
+            setPadding((12 * density).toInt(), (6 * density).toInt(), (12 * density).toInt(), (6 * density).toInt())
+            setTextIsSelectable(true)
+        })
+    }
+
+    // 🧩 Cuadro de código: barra con el lenguaje + copiar/compartir, y el código con colores
+    private fun buildCodeCard(context: Context, language: String, code: String, density: Float): View {
+        val dp = { v: Int -> (v * density).toInt() }
+        val card = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 14 * density
+                setColor(Color.parseColor("#161616"))
+                setStroke(dp(1), Color.parseColor("#33343A"))
+            }
+            clipToOutline = true
+            outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(6); bottomMargin = dp(6); marginStart = dp(4); marginEnd = dp(4) }
+        }
+        // Barra superior
+        val header = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(4), dp(4), dp(4))
+            setBackgroundColor(Color.parseColor("#202124"))
+        }
+        header.addView(TextView(context).apply {
+            text = prettyLanguage(language)
+            textSize = 13f
+            setTextColor(Color.parseColor("#C8C8C8"))
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        fun iconButton(icon: Int, desc: String, action: () -> Unit) = android.widget.ImageButton(context).apply {
+            setImageResource(icon)
+            contentDescription = desc
+            setColorFilter(Color.parseColor("#B0B0B0"))
+            val ta = context.obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackgroundBorderless))
+            background = ta.getDrawable(0)
+            ta.recycle()
+            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
+            setOnClickListener { action() }
+        }
+        header.addView(iconButton(R.drawable.ic_action_copy, "Copiar código") { copyToClipboard(context, language, code) })
+        header.addView(iconButton(R.drawable.ic_action_share, "Compartir código") { shareText(context, code) })
+        card.addView(header)
+        // Código con colores (se desliza a los lados si las líneas son largas)
+        val scroller = android.widget.HorizontalScrollView(context).apply { isHorizontalScrollBarEnabled = false }
+        scroller.addView(TextView(context).apply {
+            text = highlightCode(code, language)
+            typeface = android.graphics.Typeface.MONOSPACE
+            textSize = 13f
+            setTextColor(Color.parseColor("#ABB2BF"))
+            setLineSpacing(2 * density, 1f)
+            setPadding(dp(14), dp(10), dp(14), dp(12))
+            setTextIsSelectable(true)
+        })
+        card.addView(scroller)
+        return card
+    }
+
+    private fun prettyLanguage(lang: String): String {
+        val l = lang.lowercase()
+        val names = mapOf(
+            "kt" to "Kotlin", "kotlin" to "Kotlin", "java" to "Java", "py" to "Python", "python" to "Python",
+            "js" to "JavaScript", "javascript" to "JavaScript", "ts" to "TypeScript", "typescript" to "TypeScript",
+            "xml" to "Xml", "html" to "HTML", "css" to "CSS", "json" to "JSON", "sh" to "Bash", "bash" to "Bash",
+            "c" to "C", "cpp" to "C++", "c++" to "C++", "cs" to "C#", "csharp" to "C#", "go" to "Go", "rust" to "Rust",
+            "rs" to "Rust", "swift" to "Swift", "dart" to "Dart", "php" to "PHP", "rb" to "Ruby", "ruby" to "Ruby",
+            "sql" to "SQL", "yaml" to "YAML", "yml" to "YAML", "gradle" to "Gradle", "groovy" to "Groovy",
+            "cmake" to "CMake", "lua" to "Lua", "md" to "Markdown"
+        )
+        return "Código " + (names[l] ?: l.replaceFirstChar { it.uppercase() }.ifBlank { "" }).let {
+            if (it.isBlank()) "" else it
+        }
+    }
+
+    // 🎨 Colores del código (estilo oscuro): palabras clave, textos, comentarios, números, etiquetas XML
+    private fun highlightCode(code: String, language: String): CharSequence {
+        val out = android.text.SpannableString(code)
+        val lang = language.lowercase()
+        val isMarkup = lang in setOf("xml", "html", "htm", "svg", "vue")
+        val hashComments = lang in setOf("py", "python", "sh", "bash", "yaml", "yml", "rb", "ruby", "toml", "cmake", "r", "pl")
+        val taken = BooleanArray(code.length)
+        fun paint(regex: Regex, color: String, group: Int = 0) {
+            val c = Color.parseColor(color)
+            for (m in regex.findAll(code)) {
+                val r = m.groups[group]?.range ?: continue
+                if (r.isEmpty() || (r.first until r.last + 1).any { taken[it] }) continue
+                out.setSpan(android.text.style.ForegroundColorSpan(c), r.first, r.last + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                for (p in r) taken[p] = true
+            }
+        }
+        // Comentarios primero (tienen prioridad)
+        paint(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "#7F848E")
+        if (!isMarkup) {
+            paint(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "#7F848E")
+            paint(Regex("(?m)//.*$"), "#7F848E")
+            if (hashComments) paint(Regex("(?m)#.*$"), "#7F848E")
+        }
+        // Textos entre comillas
+        paint(Regex("\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`[^`]*`"), "#98C379")
+        if (isMarkup) {
+            paint(Regex("<\\?\\w+|\\?>"), "#61AFEF")
+            paint(Regex("</?[\\w:.-]+|/?>"), "#E06C75")
+            paint(Regex("([\\w:.-]+)(?==)"), "#D19A66", 1)
+        } else {
+            paint(Regex("@[\\w.]+"), "#E5C07B")
+            val keywords = listOf(
+                "fun", "val", "var", "class", "object", "interface", "data", "sealed", "enum", "override", "private",
+                "public", "protected", "internal", "open", "abstract", "final", "static", "void", "int", "long", "float",
+                "double", "boolean", "char", "byte", "short", "string", "if", "else", "when", "for", "while", "do",
+                "return", "break", "continue", "try", "catch", "finally", "throw", "throws", "new", "this", "super",
+                "import", "package", "from", "as", "is", "in", "def", "lambda", "pass", "with", "yield", "async",
+                "await", "function", "const", "let", "export", "default", "extends", "implements", "true", "false",
+                "null", "None", "True", "False", "nil", "self", "struct", "impl", "pub", "mod", "use", "match",
+                "switch", "case", "typedef", "include", "define", "namespace", "using", "template", "auto", "func",
+                "go", "defer", "select", "SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "CREATE", "TABLE",
+                "and", "or", "not", "elif", "except", "raise", "global", "echo", "then", "fi", "done", "esac"
+            ).joinToString("|")
+            paint(Regex("\\b($keywords)\\b"), "#C678DD")
+            paint(Regex("\\b[A-Z][A-Za-z0-9_]*\\b"), "#E5C07B")
+            paint(Regex("\\b([a-zA-Z_][\\w]*)(?=\\s*\\()"), "#61AFEF", 1)
+        }
+        paint(Regex("\\b\\d+(?:\\.\\d+)?[fFLd]?\\b"), "#D19A66")
+        return out
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ChatViewHolder {
