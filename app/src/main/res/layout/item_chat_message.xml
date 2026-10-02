@@ -43,6 +43,22 @@
             android:textColor="#808080"
             android:paddingBottom="2dp"/>
 
+        <!-- 📎 Miniaturas de lo que se envió (imágenes, archivos, videos) -->
+        <HorizontalScrollView
+            android:id="@+id/messageAttachmentsScroll"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:layout_marginBottom="4dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/messageAttachments"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+
         <TextView
             android:id="@+id/tvMessageContent"
             android:layout_width="wrap_content"
@@ -109,4 +125,3 @@
     </LinearLayout>
 
 </LinearLayout>
-
