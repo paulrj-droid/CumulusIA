@@ -36,6 +36,79 @@ class ChatAdapter(
         val messageActions: LinearLayout = view.findViewById(R.id.messageActions)
         val btnCopy: TextView = view.findViewById(R.id.btnCopyMessage)
         val btnShare: TextView = view.findViewById(R.id.btnShareMessage)
+        val attachmentsScroll: View = view.findViewById(R.id.messageAttachmentsScroll)
+        val attachmentsRow: LinearLayout = view.findViewById(R.id.messageAttachments)
+    }
+
+    // 📎 Miniaturas de los adjuntos enviados en el mensaje
+    private fun bindAttachments(holder: ChatViewHolder, message: ChatMessage) {
+        holder.attachmentsRow.removeAllViews()
+        if (message.attachments.isEmpty()) {
+            holder.attachmentsScroll.visibility = View.GONE
+            return
+        }
+        holder.attachmentsScroll.visibility = View.VISIBLE
+        val context = holder.itemView.context
+        val dp = context.resources.displayMetrics.density
+        val size = (72 * dp).toInt()
+        message.attachments.forEach { path ->
+            val file = java.io.File(path)
+            val ext = file.extension.lowercase()
+            val isImage = ext in setOf("jpg", "jpeg", "png", "webp", "bmp", "gif", "heic", "heif")
+            val isVideo = ext in setOf("mp4", "mkv", "webm", "3gp", "mov", "avi")
+            val isAudio = ext in setOf("wav", "mp3", "flac", "m4a", "ogg", "aac", "opus")
+            val frame = android.widget.FrameLayout(context).apply {
+                layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = (6 * dp).toInt() }
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 12 * dp
+                    setColor(Color.parseColor("#2C2C2E"))
+                }
+                clipToOutline = true
+                outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+            }
+            val bmp = runCatching {
+                when {
+                    isImage -> {
+                        val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        android.graphics.BitmapFactory.decodeFile(path, o)
+                        var sample = 1
+                        while (o.outWidth / sample > size * 2 || o.outHeight / sample > size * 2) sample *= 2
+                        android.graphics.BitmapFactory.decodeFile(
+                            path, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                        )
+                    }
+                    isVideo -> android.media.ThumbnailUtils.createVideoThumbnail(
+                        file, android.util.Size(size, size), null
+                    )
+                    else -> null
+                }
+            }.getOrNull()
+            if (bmp != null) {
+                frame.addView(ImageView(context).apply {
+                    setImageBitmap(bmp)
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    layoutParams = android.widget.FrameLayout.LayoutParams(size, size)
+                })
+            } else {
+                frame.addView(TextView(context).apply {
+                    text = (if (isAudio) "🎵" else "📄") + "\n" + file.extension.uppercase().take(5)
+                    gravity = Gravity.CENTER
+                    textSize = 12f
+                    setTextColor(Color.WHITE)
+                    layoutParams = android.widget.FrameLayout.LayoutParams(size, size)
+                })
+            }
+            if (isVideo) {
+                frame.addView(ImageView(context).apply {
+                    setImageResource(android.R.drawable.ic_media_play)
+                    setColorFilter(Color.WHITE)
+                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                        (26 * dp).toInt(), (26 * dp).toInt(), Gravity.CENTER
+                    )
+                })
+            }
+            holder.attachmentsRow.addView(frame)
+        }
     }
 
     private data class CodeBlock(val language: String, val code: String)
@@ -124,6 +197,9 @@ class ChatAdapter(
         val message = messages[position]
 
         holder.tvContent.text = message.text
+        // Si solo enviaste adjuntos sin texto, no se muestra una burbuja vacía
+        holder.tvContent.visibility = if (message.text.isBlank() && message.attachments.isNotEmpty()) View.GONE else View.VISIBLE
+        bindAttachments(holder, message)
         // Mantén presionado para seleccionar una parte y copiarla
         holder.tvContent.setTextIsSelectable(true)
         bindActions(holder, message)
@@ -175,3 +251,4 @@ class ChatAdapter(
 
     override fun getItemCount(): Int = messages.size
     }
+
