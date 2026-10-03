@@ -160,28 +160,11 @@ object GenieXEngineManager {
         temperature: Float
     ): String = mutex.withLock {
         var w = llm ?: throw IllegalStateException("GenieX no tiene un modelo cargado")
-        // ⚡ No se borra la memoria: GenieX reutiliza lo ya leído y solo procesa lo nuevo.
-        // ⚠️ En la NPU NO se usa reset(): borrar la memoria de golpe cierra la app.
-        //    Si cambiaron las instrucciones (nombre, modo, personalidad), la memoria vieja
-        //    confunde al modelo → se recarga el modelo en la NPU (solo pasa cuando cambias algo).
-        if (loadedUnit == "npu" && lastSystem != null && lastSystem != system) {
-            val path = loadedPath
-            if (path != null) {
-                Log.i(TAG, "Instrucciones cambiaron: recargando en NPU")
-                runCatching { w.close() }
-                llm = null
-                val fresh = LlmWrapper.builder()
-                    .llmCreateInput(LlmCreateInput(
-                        model_path = path,
-                        config = ModelConfig(nCtx = loadedCtx.coerceIn(512, 16384), nGpuLayers = -1),
-                        runtime_id = "llama_cpp",
-                        compute_unit = "npu"
-                    ))
-                    .build().getOrNull() ?: throw IllegalStateException("No se pudo recargar el modelo en la NPU")
-                llm = fresh
-                w = fresh
-            }
-        }
+        // 🧹 GPU: se limpia la memoria en cada mensaje (reutilizarla hacía que repitiera
+        //    respuestas viejas). Releer todo en la GPU cuesta ~1 s.
+        // ⚠️ NPU: NO se limpia ni se recarga (las dos cosas cerraban la app). Los nombres y
+        //    la hora van pegados a cada mensaje, así que no dependen de la memoria vieja.
+        if (loadedUnit != "npu") runCatching { w.reset() }
         lastSystem = system
         val msgs = ArrayList<ChatMessage>()
         msgs.add(ChatMessage("system", system))
