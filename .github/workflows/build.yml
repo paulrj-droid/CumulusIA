@@ -111,6 +111,22 @@ jobs:
           done
           [ -z "$GX" ] && GX=0.4.0
           echo "GenieX version: $GX"
+          # libggml-base.so de GenieX necesita SU libomp.so (OpenMP del NDK r29).
+          # Otra libreria trae un libomp.so viejo y pickFirst se quedaba con ese ->
+          # "cannot locate symbol __kmpc_dispatch_deinit". Se fija la de GenieX en jniLibs (gana siempre).
+          mkdir -p /tmp/gxaar app/src/main/jniLibs/arm64-v8a
+          if curl -sfL -o /tmp/gx.aar "https://repo1.maven.org/maven2/com/qualcomm/qti/geniex-android/$GX/geniex-android-$GX.aar"; then
+            unzip -o -q /tmp/gx.aar 'jni/arm64-v8a/*' -d /tmp/gxaar
+            ls /tmp/gxaar/jni/arm64-v8a | grep -i -E 'omp|c\+\+' || true
+            for L in libomp.so libc++_shared.so; do
+              if [ -f "/tmp/gxaar/jni/arm64-v8a/$L" ]; then
+                cp -f "/tmp/gxaar/jni/arm64-v8a/$L" app/src/main/jniLibs/arm64-v8a/
+                echo "OK: $L de GenieX fijado en jniLibs"
+              fi
+            done
+          else
+            echo "AVISO: no se pudo bajar el AAR de GenieX"
+          fi
           for G in app/build.gradle app/build.gradle.kts; do
             [ -f "$G" ] || continue
             if ! grep -q 'geniex-android' "$G"; then
@@ -193,4 +209,3 @@ jobs:
         with:
           name: app-full-debug
           path: ${{ github.workspace }}/repo/app/build/outputs/apk/debug/app-debug.apk
-
