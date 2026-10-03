@@ -48,8 +48,25 @@ object GenieXEngineManager {
             it.contains("geniex", true) || it.contains("llama", true) || it.contains("ggml", true) ||
             it.contains("Qnn", true) || it.contains("htp", true) || it.contains("cdsp", true)
         }?.sorted().orEmpty()
-        return "SDK: $initInfo\nChip: ${android.os.Build.SOC_MODEL}\nLibs (${libs.size}):\n" +
-            (if (libs.isEmpty()) "  (ninguna — el plugin GenieX no entró al APK)" else libs.joinToString("\n") { "  $it" })
+        // Prueba abrir cada librería del plugin: el error dice exactamente qué falta
+        val order = listOf("libc++_shared.so", "libggml-base.so", "libggml.so", "libggml-cpu.so", "libggml-opencl.so",
+            "libggml-hexagon.so", "libllama.so", "libllama-common.so", "libgeniex_core.so", "libgeniex.so",
+            "libgeniex_plugin_llama_cpp.so")
+        val dl = StringBuilder("\nPrueba de carga:\n")
+        for (n in order) {
+            val f = java.io.File(dir, n)
+            if (!f.exists()) { dl.append("  $n: (no está)\n"); continue }
+            try { System.load(f.absolutePath); dl.append("  $n: OK\n") }
+            catch (t: Throwable) { dl.append("  $n: ERROR ").append(t.message?.take(300)).append("\n") }
+        }
+        val log = try {
+            val pr = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-t", "600"))
+            pr.inputStream.bufferedReader().readLines()
+                .filter { it.contains("geniex", true) || it.contains("plugin", true) || it.contains("dlopen", true) || it.contains("ggml", true) }
+                .takeLast(25).joinToString("\n")
+        } catch (t: Throwable) { "logcat: ${t.message}" }
+        return "SDK: $initInfo\nChip: ${android.os.Build.SOC_MODEL}\nLibs GenieX/QNN en el APK: ${libs.size}\n" +
+            dl.toString() + "\nLog GenieX:\n" + log
     }
 
     fun engineInfo(): String = label
