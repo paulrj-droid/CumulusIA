@@ -1,0 +1,162 @@
+package com.paulrj.cumulusia.ai
+
+import android.content.Context
+import android.util.Log
+import com.geniex.sdk.GenieXSdk
+import com.geniex.sdk.LlmWrapper
+import com.geniex.sdk.bean.ChatMessage
+import com.geniex.sdk.bean.GenerationConfig
+import com.geniex.sdk.bean.LlmCreateInput
+import com.geniex.sdk.bean.LlmStreamResult
+import com.geniex.sdk.bean.ModelConfig
+import com.geniex.sdk.bean.SamplerConfig
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/**
+ * ⚡ Motor GenieX (SDK oficial de Qualcomm) para modelos GGUF en NPU / GPU.
+ * Usa llama.cpp con los parches de Qualcomm para Hexagon (NPU) y Adreno (GPU).
+ * Recomendado: modelos GGUF Q4_0 (la NPU Hexagon los soporta mejor).
+ */
+object GenieXEngineManager {
+    private const val TAG = "CumulusGenieX"
+    private val mutex = Mutex()
+
+    private var llm: LlmWrapper? = null
+    private var loadedPath: String? = null
+    private var loadedUnit: String? = null
+    @Volatile private var label: String = "GenieX sin cargar"
+    @Volatile private var sdkReady = false
+    @Volatile private var lastErrors: String = ""
+    @Volatile private var lastStats: String = ""
+
+    fun engineInfo(): String = label
+    fun lastLoadErrors(): String = lastErrors
+    fun lastStats(): String = lastStats
+    fun isLoaded(path: String?): Boolean = llm != null && path != null && path == loadedPath
+
+    /** Se llama al abrir la app. Si el SDK no está en el APK, simplemente queda desactivado. */
+    fun init(context: Context) {
+        try {
+            GenieXSdk.getInstance().init(context.applicationContext, object : GenieXSdk.InitCallback {
+                override fun onSuccess() {
+                    sdkReady = true
+                    Log.i(TAG, "GenieX listo")
+                }
+                override fun onFailure(reason: String) {
+                    // Puede fallar solo el plugin QAIRT; llama_cpp igual sirve
+                    sdkReady = true
+                    Log.w(TAG, "GenieX init con avisos: $reason")
+                }
+            })
+        } catch (t: Throwable) {
+            sdkReady = false
+            lastErrors = "GenieX no disponible: ${t.message}"
+            Log.e(TAG, "GenieX no se pudo iniciar", t)
+        }
+    }
+
+    /** Carga un GGUF. backend contiene "NPU" o "GPU". Si la NPU falla, prueba la GPU. */
+    suspend fun load(path: String, backend: String, nCtx: Int): Boolean = mutex.withLock {
+        closeLocked()
+        if (!sdkReady) {
+            lastErrors = lastErrors.ifBlank { "GenieX no está iniciado" }
+            return@withLock false
+        }
+        val units = if (backend.contains("NPU", true)) listOf("npu", "gpu") else listOf("gpu")
+        val errors = StringBuilder()
+        for (unit in units) {
+            try {
+                Log.i(TAG, "Cargando $path en $unit")
+                val result = LlmWrapper.builder()
+                    .llmCreateInput(
+                        LlmCreateInput(
+                            model_path = path,
+                            config = ModelConfig(nCtx = nCtx.coerceIn(512, 16384), nGpuLayers = -1),
+                            runtime_id = "llama_cpp",
+                            compute_unit = unit
+                        )
+                    )
+                    .build()
+                val wrapper = result.getOrNull()
+                if (wrapper != null) {
+                    llm = wrapper
+                    loadedPath = path
+                    loadedUnit = unit
+                    label = when (unit) {
+                        "npu" -> "⚡ NPU Hexagon (GenieX)"
+                        else -> if (backend.contains("NPU", true)) "⚡ NPU→🎮 GPU (GenieX)" else "🎮 GPU Adreno (GenieX)"
+                    }
+                    lastErrors = ""
+                    Log.i(TAG, "GenieX activo: $label")
+                    return@withLock true
+                }
+                errors.append("• ").append(unit.uppercase()).append(": ")
+                    .append(result.exceptionOrNull()?.message ?: "error desconocido").append("\n")
+            } catch (t: Throwable) {
+                errors.append("• ").append(unit.uppercase()).append(": ").append(t.message ?: t.javaClass.simpleName).append("\n")
+            }
+        }
+        lastErrors = errors.toString()
+        false
+    }
+
+    /**
+     * Genera una respuesta con la conversación completa.
+     * roles: "user"/"assistant"; el último debe ser el mensaje nuevo del usuario.
+     */
+    suspend fun generate(
+        system: String,
+        roles: List<String>,
+        contents: List<String>,
+        maxTokens: Int,
+        temperature: Float
+    ): String = mutex.withLock {
+        val w = llm ?: throw IllegalStateException("GenieX no tiene un modelo cargado")
+        // Cada mensaje parte limpio: la app manda todo el historial
+        runCatching { w.reset() }
+        val msgs = ArrayList<ChatMessage>()
+        msgs.add(ChatMessage("system", system))
+        for (i in roles.indices) msgs.add(ChatMessage(if (roles[i] == "assistant") "assistant" else "user", contents[i]))
+        val templated = w.applyChatTemplate(msgs.toTypedArray(), null, false).getOrThrow()
+
+        val stops = arrayOf("</buscar>", "</abrir>")
+        val config = GenerationConfig(
+            maxTokens = maxTokens.coerceIn(64, 4096),
+            stopWords = stops,
+            stopCount = stops.size,
+            samplerConfig = SamplerConfig(temperature = temperature, topK = 40, topP = 0.95f, minP = 0.05f)
+        )
+        val sb = StringBuilder()
+        var err: Throwable? = null
+        w.generateStreamFlow(templated.formattedText, config).collect { r ->
+            when (r) {
+                is LlmStreamResult.Token -> sb.append(r.text)
+                is LlmStreamResult.Completed -> {
+                    val p = r.profile
+                    lastStats = String.format(
+                        java.util.Locale.US, "lee %d tok a %.0f tok/s · escribe %.1f tok/s",
+                        p.promptTokens, p.prefillSpeed, p.decodingSpeed
+                    )
+                }
+                is LlmStreamResult.Error -> err = r.throwable
+            }
+        }
+        if (sb.isEmpty() && err != null) throw err!!
+        var text = sb.toString()
+        // Si se detuvo en la etiqueta de búsqueda y el motor la omitió, se completa
+        if (text.contains("<buscar>") && !text.contains("</buscar>")) text += "</buscar>"
+        if (text.contains("<abrir>") && !text.contains("</abrir>")) text += "</abrir>"
+        text
+    }
+
+    suspend fun release() = mutex.withLock { closeLocked() }
+
+    private fun closeLocked() {
+        try { llm?.close() } catch (_: Throwable) {}
+        llm = null
+        loadedPath = null
+        loadedUnit = null
+        label = "GenieX sin cargar"
+    }
+}
