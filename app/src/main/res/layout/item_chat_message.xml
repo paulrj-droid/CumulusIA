@@ -1,123 +1,119 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Mensaje del chat: arriba avatar + nombre; abajo el texto a TODO el ancho -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/messageContainer"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="horizontal"
+    android:orientation="vertical"
     android:paddingHorizontal="16dp"
-    android:paddingVertical="8dp"
-    android:gravity="center_vertical">
+    android:paddingVertical="8dp">
 
-    <!-- Imagen de la IA (mostrar solo si es mensaje de la IA) -->
-    <ImageView
-        android:id="@+id/iv_ai_avatar"
-        android:layout_width="32dp"
-        android:layout_height="32dp"
-        android:src="@drawable/cumulus_icon"
-        android:scaleType="centerCrop"
-        android:background="@drawable/bg_circle_blue"
-        android:padding="0dp"
-        android:contentDescription="Avatar de la IA"
-        android:visibility="gone" />
-
-    <!-- Espacio entre la imagen y el texto -->
-    <Space
-        android:id="@+id/space_between"
-        android:layout_width="8dp"
-        android:layout_height="1dp"
-        android:visibility="gone" />
-
-    <!-- Contenido del mensaje -->
+    <!-- Fila superior: avatar de la IA + nombre -->
     <LinearLayout
+        android:id="@+id/messageHeader"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:layout_weight="1">
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="4dp">
+
+        <ImageView
+            android:id="@+id/iv_ai_avatar"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:src="@drawable/cumulus_icon"
+            android:scaleType="centerCrop"
+            android:background="@drawable/bg_circle_blue"
+            android:padding="0dp"
+            android:contentDescription="Avatar de la IA"
+            android:visibility="gone" />
+
+        <Space
+            android:id="@+id/space_between"
+            android:layout_width="8dp"
+            android:layout_height="1dp"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/tvSender"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textSize="11sp"
-            android:textColor="#808080"
-            android:paddingBottom="2dp"/>
-
-        <!-- 📎 Miniaturas de lo que se envió (imágenes, archivos, videos) -->
-        <HorizontalScrollView
-            android:id="@+id/messageAttachmentsScroll"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:scrollbars="none"
-            android:layout_marginBottom="4dp"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:id="@+id/messageAttachments"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal" />
-        </HorizontalScrollView>
-
-        <TextView
-            android:id="@+id/tvMessageContent"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textSize="16sp"
-            android:textColor="#FFFFFF"
-            android:lineSpacingExtra="4dp"
-            android:padding="12dp"
-            android:maxWidth="300dp"/>
-
-        <!-- 📋 Botones de copiar código (uno por cada bloque ``` ) -->
-        <LinearLayout
-            android:id="@+id/codeActions"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingHorizontal="8dp"
-            android:visibility="gone" />
-
-        <!-- 📋 Copiar / 🔗 Compartir (solo en respuestas de la IA) -->
-        <LinearLayout
-            android:id="@+id/messageActions"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingHorizontal="8dp"
-            android:layout_marginTop="2dp"
-            android:visibility="gone">
-
-            <ImageButton
-                android:id="@+id/btnCopyMessage"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_action_copy"
-                android:scaleType="center"
-                android:contentDescription="Copiar"
-                android:tint="#9A9A9A" />
-
-            <ImageButton
-                android:id="@+id/btnShareMessage"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
-                android:layout_marginStart="6dp"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_action_share"
-                android:scaleType="center"
-                android:contentDescription="Compartir"
-                android:tint="#9A9A9A" />
-        </LinearLayout>
-
-        <!-- Texto de "tokens" o detalles (para ponerlo debajo) -->
-        <TextView
-            android:id="@+id/tvTokenInfo"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:textSize="11sp"
-            android:textColor="#808080"/>
+            android:textColor="#808080" />
     </LinearLayout>
 
+    <!-- 📎 Miniaturas de lo que se envió (imágenes, archivos, videos) -->
+    <HorizontalScrollView
+        android:id="@+id/messageAttachmentsScroll"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:layout_marginBottom="4dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/messageAttachments"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
+
+    <TextView
+        android:id="@+id/tvMessageContent"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="16sp"
+        android:textColor="#FFFFFF"
+        android:lineSpacingExtra="4dp"
+        android:padding="12dp" />
+
+    <!-- 📋 Texto + cuadros de código (cuando la respuesta trae ```código```) -->
+    <LinearLayout
+        android:id="@+id/codeActions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone" />
+
+    <!-- 📋 Copiar / 🔗 Compartir (solo en respuestas de la IA) -->
+    <LinearLayout
+        android:id="@+id/messageActions"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="2dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/btnCopyMessage"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_action_copy"
+            android:scaleType="center"
+            android:contentDescription="Copiar"
+            android:tint="#9A9A9A" />
+
+        <ImageButton
+            android:id="@+id/btnShareMessage"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="6dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_action_share"
+            android:scaleType="center"
+            android:contentDescription="Compartir"
+            android:tint="#9A9A9A" />
+    </LinearLayout>
+
+    <!-- Tokens / velocidad -->
+    <TextView
+        android:id="@+id/tvTokenInfo"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:textSize="11sp"
+        android:textColor="#808080" />
 </LinearLayout>
+
