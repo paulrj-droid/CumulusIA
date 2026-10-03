@@ -260,7 +260,7 @@ class ChatAdapter(
             textSize = 16f
             setTextColor(Color.WHITE)
             setLineSpacing(4 * density, 1f)
-            setPadding((12 * density).toInt(), (6 * density).toInt(), (12 * density).toInt(), (6 * density).toInt())
+            setPadding((2 * density).toInt(), (6 * density).toInt(), (2 * density).toInt(), (6 * density).toInt())
             setTextIsSelectable(true)
         })
     }
@@ -415,6 +415,17 @@ class ChatAdapter(
             holder.tvTokenInfo.visibility = View.VISIBLE
         } else {
             holder.tvTokenInfo.visibility = View.GONE
+        }
+
+        // 📐 Ancho: la IA usa toda la pantalla; tu burbuja hasta el 80 %
+        val dm = holder.itemView.context.resources.displayMetrics
+        val d = dm.density
+        if (message.isUser) {
+            holder.tvContent.maxWidth = (dm.widthPixels * 0.8f).toInt()
+            holder.tvContent.setPadding((12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt())
+        } else {
+            holder.tvContent.maxWidth = Int.MAX_VALUE
+            holder.tvContent.setPadding((2 * d).toInt(), (4 * d).toInt(), (2 * d).toInt(), (4 * d).toInt())
         }
 
         if (message.isUser) {
