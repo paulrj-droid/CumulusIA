@@ -7,6 +7,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 
+# llama.cpp queda DENTRO de libcumulus_native.so (estático): así no choca con el
+# libllama.so / libggml.so que trae GenieX (SDK de Qualcomm)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # ============================================================================
 # ⚡ VELOCIDAD: el motor siempre se compila optimizado (-O3), aunque el APK sea
 #    "debug". Sin esto, en debug el motor queda sin optimizar y es ~10 veces más lento.
@@ -41,7 +46,9 @@ set(GGML_HEXAGON OFF CACHE BOOL "" FORCE)
 if (DEFINED ENV{HEXAGON_SDK_ROOT} AND NOT DEFINED HEXAGON_SDK_ROOT)
     set(HEXAGON_SDK_ROOT "$ENV{HEXAGON_SDK_ROOT}" CACHE PATH "")
 endif()
-if (HEXAGON_SDK_ROOT AND IS_DIRECTORY "${HEXAGON_SDK_ROOT}" AND EXISTS "${HEXAGON_SDK_ROOT}/build/cmake/hexagon_fun.cmake")
+# NPU/GPU de los GGUF ahora los maneja GenieX (Qualcomm): nuestro motor queda solo en CPU
+set(CUMULUS_ENABLE_ACCEL OFF)
+if (CUMULUS_ENABLE_ACCEL AND HEXAGON_SDK_ROOT AND IS_DIRECTORY "${HEXAGON_SDK_ROOT}" AND EXISTS "${HEXAGON_SDK_ROOT}/build/cmake/hexagon_fun.cmake")
     set(GGML_HEXAGON ON CACHE BOOL "" FORCE)
     # Igual que el preset oficial de llama.cpp "arm64-android-snapdragon"
     # (sin PREBUILT_LIB_DIR el hexagon_fun.cmake del SDK falla con "string FIND")
@@ -134,7 +141,7 @@ endif()
 # libvulkan.so del sistema (según el minSdk)
 find_library(CUMULUS_VULKAN_LIB vulkan)
 
-if (EXISTS "${_cumulus_glslc}" AND CUMULUS_VULKAN_LIB)
+if (CUMULUS_ENABLE_ACCEL AND EXISTS "${_cumulus_glslc}" AND CUMULUS_VULKAN_LIB)
     set(Vulkan_INCLUDE_DIR "${vulkan_headers_SOURCE_DIR}/include" CACHE PATH "" FORCE)
     set(Vulkan_LIBRARY "${CUMULUS_VULKAN_LIB}" CACHE FILEPATH "" FORCE)
     set(Vulkan_GLSLC_EXECUTABLE "${_cumulus_glslc}" CACHE FILEPATH "" FORCE)
@@ -272,3 +279,4 @@ target_link_libraries(
 # El motor ggml-hexagon queda enlazado dentro de libllama/libggml (no hace falta enlazarlo aparte).
 # Las librerías que corren DENTRO de la NPU (libggml-htp-v79.so, etc.) las copia
 # el workflow de GitHub a jniLibs para que vayan en el APK.
+
