@@ -49,7 +49,7 @@ object GenieXEngineManager {
             it.contains("Qnn", true) || it.contains("htp", true) || it.contains("cdsp", true)
         }?.sorted().orEmpty()
         // Prueba abrir cada librería del plugin: el error dice exactamente qué falta
-        val order = listOf("libc++_shared.so", "libggml-base.so", "libggml.so", "libggml-cpu.so", "libggml-opencl.so",
+        val order = listOf("libc++_shared.so", "libomp.so", "libggml-base.so", "libggml.so", "libggml-cpu.so", "libggml-opencl.so",
             "libggml-hexagon.so", "libllama.so", "libllama-common.so", "libgeniex_core.so", "libgeniex.so",
             "libgeniex_plugin_llama_cpp.so")
         val dl = StringBuilder("\nPrueba de carga:\n")
@@ -129,7 +129,8 @@ object GenieXEngineManager {
                         "npu" -> "⚡ NPU Hexagon (GenieX)"
                         else -> if (backend.contains("NPU", true)) "⚡ NPU→🎮 GPU (GenieX)" else "🎮 GPU Adreno (GenieX)"
                     }
-                    lastErrors = ""
+                    // Si la NPU falló y se usó la GPU, se guarda por qué (la app lo muestra)
+                    lastErrors = errors.toString()
                     Log.i(TAG, "GenieX activo: $label")
                     return@withLock true
                 }
@@ -155,8 +156,8 @@ object GenieXEngineManager {
         temperature: Float
     ): String = mutex.withLock {
         val w = llm ?: throw IllegalStateException("GenieX no tiene un modelo cargado")
-        // Cada mensaje parte limpio: la app manda todo el historial
-        runCatching { w.reset() }
+        // ⚡ Sin reset: GenieX compara el prompt nuevo con el anterior y solo procesa
+        //    lo nuevo (reutiliza la memoria KV). Así cada mensaje no relee toda la conversación.
         val msgs = ArrayList<ChatMessage>()
         msgs.add(ChatMessage("system", system))
         for (i in roles.indices) msgs.add(ChatMessage(if (roles[i] == "assistant") "assistant" else "user", contents[i]))
@@ -202,4 +203,3 @@ object GenieXEngineManager {
         label = "GenieX sin cargar"
     }
 }
-
