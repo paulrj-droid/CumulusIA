@@ -1,4 +1,4 @@
-name: Build Android APK (CPU + GPU Vulkan + NPU Hexagon)
+name: Build Android APK (CPU + GenieX NPU/GPU + LiteRT)
 
 on:
   push:
@@ -153,13 +153,47 @@ jobs:
           done
           exit 0
 
+      # ⚡ GenieX (SDK oficial de Qualcomm): GGUF en NPU Hexagon / GPU Adreno
+      - name: Agregar GenieX de Qualcomm (GGUF en NPU/GPU)
+        working-directory: ${{ github.workspace }}/repo
+        shell: bash
+        run: |
+          set +e
+          GX=""
+          for V in 0.4.0 0.3.1; do
+            if curl -sfI "https://repo1.maven.org/maven2/com/qualcomm/qti/geniex-android/$V/geniex-android-$V.pom" > /dev/null; then GX=$V; break; fi
+          done
+          [ -z "$GX" ] && GX=0.4.0
+          echo "GenieX version: $GX"
+          for G in app/build.gradle app/build.gradle.kts; do
+            [ -f "$G" ] || continue
+            if ! grep -q 'geniex-android' "$G"; then
+              # dependencia (sirve igual en Groovy y en Kotlin DSL)
+              sed -i -E '0,/^[[:space:]]*dependencies[[:space:]]*\{/s//dependencies {\n    implementation("com.qualcomm.qti:geniex-android:'"$GX"'")/' "$G"
+              # GenieX trae sus propias librerías QNN de Qualcomm: se quitan las de Maven para que no choquen
+              sed -i -E 's#^([[:space:]]*)(implementation[ (]+["'"'"']com\.qualcomm\.qti:qnn-(runtime|litert-delegate):[^"'"'"']+["'"'"'][ )]*)#\1// \2  (lo reemplaza GenieX)#' "$G"
+              # GenieX pide minSdk 27 y compileSdk 35
+              sed -i -E 's/(minSdk(Version)?[[:space:]=]+)(1[0-9]|2[0-6])\b/\127/' "$G"
+              sed -i -E 's/(compileSdk(Version)?[[:space:]=]+)3[0-4]\b/\135/' "$G"
+              # si dos librerías traen el mismo .so, se usa uno
+              if [[ "$G" == *.kts ]]; then
+                printf '\nandroid {\n    packaging {\n        jniLibs { pickFirsts += setOf("**/*.so") }\n    }\n}\n' >> "$G"
+              else
+                printf "\nandroid {\n    packagingOptions {\n        pickFirst '**/*.so'\n    }\n}\n" >> "$G"
+              fi
+            fi
+            echo "=== $G (líneas relevantes)"
+            grep -n -E 'geniex|qnn-|minSdk|compileSdk|pickFirst' "$G"
+          done
+          exit 0
+
       - name: Prepare Android SDK licenses
         run: |
           mkdir -p "$ANDROID_HOME/licenses"
           printf '24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n' > "$ANDROID_HOME/licenses/android-sdk-license"
           printf '84831b9409646a918e30573bab4c9c91346d8abd\n' > "$ANDROID_HOME/licenses/android-sdk-preview-license"
 
-      - name: Build APK (CPU + GPU Vulkan + NPU Hexagon)
+      - name: Build APK (CPU + GenieX NPU/GPU + LiteRT)
         working-directory: ${{ github.workspace }}/repo
         env:
           HEXAGON_SDK_ROOT: /opt/hexagon/6.6.0.0
