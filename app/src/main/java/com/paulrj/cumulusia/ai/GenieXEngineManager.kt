@@ -193,6 +193,12 @@ object GenieXEngineManager {
         text
     }
 
+    /** ⏹️ Corta la respuesta en curso (se llama desde un hilo aparte, no bloquea el mutex). */
+    fun requestStop() {
+        val w = llm ?: return
+        runCatching { kotlinx.coroutines.runBlocking { w.stopStream() } }
+    }
+
     suspend fun release() = mutex.withLock { closeLocked() }
 
     private fun closeLocked() {
