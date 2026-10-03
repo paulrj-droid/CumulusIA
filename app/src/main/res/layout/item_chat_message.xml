@@ -20,8 +20,8 @@
 
         <ImageView
             android:id="@+id/iv_ai_avatar"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:src="@drawable/cumulus_icon"
             android:scaleType="centerCrop"
             android:background="@drawable/bg_circle_blue"
@@ -31,7 +31,7 @@
 
         <Space
             android:id="@+id/space_between"
-            android:layout_width="8dp"
+            android:layout_width="10dp"
             android:layout_height="1dp"
             android:visibility="gone" />
 
@@ -39,7 +39,7 @@
             android:id="@+id/tvSender"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textSize="11sp"
+            android:textSize="13sp"
             android:textColor="#808080" />
     </LinearLayout>
 
