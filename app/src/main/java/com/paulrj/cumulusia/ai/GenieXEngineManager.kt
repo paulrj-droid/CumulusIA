@@ -156,8 +156,11 @@ object GenieXEngineManager {
         temperature: Float
     ): String = mutex.withLock {
         val w = llm ?: throw IllegalStateException("GenieX no tiene un modelo cargado")
-        // ⚡ Sin reset: GenieX compara el prompt nuevo con el anterior y solo procesa
-        //    lo nuevo (reutiliza la memoria KV). Así cada mensaje no relee toda la conversación.
+        // ⚡ En GPU no se borra la memoria: GenieX reutiliza lo ya leído y solo procesa lo nuevo.
+        //    En la NPU (Hexagon) esa reutilización deja la memoria KV corrupta y el modelo
+        //    alucina/repite respuestas → se limpia en cada mensaje. La NPU lee a ~3000 tok/s,
+        //    así que releer todo cuesta menos de medio segundo.
+        if (loadedUnit == "npu") runCatching { w.reset() }
         val msgs = ArrayList<ChatMessage>()
         msgs.add(ChatMessage("system", system))
         for (i in roles.indices) msgs.add(ChatMessage(if (roles[i] == "assistant") "assistant" else "user", contents[i]))
@@ -209,3 +212,4 @@ object GenieXEngineManager {
         label = "GenieX sin cargar"
     }
 }
+
