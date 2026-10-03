@@ -29,6 +29,28 @@ object GenieXEngineManager {
     @Volatile private var sdkReady = false
     @Volatile private var lastErrors: String = ""
     @Volatile private var lastStats: String = ""
+    @Volatile private var initInfo: String = "init: no llamado"
+
+    private fun chain(t: Throwable?): String {
+        val sb = StringBuilder(); var c = t; var n = 0
+        while (c != null && n < 6) {
+            if (n > 0) sb.append("\n   causa: ")
+            sb.append(c.javaClass.simpleName).append(": ").append(c.message ?: "")
+            c = c.cause; n++
+        }
+        return sb.toString()
+    }
+
+    /** Info para el diálogo de error: estado del SDK y librerías GenieX/QNN dentro del APK. */
+    fun diagnostics(context: Context): String {
+        val dir = java.io.File(context.applicationInfo.nativeLibraryDir)
+        val libs = dir.listFiles()?.map { it.name }?.filter {
+            it.contains("geniex", true) || it.contains("llama", true) || it.contains("ggml", true) ||
+            it.contains("Qnn", true) || it.contains("htp", true) || it.contains("cdsp", true)
+        }?.sorted().orEmpty()
+        return "SDK: $initInfo\nChip: ${android.os.Build.SOC_MODEL}\nLibs (${libs.size}):\n" +
+            (if (libs.isEmpty()) "  (ninguna — el plugin GenieX no entró al APK)" else libs.joinToString("\n") { "  $it" })
+    }
 
     fun engineInfo(): String = label
     fun lastLoadErrors(): String = lastErrors
@@ -41,17 +63,20 @@ object GenieXEngineManager {
             GenieXSdk.getInstance().init(context.applicationContext, object : GenieXSdk.InitCallback {
                 override fun onSuccess() {
                     sdkReady = true
+                    initInfo = "OK"
                     Log.i(TAG, "GenieX listo")
                 }
                 override fun onFailure(reason: String) {
                     // Puede fallar solo el plugin QAIRT; llama_cpp igual sirve
                     sdkReady = true
+                    initInfo = "con avisos: $reason"
                     Log.w(TAG, "GenieX init con avisos: $reason")
                 }
             })
         } catch (t: Throwable) {
             sdkReady = false
-            lastErrors = "GenieX no disponible: ${t.message}"
+            initInfo = "FALLÓ: " + chain(t)
+            lastErrors = "GenieX no disponible: " + chain(t)
             Log.e(TAG, "GenieX no se pudo iniciar", t)
         }
     }
@@ -92,9 +117,9 @@ object GenieXEngineManager {
                     return@withLock true
                 }
                 errors.append("• ").append(unit.uppercase()).append(": ")
-                    .append(result.exceptionOrNull()?.message ?: "error desconocido").append("\n")
+                    .append(result.exceptionOrNull()?.let { chain(it) } ?: "error desconocido").append("\n")
             } catch (t: Throwable) {
-                errors.append("• ").append(unit.uppercase()).append(": ").append(t.message ?: t.javaClass.simpleName).append("\n")
+                errors.append("• ").append(unit.uppercase()).append(": ").append(chain(t)).append("\n")
             }
         }
         lastErrors = errors.toString()
@@ -160,3 +185,4 @@ object GenieXEngineManager {
         label = "GenieX sin cargar"
     }
 }
+
