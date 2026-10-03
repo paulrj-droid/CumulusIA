@@ -25,6 +25,8 @@ object GenieXEngineManager {
     private var llm: LlmWrapper? = null
     private var loadedPath: String? = null
     private var loadedUnit: String? = null
+    private var loadedCtx: Int = 2048
+    private var lastSystem: String? = null
     @Volatile private var label: String = "GenieX sin cargar"
     @Volatile private var sdkReady = false
     @Volatile private var lastErrors: String = ""
@@ -125,6 +127,8 @@ object GenieXEngineManager {
                     llm = wrapper
                     loadedPath = path
                     loadedUnit = unit
+                    loadedCtx = nCtx
+                    lastSystem = null
                     label = when (unit) {
                         "npu" -> "⚡ NPU Hexagon (GenieX)"
                         else -> if (backend.contains("NPU", true)) "⚡ NPU→🎮 GPU (GenieX)" else "🎮 GPU Adreno (GenieX)"
@@ -155,12 +159,30 @@ object GenieXEngineManager {
         maxTokens: Int,
         temperature: Float
     ): String = mutex.withLock {
-        val w = llm ?: throw IllegalStateException("GenieX no tiene un modelo cargado")
-        // ⚡ En GPU no se borra la memoria: GenieX reutiliza lo ya leído y solo procesa lo nuevo.
-        //    En la NPU (Hexagon) esa reutilización deja la memoria KV corrupta y el modelo
-        //    alucina/repite respuestas → se limpia en cada mensaje. La NPU lee a ~3000 tok/s,
-        //    así que releer todo cuesta menos de medio segundo.
-        if (loadedUnit == "npu") runCatching { w.reset() }
+        var w = llm ?: throw IllegalStateException("GenieX no tiene un modelo cargado")
+        // ⚡ No se borra la memoria: GenieX reutiliza lo ya leído y solo procesa lo nuevo.
+        // ⚠️ En la NPU NO se usa reset(): borrar la memoria de golpe cierra la app.
+        //    Si cambiaron las instrucciones (nombre, modo, personalidad), la memoria vieja
+        //    confunde al modelo → se recarga el modelo en la NPU (solo pasa cuando cambias algo).
+        if (loadedUnit == "npu" && lastSystem != null && lastSystem != system) {
+            val path = loadedPath
+            if (path != null) {
+                Log.i(TAG, "Instrucciones cambiaron: recargando en NPU")
+                runCatching { w.close() }
+                llm = null
+                val fresh = LlmWrapper.builder()
+                    .llmCreateInput(LlmCreateInput(
+                        model_path = path,
+                        config = ModelConfig(nCtx = loadedCtx.coerceIn(512, 16384), nGpuLayers = -1),
+                        runtime_id = "llama_cpp",
+                        compute_unit = "npu"
+                    ))
+                    .build().getOrNull() ?: throw IllegalStateException("No se pudo recargar el modelo en la NPU")
+                llm = fresh
+                w = fresh
+            }
+        }
+        lastSystem = system
         val msgs = ArrayList<ChatMessage>()
         msgs.add(ChatMessage("system", system))
         for (i in roles.indices) msgs.add(ChatMessage(if (roles[i] == "assistant") "assistant" else "user", contents[i]))
@@ -212,4 +234,3 @@ object GenieXEngineManager {
         label = "GenieX sin cargar"
     }
 }
-
