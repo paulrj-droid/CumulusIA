@@ -37,9 +37,11 @@ class ChatAdapter(
         init {
             // Avatar redondo (recorta la imagen en círculo)
             ivAiAvatar.clipToOutline = true
+            ivAiAvatar.background = null   // sin el círculo azul de fondo
             ivAiAvatar.outlineProvider = object : android.view.ViewOutlineProvider() {
                 override fun getOutline(v: View, outline: android.graphics.Outline) {
-                    outline.setOval(0, 0, v.width, v.height)
+                    // Cuadrada con esquinas curvas (igual que la imagen de arriba)
+                    outline.setRoundRect(0, 0, v.width, v.height, 14 * v.resources.displayMetrics.density)
                 }
             }
         }
