@@ -203,10 +203,15 @@ jobs:
           echo "glslc para Vulkan: $CUMULUS_GLSLC"
           # ⚡ NPU: la app necesita permiso para usar libcdsprpc.so (canal hacia la NPU)
           MANI=app/src/main/AndroidManifest.xml
-          if [ -f "$MANI" ] && ! grep -q 'libcdsprpc.so' "$MANI"; then
-            sed -i 's#</application>#    <uses-native-library android:name="libcdsprpc.so" android:required="false" />\n    </application>#' "$MANI"
-            echo "Manifest: agregado libcdsprpc.so"
-          fi
+          # ⚡ GenieX: su plugin llama_cpp necesita libOpenCL.so (GPU Adreno) y libcdsprpc.so (NPU)
+          #    Sin este permiso Android le bloquea esas librerías → "Cannot registerPlugin llama_cpp"
+          for LIB in libcdsprpc.so libOpenCL.so libOpenCL_adreno.so; do
+            if [ -f "$MANI" ] && ! grep -q "\"$LIB\"" "$MANI"; then
+              sed -i "s#</application>#    <uses-native-library android:name=\"$LIB\" android:required=\"false\" />\n    </application>#" "$MANI"
+              echo "Manifest: agregado $LIB"
+            fi
+          done
+          grep -n "uses-native-library" "$MANI"
           gradle assembleDebug --no-daemon --console=plain | tee /tmp/build.log
           CODE=${PIPESTATUS[0]}
           # ⚡ NPU: las librerías que corren dentro de la NPU (libggml-htp-v79.so...)
