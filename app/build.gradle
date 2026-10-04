@@ -62,7 +62,7 @@ android {
     packagingOptions {
         jniLibs {
             useLegacyPackaging true
-            // El teléfono usa su propio libOpenCL.so (/vendor/lib64), no el de la compilación
+            // El telÃ©fono usa su propio libOpenCL.so (/vendor/lib64), no el de la compilaciÃ³n
             excludes += ['**/libOpenCL.so']
         }
     }
@@ -85,6 +85,9 @@ dependencies {
     implementation 'com.qualcomm.qti:qnn-litert-delegate:2.42.0'
 
     implementation("xyz.rementia:openwakeword:0.1.3")
+
+    // ðŸ“„ Leer el texto de archivos PDF (Word, Excel y PowerPoint se leen sin librerÃ­as)
+    implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
 
     implementation 'androidx.compose.ui:ui:1.6.0'
     implementation 'androidx.compose.ui:ui-graphics:1.6.0'
