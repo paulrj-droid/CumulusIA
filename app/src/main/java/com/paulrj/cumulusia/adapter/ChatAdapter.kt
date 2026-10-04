@@ -106,7 +106,7 @@ class ChatAdapter(
         message.attachments.forEach { path ->
             val file = java.io.File(path)
             val ext = file.extension.lowercase()
-            val isImage = ext in setOf("jpg", "jpeg", "png", "webp", "bmp", "gif", "heic", "heif")
+            val isImage = ext in setOf("jpg", "jpeg", "jpe", "jfif", "pjpeg", "png", "webp", "bmp", "gif", "heic", "heif", "avif", "ico", "wbmp", "dng", "cr2", "nef", "arw", "raf", "orf", "rw2")
             // 🖼️ Imágenes de la IA (noticias, clima, imágenes creadas): grandes y se abren al tocarlas
             if (!message.isUser && isImage) {
                 addLargeAiImage(holder, path)
