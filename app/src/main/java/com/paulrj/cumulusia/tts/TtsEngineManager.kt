@@ -170,16 +170,33 @@ class TtsEngineManager(
     }
 
     // Pide a ElevenLabs el audio de una parte (con el texto de alrededor para que la entonación siga natural)
+    // 🎙️ Máxima fidelidad a la voz clonada: Eleven v4 (copia mejor timbre, ritmo y acento).
+    //    Si tu cuenta no lo permite, se usa automáticamente Multilingual v2.
+    private var useV4 = true
+
     private fun fetchElevenLabsChunk(chunk: String, prev: String?, next: String?, index: Int, session: Int): File? {
-        val url = "https://api.elevenlabs.io/v1/text-to-speech/$elevenLabsVoiceId/stream?optimize_streaming_latency=3"
+        if (useV4) {
+            requestElevenLabs(chunk, prev, next, index, session, "eleven_v4")?.let { return it }
+            useV4 = false   // no disponible: desde ahora se usa v2 sin volver a intentar
+        }
+        return requestElevenLabs(chunk, prev, next, index, session, "eleven_multilingual_v2")
+    }
+
+    private fun requestElevenLabs(chunk: String, prev: String?, next: String?, index: Int, session: Int, model: String): File? {
+        val v2 = model == "eleven_multilingual_v2"
+        val url = "https://api.elevenlabs.io/v1/text-to-speech/$elevenLabsVoiceId/stream" +
+            (if (v2) "?optimize_streaming_latency=3" else "")
         val jsonBody = JSONObject().apply {
             put("text", chunk)
-            put("model_id", "eleven_multilingual_v2")
-            if (!prev.isNullOrBlank()) put("previous_text", prev.takeLast(300))
-            if (!next.isNullOrBlank()) put("next_text", next.take(300))
+            put("model_id", model)
+            if (v2) {
+                if (!prev.isNullOrBlank()) put("previous_text", prev.takeLast(300))
+                if (!next.isNullOrBlank()) put("next_text", next.take(300))
+            }
             put("voice_settings", JSONObject().apply {
-                put("stability", 0.5)
-                put("similarity_boost", 0.75)
+                put("stability", 0.4)          // más natural, como habla la persona
+                put("similarity_boost", 0.95)  // lo más parecido posible a la voz original
+                if (v2) put("use_speaker_boost", true)
             })
         }
         val request = Request.Builder()
