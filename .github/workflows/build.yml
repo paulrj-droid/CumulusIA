@@ -105,17 +105,23 @@ jobs:
         shell: bash
         run: |
           set +e
-          GX=""
-          for V in 0.4.0 0.3.1; do
-            if curl -sfI "https://repo1.maven.org/maven2/com/qualcomm/qti/geniex-android/$V/geniex-android-$V.pom" > /dev/null; then GX=$V; break; fi
-          done
-          [ -z "$GX" ] && GX=0.4.0
-          echo "GenieX version: $GX"
+          # GenieX: se usa SOLO la version mas reciente, bajada del GitHub oficial de Qualcomm.
+          # Si algun dia esta version falla, se cambia aqui por una anterior (ej. GX="0.7.0").
+          GX="0.8.0"
+          mkdir -p app/libs
+          if ! curl -sfL -o "app/libs/geniex-android-aar-v$GX.aar" \
+               "https://github.com/qualcomm/GenieX/releases/download/v$GX/geniex-android-aar-v$GX.aar"; then
+            echo "ERROR: no se pudo bajar GenieX $GX de GitHub"
+            exit 1
+          fi
+          GXDEP='files("libs/geniex-android-aar-v'"$GX"'.aar")'
+          cp -f "app/libs/geniex-android-aar-v$GX.aar" /tmp/gx.aar
+          echo "GenieX version: $GX  (dependencia: $GXDEP)"
           # libggml-base.so de GenieX necesita SU libomp.so (OpenMP del NDK r29).
           # Otra libreria trae un libomp.so viejo y pickFirst se quedaba con ese ->
           # "cannot locate symbol __kmpc_dispatch_deinit". Se fija la de GenieX en jniLibs (gana siempre).
           mkdir -p /tmp/gxaar app/src/main/jniLibs/arm64-v8a
-          if curl -sfL -o /tmp/gx.aar "https://repo1.maven.org/maven2/com/qualcomm/qti/geniex-android/$GX/geniex-android-$GX.aar"; then
+          if [ -s /tmp/gx.aar ]; then
             unzip -o -q /tmp/gx.aar 'jni/arm64-v8a/*' -d /tmp/gxaar
             ls /tmp/gxaar/jni/arm64-v8a | grep -i -E 'omp|c\+\+' || true
             for L in libomp.so libc++_shared.so; do
@@ -129,9 +135,10 @@ jobs:
           fi
           for G in app/build.gradle app/build.gradle.kts; do
             [ -f "$G" ] || continue
-            if ! grep -q 'geniex-android' "$G"; then
+            if ! grep -q 'geniex-android' "$G"; then   # (tambien detecta el .aar de GitHub)
               # dependencia (sirve igual en Groovy y en Kotlin DSL)
-              sed -i -E '0,/^[[:space:]]*dependencies[[:space:]]*\{/s//dependencies {\n    implementation("com.qualcomm.qti:geniex-android:'"$GX"'")/' "$G"
+              GXDEP_SED=$(printf '%s' "$GXDEP" | sed 's/[\/&]/\\&/g')   # las / de la ruta del .aar no deben romper el sed
+              sed -i -E '0,/^[[:space:]]*dependencies[[:space:]]*\{/s//dependencies {\n    implementation('"$GXDEP_SED"')/' "$G"
               # GenieX trae sus propias librerias QNN de Qualcomm: se quitan las de Maven para que no choquen
               sed -i -E 's#^([[:space:]]*)(implementation[ (]+["'"'"']com\.qualcomm\.qti:qnn-(runtime|litert-delegate):[^"'"'"']+["'"'"'][ )]*)#\1// \2  (lo reemplaza GenieX)#' "$G"
               # GenieX pide minSdk 27 y compileSdk 35
@@ -209,3 +216,4 @@ jobs:
         with:
           name: app-full-debug
           path: ${{ github.workspace }}/repo/app/build/outputs/apk/debug/app-debug.apk
+
