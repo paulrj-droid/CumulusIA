@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <cache-path name="camera_photos" path="." />
+<!-- Carpetas privadas de la app que se pueden abrir / compartir con otras apps -->
+<paths>
+    <!-- Videos, imágenes y documentos que crea la IA (privados hasta que tocas ⬇️) -->
+    <files-path name="entregas" path="entregas/" />
 </paths>
