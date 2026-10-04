@@ -6,9 +6,14 @@ import android.media.MediaPlayer
 import android.os.Build
 import android.speech.tts.TextToSpeech
 import com.paulrj.cumulusia.ai.CumulusEngine
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.resume
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -139,54 +144,99 @@ class TtsEngineManager(
         }
     }
 
+    // Cada vez que se habla o se detiene cambia el número: así un audio viejo nunca suena encima del nuevo
+    private val speakSession = AtomicInteger(0)
+
+    /**
+     * Divide la respuesta en partes: la primera es corta (primera frase) para que la voz
+     * empiece casi al instante; las siguientes son más largas para que suene fluido.
+     */
+    private fun splitForSpeech(text: String): List<String> {
+        val sentences = Regex("[^.!?\\n]*[.!?]+|[^.!?\\n]+").findAll(text.replace("\n", " \n "))
+            .map { it.value.trim() }.filter { it.isNotEmpty() }.toList()
+        if (sentences.isEmpty()) return listOf(text)
+        val chunks = mutableListOf<String>()
+        val sb = StringBuilder()
+        for (sentence in sentences) {
+            val limit = if (chunks.isEmpty()) 120 else 380
+            if (sb.isNotEmpty() && sb.length + sentence.length > limit) {
+                chunks.add(sb.toString().trim()); sb.clear()
+            }
+            sb.append(sentence).append(' ')
+            if (chunks.isEmpty() && sb.length >= 40) { chunks.add(sb.toString().trim()); sb.clear() }
+        }
+        if (sb.isNotBlank()) chunks.add(sb.toString().trim())
+        return chunks
+    }
+
+    // Pide a ElevenLabs el audio de una parte (con el texto de alrededor para que la entonación siga natural)
+    private fun fetchElevenLabsChunk(chunk: String, prev: String?, next: String?, index: Int, session: Int): File? {
+        val url = "https://api.elevenlabs.io/v1/text-to-speech/$elevenLabsVoiceId/stream?optimize_streaming_latency=3"
+        val jsonBody = JSONObject().apply {
+            put("text", chunk)
+            put("model_id", "eleven_multilingual_v2")
+            if (!prev.isNullOrBlank()) put("previous_text", prev.takeLast(300))
+            if (!next.isNullOrBlank()) put("next_text", next.take(300))
+            put("voice_settings", JSONObject().apply {
+                put("stability", 0.5)
+                put("similarity_boost", 0.75)
+            })
+        }
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("xi-api-key", elevenLabsApiKey)
+            .addHeader("Content-Type", "application/json")
+            .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+        httpClient.newCall(request).execute().use { response ->
+            val body = response.body
+            if (!response.isSuccessful || body == null) return null
+            val file = File(context.cacheDir, "tts_el_${session}_$index.mp3")
+            FileOutputStream(file).use { out -> body.byteStream().copyTo(out) }
+            return if (file.length() > 0) file else null
+        }
+    }
+
+    private suspend fun playAndWait(file: File, session: Int) = suspendCancellableCoroutine<Unit> { cont ->
+        if (session != speakSession.get()) { cont.resume(Unit); return@suspendCancellableCoroutine }
+        playAudioFile(file) { if (cont.isActive) cont.resume(Unit) }
+    }
+
     private fun speakWithElevenLabs(text: String, onComplete: (() -> Unit)?) {
         if (elevenLabsApiKey.isEmpty()) {
             speakWithAndroidTts(text, onComplete) // Fallback si no hay API Key
             return
         }
+        val session = speakSession.incrementAndGet()
+        val chunks = splitForSpeech(text)
+        val audios = List(chunks.size) { CompletableDeferred<File?>() }
 
+        // 1) Descarga las partes en orden: la primera llega rápido y las demás se preparan mientras habla
         CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val url = "https://api.elevenlabs.io/v1/text-to-speech/$elevenLabsVoiceId"
-
-                val jsonBody = JSONObject().apply {
-                    put("text", text)
-                    put("model_id", "eleven_multilingual_v2")
-                    put("voice_settings", JSONObject().apply {
-                        put("stability", 0.5)
-                        put("similarity_boost", 0.75)
-                    })
-                }
-
-                val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
-                val request = Request.Builder()
-                    .url(url)
-                    .addHeader("xi-api-key", elevenLabsApiKey)
-                    .addHeader("Content-Type", "application/json")
-                    .post(requestBody)
-                    .build()
-
-                val response = httpClient.newCall(request).execute()
-                if (response.isSuccessful && response.body != null) {
-                    val tempFile = File(context.cacheDir, "tts_elevenlabs_temp.mp3")
-                    FileOutputStream(tempFile).use { output ->
-                        response.body!!.byteStream().copyTo(output)
-                    }
-
-                    CoroutineScope(Dispatchers.Main).launch {
-                        playAudioFile(tempFile, onComplete)
-                    }
-                } else {
-                    CoroutineScope(Dispatchers.Main).launch {
-                        speakWithAndroidTts(text, onComplete)
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                CoroutineScope(Dispatchers.Main).launch {
-                    speakWithAndroidTts(text, onComplete)
-                }
+            for (i in chunks.indices) {
+                if (session != speakSession.get()) { audios.drop(i).forEach { it.complete(null) }; return@launch }
+                val file = runCatching {
+                    fetchElevenLabsChunk(chunks[i], chunks.getOrNull(i - 1), chunks.getOrNull(i + 1), i, session)
+                }.onFailure { it.printStackTrace() }.getOrNull()
+                audios[i].complete(file)
             }
+        }
+
+        // 2) Reproduce cada parte apenas está lista, una detrás de otra
+        CoroutineScope(Dispatchers.Main).launch {
+            for (i in chunks.indices) {
+                val file = audios[i].await()
+                if (session != speakSession.get()) return@launch
+                if (file == null) {
+                    // Si ElevenLabs falla, el resto lo lee la voz de Android
+                    speakWithAndroidTts(chunks.drop(i).joinToString(" "), onComplete)
+                    return@launch
+                }
+                playAndWait(file, session)
+                withContext(Dispatchers.IO) { runCatching { file.delete() } }
+                if (session != speakSession.get()) return@launch
+            }
+            onComplete?.invoke()
         }
     }
 
@@ -218,6 +268,7 @@ class TtsEngineManager(
     }
 
     fun stop() {
+        speakSession.incrementAndGet() // cancela las partes pendientes de ElevenLabs
         try {
             if (androidTts?.isSpeaking == true) {
                 androidTts?.stop()
