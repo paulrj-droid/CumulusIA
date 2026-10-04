@@ -4,12 +4,16 @@ import android.content.Context
 import android.util.Log
 import com.geniex.sdk.GenieXSdk
 import com.geniex.sdk.LlmWrapper
+import com.geniex.sdk.VlmWrapper
 import com.geniex.sdk.bean.ChatMessage
 import com.geniex.sdk.bean.GenerationConfig
 import com.geniex.sdk.bean.LlmCreateInput
 import com.geniex.sdk.bean.LlmStreamResult
 import com.geniex.sdk.bean.ModelConfig
 import com.geniex.sdk.bean.SamplerConfig
+import com.geniex.sdk.bean.VlmChatMessage
+import com.geniex.sdk.bean.VlmContent
+import com.geniex.sdk.bean.VlmCreateInput
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -23,6 +27,9 @@ object GenieXEngineManager {
     private val mutex = Mutex()
 
     private var llm: LlmWrapper? = null
+    // 👁️ Visión en NPU/GPU: si el modelo tiene mmproj se carga como VLM (sirve para texto e imágenes)
+    private var vlm: VlmWrapper? = null
+    private var loadedMmproj: String? = null
     private var loadedPath: String? = null
     private var loadedUnit: String? = null
     private var loadedCtx: Int = 2048
@@ -74,7 +81,10 @@ object GenieXEngineManager {
     fun engineInfo(): String = label
     fun lastLoadErrors(): String = lastErrors
     fun lastStats(): String = lastStats
-    fun isLoaded(path: String?): Boolean = llm != null && path != null && path == loadedPath
+    fun isLoaded(path: String?): Boolean = (llm != null || vlm != null) && path != null && path == loadedPath
+    /** true si el modelo cargado en NPU/GPU puede ver imágenes (se cargó con su mmproj). */
+    fun hasVision(): Boolean = vlm != null
+    fun loadedMmprojPath(): String? = loadedMmproj
 
     /** Se llama al abrir la app. Si el SDK no está en el APK, simplemente queda desactivado. */
     fun init(context: Context) {
@@ -101,7 +111,7 @@ object GenieXEngineManager {
     }
 
     /** Carga un GGUF. backend contiene "NPU" o "GPU". Si la NPU falla, prueba la GPU. */
-    suspend fun load(path: String, backend: String, nCtx: Int): Boolean = mutex.withLock {
+    suspend fun load(path: String, backend: String, nCtx: Int, mmproj: String? = null): Boolean = mutex.withLock {
         closeLocked()
         if (!sdkReady) {
             lastErrors = lastErrors.ifBlank { "GenieX no está iniciado" }
@@ -109,7 +119,45 @@ object GenieXEngineManager {
         }
         val units = if (backend.contains("NPU", true)) listOf("npu", "gpu") else listOf("gpu")
         val errors = StringBuilder()
+        val mm = mmproj?.takeIf { it.isNotBlank() && java.io.File(it).exists() }
         for (unit in units) {
+            // 👁️ Primero con visión (modelo + mmproj). Si no se puede, sigue igual que antes solo texto.
+            if (mm != null) {
+                try {
+                    Log.i(TAG, "Cargando VLM $path + $mm en $unit")
+                    val vr = VlmWrapper.builder()
+                        .vlmCreateInput(
+                            VlmCreateInput(
+                                model_path = path,
+                                mmproj_path = mm,
+                                config = ModelConfig(nCtx = nCtx.coerceIn(512, 16384), nGpuLayers = -1),
+                                runtime_id = "llama_cpp",
+                                compute_unit = unit
+                            )
+                        )
+                        .build()
+                    val vw = vr.getOrNull()
+                    if (vw != null) {
+                        vlm = vw
+                        loadedMmproj = mm
+                        loadedPath = path
+                        loadedUnit = unit
+                        loadedCtx = nCtx
+                        lastSystem = null
+                        label = when (unit) {
+                            "npu" -> "⚡ NPU Hexagon 👁️ (GenieX)"
+                            else -> if (backend.contains("NPU", true)) "⚡ NPU→🎮 GPU 👁️ (GenieX)" else "🎮 GPU Adreno 👁️ (GenieX)"
+                        }
+                        lastErrors = errors.toString()
+                        Log.i(TAG, "GenieX VLM activo: $label")
+                        return@withLock true
+                    }
+                    errors.append("• ").append(unit.uppercase()).append(" visión: ")
+                        .append(vr.exceptionOrNull()?.let { chain(it) } ?: "error desconocido").append("\n")
+                } catch (t: Throwable) {
+                    errors.append("• ").append(unit.uppercase()).append(" visión: ").append(chain(t)).append("\n")
+                }
+            }
             try {
                 Log.i(TAG, "Cargando $path en $unit")
                 val result = LlmWrapper.builder()
@@ -159,6 +207,14 @@ object GenieXEngineManager {
         maxTokens: Int,
         temperature: Float
     ): String = mutex.withLock {
+        // 👁️ Si se cargó con visión, el mismo motor responde también el texto
+        vlm?.let { v ->
+            val vm = ArrayList<VlmChatMessage>()
+            vm.add(VlmChatMessage(role = "system", contents = listOf(VlmContent("text", system))))
+            for (i in roles.indices) vm.add(VlmChatMessage(role = if (roles[i] == "assistant") "assistant" else "user",
+                contents = listOf(VlmContent("text", contents[i]))))
+            return@withLock runVlmLocked(v, vm, maxTokens, temperature)
+        }
         var w = llm ?: throw IllegalStateException("GenieX no tiene un modelo cargado")
         // 🧹 GPU: se limpia la memoria en cada mensaje (reutilizarla hacía que repitiera
         //    respuestas viejas). Releer todo en la GPU cuesta ~1 s.
@@ -201,8 +257,66 @@ object GenieXEngineManager {
         text
     }
 
+    /**
+     * 👁️ Responde sobre imágenes (fotos, cuadros de video, cámara) en NPU/GPU.
+     * Solo funciona si el modelo se cargó con su mmproj (hasVision() = true).
+     */
+    suspend fun generateWithImages(
+        system: String,
+        prompt: String,
+        imagePaths: List<String>,
+        maxTokens: Int,
+        temperature: Float
+    ): String = mutex.withLock {
+        val v = vlm ?: throw IllegalStateException("El modelo en NPU/GPU se cargó sin mmproj (sin visión)")
+        val parts = ArrayList<VlmContent>()
+        for (p in imagePaths) parts.add(VlmContent("image", p))
+        parts.add(VlmContent("text", prompt))
+        val vm = listOf(
+            VlmChatMessage(role = "system", contents = listOf(VlmContent("text", system))),
+            VlmChatMessage(role = "user", contents = parts)
+        )
+        runVlmLocked(v, vm, maxTokens, temperature)
+    }
+
+    private suspend fun runVlmLocked(v: VlmWrapper, vm: List<VlmChatMessage>, maxTokens: Int, temperature: Float): String {
+        // GPU se limpia en cada mensaje (igual que en texto); la NPU no se toca
+        if (loadedUnit != "npu") runCatching { v.reset() }
+        val arr = vm.toTypedArray()
+        val templated = v.applyChatTemplate(arr, null, false).getOrThrow()
+        val stops = arrayOf("</buscar>", "</abrir>")
+        val base = GenerationConfig(
+            maxTokens = maxTokens.coerceIn(64, 4096),
+            stopWords = stops,
+            stopCount = stops.size,
+            samplerConfig = SamplerConfig(temperature = temperature, topK = 40, topP = 0.95f, minP = 0.05f)
+        )
+        val config = v.injectMediaPathsToConfig(arr, base)
+        val sb = StringBuilder()
+        var err: Throwable? = null
+        v.generateStreamFlow(templated.formattedText, config).collect { r ->
+            when (r) {
+                is LlmStreamResult.Token -> sb.append(r.text)
+                is LlmStreamResult.Completed -> {
+                    val p = r.profile
+                    lastStats = String.format(
+                        java.util.Locale.US, "lee %d tok a %.0f tok/s · escribe %.1f tok/s",
+                        p.promptTokens, p.prefillSpeed, p.decodingSpeed
+                    )
+                }
+                is LlmStreamResult.Error -> err = r.throwable
+            }
+        }
+        if (sb.isEmpty() && err != null) throw err!!
+        var text = sb.toString()
+        if (text.contains("<buscar>") && !text.contains("</buscar>")) text += "</buscar>"
+        if (text.contains("<abrir>") && !text.contains("</abrir>")) text += "</abrir>"
+        return text
+    }
+
     /** ⏹️ Corta la respuesta en curso (se llama desde un hilo aparte, no bloquea el mutex). */
     fun requestStop() {
+        vlm?.let { v -> runCatching { kotlinx.coroutines.runBlocking { v.stopStream() } } }
         val w = llm ?: return
         runCatching { kotlinx.coroutines.runBlocking { w.stopStream() } }
     }
@@ -212,6 +326,9 @@ object GenieXEngineManager {
     private fun closeLocked() {
         try { llm?.close() } catch (_: Throwable) {}
         llm = null
+        try { vlm?.close() } catch (_: Throwable) {}
+        vlm = null
+        loadedMmproj = null
         loadedPath = null
         loadedUnit = null
         label = "GenieX sin cargar"
