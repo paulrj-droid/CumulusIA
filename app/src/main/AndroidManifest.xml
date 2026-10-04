@@ -40,6 +40,17 @@
             </intent-filter>
         </activity>
 
+        <!-- Permite abrir y compartir lo que crea la IA sin guardarlo en la galería -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Actividad temporal para mostrar errores/crashes en pantalla -->
         <activity
             android:name=".CrashActivity"
@@ -48,4 +59,3 @@
     </application>
 
 </manifest>
-
