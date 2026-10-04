@@ -54,6 +54,44 @@ class ChatAdapter(
         val attachmentsRow: LinearLayout = view.findViewById(R.id.messageAttachments)
     }
 
+    // Imagen grande en la respuesta de la IA (carrusel horizontal si hay varias)
+    private fun addLargeAiImage(holder: ChatViewHolder, path: String) {
+        val context = holder.itemView.context
+        val dp = context.resources.displayMetrics.density
+        val bmp = runCatching {
+            val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeFile(path, o)
+            var sample = 1
+            while (o.outWidth / sample > 1400) sample *= 2
+            android.graphics.BitmapFactory.decodeFile(path, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+        }.getOrNull() ?: return
+        val screenW = context.resources.displayMetrics.widthPixels
+        val w = (screenW * 0.78f).toInt()
+        val h = (w * bmp.height.toFloat() / bmp.width).toInt().coerceIn((120 * dp).toInt(), (560 * dp).toInt())
+        val iv = ImageView(context).apply {
+            setImageBitmap(bmp)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            layoutParams = LinearLayout.LayoutParams(w, h).apply { marginEnd = (8 * dp).toInt() }
+            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 16 * dp; setColor(Color.parseColor("#2C2C2E")) }
+            clipToOutline = true
+            outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+            setOnClickListener { showFullImage(context, path) }
+        }
+        holder.attachmentsRow.addView(iv)
+    }
+
+    private fun showFullImage(context: Context, path: String) {
+        val bmp = android.graphics.BitmapFactory.decodeFile(path) ?: return
+        val dialog = android.app.Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        dialog.setContentView(ImageView(context).apply {
+            setImageBitmap(bmp)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(Color.BLACK)
+            setOnClickListener { dialog.dismiss() }
+        })
+        dialog.show()
+    }
+
     // 📎 Miniaturas de los adjuntos enviados en el mensaje
     private fun bindAttachments(holder: ChatViewHolder, message: ChatMessage) {
         holder.attachmentsRow.removeAllViews()
@@ -69,6 +107,11 @@ class ChatAdapter(
             val file = java.io.File(path)
             val ext = file.extension.lowercase()
             val isImage = ext in setOf("jpg", "jpeg", "png", "webp", "bmp", "gif", "heic", "heif")
+            // 🖼️ Imágenes de la IA (noticias, clima, imágenes creadas): grandes y se abren al tocarlas
+            if (!message.isUser && isImage) {
+                addLargeAiImage(holder, path)
+                return@forEach
+            }
             val isVideo = ext in setOf("mp4", "mkv", "webm", "3gp", "mov", "avi")
             val isAudio = ext in setOf("wav", "mp3", "flac", "m4a", "ogg", "aac", "opus")
             val frame = android.widget.FrameLayout(context).apply {
