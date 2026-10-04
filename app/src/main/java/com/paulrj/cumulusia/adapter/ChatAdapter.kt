@@ -351,16 +351,28 @@ class ChatAdapter(
     private fun saveToDownloads(context: Context, name: String, mime: String, bytes: ByteArray): Boolean =
         saveStreamToDownloads(context, name, mime) { it.write(bytes) }
 
+    // Imágenes → Pictures/CumulusIA (galería) · Videos → Movies/CumulusIA (galería) · lo demás → Descargas/CumulusIA
     private fun saveStreamToDownloads(context: Context, name: String, mime: String, write: (java.io.OutputStream) -> Unit): Boolean = runCatching {
+        val (collection, folder) = when {
+            mime.startsWith("image/") -> android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI to android.os.Environment.DIRECTORY_PICTURES
+            mime.startsWith("video/") -> android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI to android.os.Environment.DIRECTORY_MOVIES
+            else -> android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI to android.os.Environment.DIRECTORY_DOWNLOADS
+        }
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
-            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/CumulusIA")
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "$folder/CumulusIA")
         }
-        val uri = context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return@runCatching false
+        val uri = context.contentResolver.insert(collection, values) ?: return@runCatching false
         context.contentResolver.openOutputStream(uri)?.use { write(it) } ?: return@runCatching false
         true
     }.getOrDefault(false)
+
+    private fun folderLabel(mime: String) = when {
+        mime.startsWith("image/") -> "tu galería (Pictures/CumulusIA)"
+        mime.startsWith("video/") -> "tu galería (Movies/CumulusIA)"
+        else -> "Descargas/CumulusIA"
+    }
 
     private fun codeExtension(language: String): String = when (language.lowercase()) {
         "kotlin", "kt" -> "kt"; "java" -> "java"; "python", "py" -> "py"; "javascript", "js" -> "js"; "typescript", "ts" -> "ts"
@@ -372,32 +384,33 @@ class ChatAdapter(
 
     /** Descarga lo que entregó la IA: sus archivos (video, imagen, documento) o, si es solo texto, el texto como .txt */
     private fun downloadMessage(context: Context, message: ChatMessage, cleanText: String) {
-        var saved = 0; var already = 0
+        var saved = 0; var already = 0; val where = linkedSetOf<String>()
         message.attachments.forEach { a ->
             if (a.startsWith("deliver:")) {
                 val parts = a.removePrefix("deliver:").split("|")
                 if (parts.size < 4) return@forEach
                 val uri = Uri.parse(parts[1]); val mime = parts[2]; val name = parts[3]
-                if (uri.toString().contains("downloads", ignoreCase = true)) { already++; return@forEach }
+                // Archivos antiguos que ya estaban guardados en el teléfono
+                if (uri.authority?.startsWith("media") == true) { already++; return@forEach }
                 val ok = saveStreamToDownloads(context, name, mime) { out ->
                     context.contentResolver.openInputStream(uri)?.use { it.copyTo(out) }
                 }
-                if (ok) saved++
+                if (ok) { saved++; where += folderLabel(mime) }
             } else {
                 val f = java.io.File(a)
                 if (!f.exists()) return@forEach
                 val ext = f.extension.lowercase()
                 val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
-                if (saveStreamToDownloads(context, f.name, mime) { out -> f.inputStream().use { it.copyTo(out) } }) saved++
+                if (saveStreamToDownloads(context, f.name, mime) { out -> f.inputStream().use { it.copyTo(out) } }) { saved++; where += folderLabel(mime) }
             }
         }
         if (saved == 0 && already == 0) {
             val name = "respuesta_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date()) + ".txt"
-            if (saveToDownloads(context, name, "text/plain", cleanText.toByteArray(Charsets.UTF_8))) saved++
+            if (saveToDownloads(context, name, "text/plain", cleanText.toByteArray(Charsets.UTF_8))) { saved++; where += folderLabel("text/plain") }
         }
         val msg = when {
-            saved > 0 -> "⬇️ Descargado en Descargas/CumulusIA" + (if (saved > 1) " ($saved archivos)" else "")
-            already > 0 -> "✅ Ya está en Descargas/CumulusIA"
+            saved > 0 -> "⬇️ Guardado en " + where.joinToString(" y ") + (if (saved > 1) " ($saved archivos)" else "")
+            already > 0 -> "✅ Ya estaba guardado en tu teléfono"
             else -> "No se pudo descargar"
         }
         Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
