@@ -170,17 +170,12 @@ class TtsEngineManager(
     }
 
     // Pide a ElevenLabs el audio de una parte (con el texto de alrededor para que la entonación siga natural)
-    // 🎙️ Máxima fidelidad a la voz clonada: Eleven v4 (copia mejor timbre, ritmo y acento).
-    //    Si tu cuenta no lo permite, se usa automáticamente Multilingual v2.
-    private var useV4 = true
+    // 🎙️ Máxima fidelidad a la voz clonada: SOLO Eleven v4 (el modelo más nuevo de ElevenLabs).
+    //    Si algún día deja de funcionar, se cambia aquí por un modelo anterior.
+    private val elevenModel = "eleven_v4"
 
-    private fun fetchElevenLabsChunk(chunk: String, prev: String?, next: String?, index: Int, session: Int): File? {
-        if (useV4) {
-            requestElevenLabs(chunk, prev, next, index, session, "eleven_v4")?.let { return it }
-            useV4 = false   // no disponible: desde ahora se usa v2 sin volver a intentar
-        }
-        return requestElevenLabs(chunk, prev, next, index, session, "eleven_multilingual_v2")
-    }
+    private fun fetchElevenLabsChunk(chunk: String, prev: String?, next: String?, index: Int, session: Int): File? =
+        requestElevenLabs(chunk, prev, next, index, session, elevenModel)
 
     private fun requestElevenLabs(chunk: String, prev: String?, next: String?, index: Int, session: Int, model: String): File? {
         val v2 = model == "eleven_multilingual_v2"
