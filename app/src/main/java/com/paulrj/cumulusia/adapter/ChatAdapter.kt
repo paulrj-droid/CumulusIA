@@ -54,6 +54,91 @@ class ChatAdapter(
         val attachmentsRow: LinearLayout = view.findViewById(R.id.messageAttachments)
     }
 
+    // Tarjeta de un archivo creado por la IA: tocar = abrir · mantener presionado = compartir
+    private fun addDeliveredCard(holder: ChatViewHolder, spec: String) {
+        val parts = spec.split("|")
+        if (parts.size < 4) return
+        val thumb = parts[0]; val uri = Uri.parse(parts[1]); val mime = parts[2]; val name = parts[3]
+        val context = holder.itemView.context
+        val dp = context.resources.displayMetrics.density
+        val open = {
+            runCatching {
+                context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, mime)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+            }.onFailure { Toast.makeText(context, "No hay una app para abrir este archivo", Toast.LENGTH_SHORT).show() }
+        }
+        val share = {
+            runCatching {
+                context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    type = mime
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }, "Compartir").apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+            }
+            true
+        }
+        val isVideo = mime.startsWith("video/"); val isImage = mime.startsWith("image/")
+        val bmp = if (thumb.isNotEmpty()) runCatching {
+            val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeFile(thumb, o)
+            var sample = 1
+            while (o.outWidth / sample > 1400) sample *= 2
+            android.graphics.BitmapFactory.decodeFile(thumb, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+        }.getOrNull() else null
+
+        if ((isVideo || isImage) && bmp != null) {
+            val screenW = context.resources.displayMetrics.widthPixels
+            val w = (screenW * 0.78f).toInt()
+            val h = (w * bmp.height.toFloat() / bmp.width).toInt().coerceIn((120 * dp).toInt(), (520 * dp).toInt())
+            val frame = android.widget.FrameLayout(context).apply {
+                layoutParams = LinearLayout.LayoutParams(w, h).apply { marginEnd = (8 * dp).toInt() }
+                background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 16 * dp; setColor(Color.parseColor("#2C2C2E")) }
+                clipToOutline = true
+                outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+                setOnClickListener { open() }
+                setOnLongClickListener { share() }
+            }
+            frame.addView(ImageView(context).apply {
+                setImageBitmap(bmp); scaleType = ImageView.ScaleType.CENTER_CROP
+                layoutParams = android.widget.FrameLayout.LayoutParams(-1, -1)
+            })
+            if (isVideo) frame.addView(TextView(context).apply {
+                text = "▶"; textSize = 26f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Color.parseColor("#99000000")) }
+                layoutParams = android.widget.FrameLayout.LayoutParams((60 * dp).toInt(), (60 * dp).toInt(), Gravity.CENTER)
+            })
+            holder.attachmentsRow.addView(frame)
+            return
+        }
+        // Documento (Word, PDF, texto...) u otro archivo: tarjeta con ícono y nombre
+        val icon = when {
+            mime.contains("word") -> "📝"; mime.contains("pdf") -> "📕"; isVideo -> "🎬"; isImage -> "🖼️"; else -> "📄"
+        }
+        val card = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding((14 * dp).toInt(), (12 * dp).toInt(), (14 * dp).toInt(), (12 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams((context.resources.displayMetrics.widthPixels * 0.78f).toInt(), -2)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 16 * dp; setColor(Color.parseColor("#1C1C1E")); setStroke((1.2f * dp).toInt(), Color.parseColor("#3D5AFE"))
+            }
+            setOnClickListener { open() }
+            setOnLongClickListener { share() }
+        }
+        card.addView(TextView(context).apply { text = icon; textSize = 30f })
+        card.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((12 * dp).toInt(), 0, 0, 0)
+            addView(TextView(context).apply { text = name; textSize = 14f; setTextColor(Color.WHITE); maxLines = 2 })
+            addView(TextView(context).apply {
+                text = "Toca para abrir · mantén presionado para compartir"; textSize = 11f; setTextColor(Color.parseColor("#8E8E93"))
+            })
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        holder.attachmentsRow.addView(card)
+    }
+
     // Imagen grande en la respuesta de la IA (carrusel horizontal si hay varias)
     private fun addLargeAiImage(holder: ChatViewHolder, path: String) {
         val context = holder.itemView.context
@@ -104,6 +189,11 @@ class ChatAdapter(
         val dp = context.resources.displayMetrics.density
         val size = (72 * dp).toInt()
         message.attachments.forEach { path ->
+            // 📦 Archivo entregado por la IA (video, imagen o documento): tarjeta para abrir / compartir
+            if (path.startsWith("deliver:")) {
+                addDeliveredCard(holder, path.removePrefix("deliver:"))
+                return@forEach
+            }
             val file = java.io.File(path)
             val ext = file.extension.lowercase()
             val isImage = ext in setOf("jpg", "jpeg", "jpe", "jfif", "pjpeg", "png", "webp", "bmp", "gif", "heic", "heif", "avif", "ico", "wbmp", "dng", "cr2", "nef", "arw", "raf", "orf", "rw2")
@@ -257,6 +347,62 @@ class ChatAdapter(
         })
     }
 
+    // ================= ⬇️ DESCARGAS =================
+    private fun saveToDownloads(context: Context, name: String, mime: String, bytes: ByteArray): Boolean =
+        saveStreamToDownloads(context, name, mime) { it.write(bytes) }
+
+    private fun saveStreamToDownloads(context: Context, name: String, mime: String, write: (java.io.OutputStream) -> Unit): Boolean = runCatching {
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/CumulusIA")
+        }
+        val uri = context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return@runCatching false
+        context.contentResolver.openOutputStream(uri)?.use { write(it) } ?: return@runCatching false
+        true
+    }.getOrDefault(false)
+
+    private fun codeExtension(language: String): String = when (language.lowercase()) {
+        "kotlin", "kt" -> "kt"; "java" -> "java"; "python", "py" -> "py"; "javascript", "js" -> "js"; "typescript", "ts" -> "ts"
+        "html" -> "html"; "css" -> "css"; "json" -> "json"; "xml" -> "xml"; "c" -> "c"; "cpp", "c++" -> "cpp"; "csharp", "cs", "c#" -> "cs"
+        "go" -> "go"; "rust", "rs" -> "rs"; "swift" -> "swift"; "dart" -> "dart"; "php" -> "php"; "ruby", "rb" -> "rb"
+        "bash", "sh", "shell" -> "sh"; "sql" -> "sql"; "yaml", "yml" -> "yml"; "gradle", "groovy" -> "gradle"; "markdown", "md" -> "md"
+        else -> "txt"
+    }
+
+    /** Descarga lo que entregó la IA: sus archivos (video, imagen, documento) o, si es solo texto, el texto como .txt */
+    private fun downloadMessage(context: Context, message: ChatMessage, cleanText: String) {
+        var saved = 0; var already = 0
+        message.attachments.forEach { a ->
+            if (a.startsWith("deliver:")) {
+                val parts = a.removePrefix("deliver:").split("|")
+                if (parts.size < 4) return@forEach
+                val uri = Uri.parse(parts[1]); val mime = parts[2]; val name = parts[3]
+                if (uri.toString().contains("downloads", ignoreCase = true)) { already++; return@forEach }
+                val ok = saveStreamToDownloads(context, name, mime) { out ->
+                    context.contentResolver.openInputStream(uri)?.use { it.copyTo(out) }
+                }
+                if (ok) saved++
+            } else {
+                val f = java.io.File(a)
+                if (!f.exists()) return@forEach
+                val ext = f.extension.lowercase()
+                val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+                if (saveStreamToDownloads(context, f.name, mime) { out -> f.inputStream().use { it.copyTo(out) } }) saved++
+            }
+        }
+        if (saved == 0 && already == 0) {
+            val name = "respuesta_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date()) + ".txt"
+            if (saveToDownloads(context, name, "text/plain", cleanText.toByteArray(Charsets.UTF_8))) saved++
+        }
+        val msg = when {
+            saved > 0 -> "⬇️ Descargado en Descargas/CumulusIA" + (if (saved > 1) " ($saved archivos)" else "")
+            already > 0 -> "✅ Ya está en Descargas/CumulusIA"
+            else -> "No se pudo descargar"
+        }
+        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+    }
+
     private fun bindActions(holder: ChatViewHolder, message: ChatMessage) {
         val context = holder.itemView.context
         val isFinalAiReply = !message.isUser && message.text.isNotBlank() &&
@@ -274,6 +420,24 @@ class ChatAdapter(
         val cleanText = renderMarkdown(message.text).toString()
         holder.btnCopy.setOnClickListener { copyToClipboard(context, "Cumulus IA", cleanText) }
         holder.btnShare.setOnClickListener { shareText(context, cleanText) }
+        // ⬇️ Botón de descarga (gris, mismo estilo que copiar y compartir)
+        val actionsRow = holder.btnShare.parent as? LinearLayout
+        var btnDownload = actionsRow?.findViewWithTag<View>("btn_download")
+        if (actionsRow != null && btnDownload == null) {
+            btnDownload = android.widget.ImageButton(context).apply {
+                tag = "btn_download"
+                setImageResource(R.drawable.ic_action_download)
+                contentDescription = "Descargar"
+                scaleType = ImageView.ScaleType.CENTER
+                imageTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#9A9A9A"))
+                val ta = context.obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackgroundBorderless))
+                background = ta.getDrawable(0); ta.recycle()
+                val d = context.resources.displayMetrics.density
+                layoutParams = LinearLayout.LayoutParams((36 * d).toInt(), (36 * d).toInt()).apply { marginStart = (6 * d).toInt() }
+            }
+            actionsRow.addView(btnDownload)
+        }
+        btnDownload?.setOnClickListener { downloadMessage(context, message, cleanText) }
 
         // Si la respuesta trae código, se arma por partes: texto normal + cuadros de código
         val blocks = findCodeBlocks(message.text)
@@ -352,6 +516,11 @@ class ChatAdapter(
         }
         header.addView(iconButton(R.drawable.ic_action_copy, "Copiar código") { copyToClipboard(context, language, code) })
         header.addView(iconButton(R.drawable.ic_action_share, "Compartir código") { shareText(context, code) })
+        header.addView(iconButton(R.drawable.ic_action_download, "Descargar código") {
+            val name = "codigo_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date()) + "." + codeExtension(language)
+            val ok = saveToDownloads(context, name, "text/plain", code.toByteArray(Charsets.UTF_8))
+            Toast.makeText(context, if (ok) "⬇️ Descargado: Descargas/CumulusIA/$name" else "No se pudo descargar", Toast.LENGTH_LONG).show()
+        })
         card.addView(header)
         // Código con colores (se desliza a los lados si las líneas son largas)
         val scroller = android.widget.HorizontalScrollView(context).apply { isHorizontalScrollBarEnabled = false }
