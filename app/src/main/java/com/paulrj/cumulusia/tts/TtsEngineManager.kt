@@ -61,6 +61,8 @@ class TtsEngineManager(
     var androidVoiceName: String? = null
     var elevenLabsApiKey: String = ""
     var elevenLabsVoiceId: String = "21m00Tcm4TlvDq8ikWAM" // Voice ID por defecto (Ej: Rachel)
+    // Último motivo por el que ElevenLabs rechazó la voz (se muestra al usuario en vez de callar)
+    @Volatile var lastElevenError: String? = null
 
     init {
         // Inicializar TTS nativo de Android
@@ -202,7 +204,19 @@ class TtsEngineManager(
             .build()
         httpClient.newCall(request).execute().use { response ->
             val body = response.body
-            if (!response.isSuccessful || body == null) return null
+            if (!response.isSuccessful || body == null) {
+                val raw = runCatching { body?.string() }.getOrNull().orEmpty()
+                val detail = runCatching {
+                    val d = JSONObject(raw).opt("detail")
+                    when (d) {
+                        is JSONObject -> d.optString("message").ifBlank { d.optString("status") }
+                        is String -> d
+                        else -> raw
+                    }
+                }.getOrDefault(raw)
+                lastElevenError = "HTTP ${response.code}: " + detail.take(220)
+                return null
+            }
             val file = File(context.cacheDir, "tts_el_${session}_$index.mp3")
             FileOutputStream(file).use { out -> body.byteStream().copyTo(out) }
             return if (file.length() > 0) file else null
@@ -220,6 +234,10 @@ class TtsEngineManager(
             return
         }
         val session = speakSession.incrementAndGet()
+        lastElevenError = null
+        // Siempre la voz elegida más reciente (por si se cambió después de crear el motor)
+        context.getSharedPreferences("TtsPrefs", Context.MODE_PRIVATE).getString("elevenlabs_voice_id", null)
+            ?.takeIf { it.isNotBlank() }?.let { elevenLabsVoiceId = it }
         val chunks = splitForSpeech(text)
         val audios = List(chunks.size) { CompletableDeferred<File?>() }
 
@@ -240,6 +258,12 @@ class TtsEngineManager(
                 val file = audios[i].await()
                 if (session != speakSession.get()) return@launch
                 if (file == null) {
+                    // Avisa por qué ElevenLabs no habló (voz no lista, sin créditos, clave, etc.)
+                    lastElevenError?.let { why ->
+                        android.widget.Toast.makeText(context,
+                            "🔊 ElevenLabs no pudo usar esta voz ($why). Se usa la voz del teléfono.",
+                            android.widget.Toast.LENGTH_LONG).show()
+                    }
                     // Si ElevenLabs falla, el resto lo lee la voz de Android
                     speakWithAndroidTts(chunks.drop(i).joinToString(" "), onComplete)
                     return@launch
