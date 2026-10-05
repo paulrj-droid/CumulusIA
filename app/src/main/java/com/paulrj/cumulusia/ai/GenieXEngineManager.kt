@@ -111,7 +111,23 @@ object GenieXEngineManager {
     }
 
     /** Carga un GGUF. backend contiene "NPU" o "GPU". Si la NPU falla, prueba la GPU. */
-    suspend fun load(path: String, backend: String, nCtx: Int, mmproj: String? = null): Boolean = mutex.withLock {
+    /**
+     * Las noticias y la búsqueda web mandan ~1500 tokens + la respuesta. Con un contexto chico el motor
+     * se llenaba («Input prompt too long») y fallaba en cada intento. En NPU/GPU se usan al menos 8192;
+     * si el chip no acepta tanto, se carga con el tamaño elegido en ajustes.
+     */
+    suspend fun load(path: String, backend: String, nCtx: Int, mmproj: String? = null): Boolean {
+        val big = maxOf(nCtx, 8192)
+        if (loadWithCtx(path, backend, big, mmproj)) return true
+        val firstErrors = lastErrors
+        if (big == nCtx) return false
+        Log.w(TAG, "No cargó con contexto $big; pruebo con $nCtx")
+        val ok = loadWithCtx(path, backend, nCtx, mmproj)
+        if (!ok) lastErrors = "Con contexto $big:\n$firstErrors\nCon contexto $nCtx:\n$lastErrors"
+        return ok
+    }
+
+    private suspend fun loadWithCtx(path: String, backend: String, nCtx: Int, mmproj: String?): Boolean = mutex.withLock {
         closeLocked()
         if (!sdkReady) {
             lastErrors = lastErrors.ifBlank { "GenieX no está iniciado" }
@@ -229,7 +245,7 @@ object GenieXEngineManager {
 
         val stops = arrayOf("</buscar>", "</abrir>")
         val config = GenerationConfig(
-            maxTokens = maxTokens.coerceIn(64, 4096),
+            maxTokens = fitTokens(maxTokens, templated.formattedText),
             stopWords = stops,
             stopCount = stops.size,
             samplerConfig = SamplerConfig(temperature = temperature, topK = 40, topP = 0.95f, minP = 0.05f)
@@ -306,6 +322,13 @@ object GenieXEngineManager {
         return runVlmOnce(v, small, maxTokens.coerceAtMost(loadedCtx / 3), temperature)
     }
 
+    /** La respuesta nunca pide más espacio del que queda en el contexto (texto ≈ 3 caracteres por token; cada imagen ≈ 300). */
+    private fun fitTokens(maxTokens: Int, prompt: String): Int {
+        val used = prompt.length / 3 + 300
+        val free = loadedCtx - used - 64
+        return maxTokens.coerceAtMost(free).coerceIn(128, 4096)
+    }
+
     private fun isTooLong(t: Throwable): Boolean =
         generateSequence(t) { it.cause }.any { (it.message ?: "").contains("too long", true) || (it.message ?: "").contains("context", true) }
 
@@ -316,7 +339,7 @@ object GenieXEngineManager {
         val templated = v.applyChatTemplate(arr, null, false).getOrThrow()
         val stops = arrayOf("</buscar>", "</abrir>")
         val base = GenerationConfig(
-            maxTokens = maxTokens.coerceIn(64, 4096),
+            maxTokens = fitTokens(maxTokens, templated.formattedText),
             stopWords = stops,
             stopCount = stops.size,
             samplerConfig = SamplerConfig(temperature = temperature, topK = 40, topP = 0.95f, minP = 0.05f)
