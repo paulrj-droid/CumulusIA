@@ -260,9 +260,7 @@ class TtsEngineManager(
                 if (file == null) {
                     // Avisa por qué ElevenLabs no habló (voz no lista, sin créditos, clave, etc.)
                     lastElevenError?.let { why ->
-                        android.widget.Toast.makeText(context,
-                            "🔊 ElevenLabs no pudo usar esta voz ($why). Se usa la voz del teléfono.",
-                            android.widget.Toast.LENGTH_LONG).show()
+                        android.util.Log.w("CumulusTTS", "ElevenLabs no habló: $why")   // 🔕 sin aviso emergente
                     }
                     // Si ElevenLabs falla, el resto lo lee la voz de Android
                     speakWithAndroidTts(chunks.drop(i).joinToString(" "), onComplete)
