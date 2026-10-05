@@ -112,20 +112,11 @@ object GenieXEngineManager {
 
     /** Carga un GGUF. backend contiene "NPU" o "GPU". Si la NPU falla, prueba la GPU. */
     /**
-     * Las noticias y la búsqueda web mandan ~1500 tokens + la respuesta. Con un contexto chico el motor
-     * se llenaba («Input prompt too long») y fallaba en cada intento. En NPU/GPU se usan al menos 8192;
-     * si el chip no acepta tanto, se carga con el tamaño elegido en ajustes.
+     * Carga con el contexto EXACTO que eligió el usuario en la barra «Contexto».
+     * La app no ajusta ni recorta nada del contexto: lo controla 100% el usuario.
      */
-    suspend fun load(path: String, backend: String, nCtx: Int, mmproj: String? = null): Boolean {
-        val big = maxOf(nCtx, 8192)
-        if (loadWithCtx(path, backend, big, mmproj)) return true
-        val firstErrors = lastErrors
-        if (big == nCtx) return false
-        Log.w(TAG, "No cargó con contexto $big; pruebo con $nCtx")
-        val ok = loadWithCtx(path, backend, nCtx, mmproj)
-        if (!ok) lastErrors = "Con contexto $big:\n$firstErrors\nCon contexto $nCtx:\n$lastErrors"
-        return ok
-    }
+    suspend fun load(path: String, backend: String, nCtx: Int, mmproj: String? = null): Boolean =
+        loadWithCtx(path, backend, nCtx, mmproj)
 
     private suspend fun loadWithCtx(path: String, backend: String, nCtx: Int, mmproj: String?): Boolean = mutex.withLock {
         closeLocked()
@@ -146,7 +137,7 @@ object GenieXEngineManager {
                             VlmCreateInput(
                                 model_path = path,
                                 mmproj_path = mm,
-                                config = ModelConfig(nCtx = nCtx.coerceIn(512, 16384), nGpuLayers = -1),
+                                config = ModelConfig(nCtx = nCtx, nGpuLayers = -1),
                                 runtime_id = "llama_cpp",
                                 compute_unit = unit
                             )
@@ -180,7 +171,7 @@ object GenieXEngineManager {
                     .llmCreateInput(
                         LlmCreateInput(
                             model_path = path,
-                            config = ModelConfig(nCtx = nCtx.coerceIn(512, 16384), nGpuLayers = -1),
+                            config = ModelConfig(nCtx = nCtx, nGpuLayers = -1),
                             runtime_id = "llama_cpp",
                             compute_unit = unit
                         )
@@ -245,7 +236,7 @@ object GenieXEngineManager {
 
         val stops = arrayOf("</buscar>", "</abrir>")
         val config = GenerationConfig(
-            maxTokens = fitTokens(maxTokens, templated.formattedText),
+            maxTokens = maxTokens.coerceIn(64, 4096),
             stopWords = stops,
             stopCount = stops.size,
             samplerConfig = SamplerConfig(temperature = temperature, topK = 40, topP = 0.95f, minP = 0.05f)
@@ -304,29 +295,8 @@ object GenieXEngineManager {
         // 🧹 La memoria del motor se llenó (pasa en la NPU tras varios mensajes): se limpia y se reintenta solo
         Log.w(TAG, "VLM: prompt demasiado largo → limpio memoria y reintento")
         runCatching { v.reset() }
-        try {
-            return runVlmOnce(v, vm, maxTokens, temperature)
-        } catch (t: Throwable) {
-            if (!isTooLong(t)) throw t
-        }
-        // Último intento: solo instrucciones + mensaje actual, recortados para que quepan
-        runCatching { v.reset() }
-        val budget = (loadedCtx * 2).coerceAtLeast(1500)   // ~2 caracteres por token, deja espacio a la respuesta
-        val sys = vm.firstOrNull { it.role == "system" }
-        val last = vm.last()
-        val small = ArrayList<VlmChatMessage>()
-        sys?.let { m -> small.add(VlmChatMessage(role = "system", contents = m.contents.map { c ->
-            if (c.type == "text") VlmContent("text", (c.text ?: "").take(budget / 3)) else c })) }
-        small.add(VlmChatMessage(role = last.role, contents = last.contents.map { c ->
-            if (c.type == "text") VlmContent("text", (c.text ?: "").take(budget)) else c }))
-        return runVlmOnce(v, small, maxTokens.coerceAtMost(loadedCtx / 3), temperature)
-    }
-
-    /** La respuesta nunca pide más espacio del que queda en el contexto (texto ≈ 3 caracteres por token; cada imagen ≈ 300). */
-    private fun fitTokens(maxTokens: Int, prompt: String): Int {
-        val used = prompt.length / 3 + 300
-        val free = loadedCtx - used - 64
-        return maxTokens.coerceAtMost(free).coerceIn(128, 4096)
+        // Sin recortes automáticos: si tampoco cabe con la memoria limpia, se informa el error
+        return runVlmOnce(v, vm, maxTokens, temperature)
     }
 
     private fun isTooLong(t: Throwable): Boolean =
@@ -339,7 +309,7 @@ object GenieXEngineManager {
         val templated = v.applyChatTemplate(arr, null, false).getOrThrow()
         val stops = arrayOf("</buscar>", "</abrir>")
         val base = GenerationConfig(
-            maxTokens = fitTokens(maxTokens, templated.formattedText),
+            maxTokens = maxTokens.coerceIn(64, 4096),
             stopWords = stops,
             stopCount = stops.size,
             samplerConfig = SamplerConfig(temperature = temperature, topK = 40, topP = 0.95f, minP = 0.05f)
