@@ -56,6 +56,8 @@ class ResumableDownloader {
         listener?.onStateChanged(state)
 
         thread = Thread {
+            // 🐢 Prioridad baja: la descarga cede el procesador a la pantalla y a la barra de notificaciones
+            runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
             var connection: HttpURLConnection? = null
             var input: InputStream? = null
             var output: java.io.OutputStream? = null
@@ -123,4 +125,3 @@ class ResumableDownloader {
         thread?.start()
     }
 }
-
