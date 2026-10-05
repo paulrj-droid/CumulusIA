@@ -121,10 +121,10 @@ class DownloadService : Service() {
                     .onFailure { running = false }
                 return
             }
-            // Cada 2 segundos, y solo si cambió el porcentaje: así la barra de notificaciones no se pega
+            // Cada 3 segundos, y solo si cambió el porcentaje: así la barra de notificaciones no se pega
             val now = System.currentTimeMillis()
             if (prev?.second == percent) return
-            if (now - lastNotify < 2000 && percent != 100) return
+            if (now - lastNotify < 3000 && percent != 100) return
             lastNotify = now
             runCatching {
                 app.getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(app))
@@ -164,3 +164,4 @@ object ActiveDownloads {
     /** Archivos que todavía se están descargando (incompletos): no se deben cargar como modelo. */
     val paths: MutableSet<String> = ConcurrentHashMap.newKeySet()
 }
+
