@@ -28,6 +28,7 @@ class ResumableDownloader {
     private var outputFile: File? = null
     private var totalSize: Long = 0
     private var downloaded: Long = 0
+    @Volatile private var lastNotify = 0L
     var listener: Listener? = null
 
     fun start(url: String, file: File) {
@@ -57,7 +58,7 @@ class ResumableDownloader {
         thread = Thread {
             var connection: HttpURLConnection? = null
             var input: InputStream? = null
-            var output: FileOutputStream? = null
+            var output: java.io.OutputStream? = null
             try {
                 val file = outputFile!!
                 connection = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -81,16 +82,23 @@ class ResumableDownloader {
                 }
 
                 input = connection.inputStream
-                output = FileOutputStream(file, downloaded > 0) // reanudar = añadir
+                // ⚡ Escritura en bloques grandes (1 MB): antes escribía de a 8 KB y eso
+                //    cargaba al teléfono hasta pegar la barra de notificaciones
+                output = java.io.BufferedOutputStream(FileOutputStream(file, downloaded > 0), 1 shl 20) // reanudar = añadir
 
-                val buffer = ByteArray(8192)
+                val buffer = ByteArray(256 * 1024)
                 var read: Int
                 while (input.read(buffer).also { read = it } != -1) {
                     if (cancelRequested) break
                     output.write(buffer, 0, read)
                     downloaded += read
                     val percent = if (totalSize > 0) ((downloaded * 100) / totalSize).toInt() else -1
-                    listener?.onProgress(downloaded, totalSize, percent)
+                    // Aviso de avance máximo ~5 veces por segundo (antes en cada bloque)
+                    val now = System.currentTimeMillis()
+                    if (now - lastNotify >= 200 || percent == 100) {
+                        lastNotify = now
+                        listener?.onProgress(downloaded, totalSize, percent)
+                    }
                     if (pauseRequested) break
                 }
 
@@ -115,3 +123,4 @@ class ResumableDownloader {
         thread?.start()
     }
 }
+
