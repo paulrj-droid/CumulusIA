@@ -12,6 +12,11 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
+    <!-- Descargas en segundo plano con progreso en la barra de notificaciones -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".CumulusApp"
         android:allowBackup="true"
@@ -51,6 +56,12 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- 📥 Sigue descargando modelos y voces aunque salgas o cierres la app -->
+        <service
+            android:name=".manager.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Actividad temporal para mostrar errores/crashes en pantalla -->
         <activity
             android:name=".CrashActivity"
@@ -59,3 +70,4 @@
     </application>
 
 </manifest>
+
