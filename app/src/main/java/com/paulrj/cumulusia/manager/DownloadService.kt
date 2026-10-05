@@ -64,6 +64,7 @@ class DownloadService : Service() {
         private val progress = ConcurrentHashMap<String, Pair<String, Int>>()
         @Volatile private var running = false
         @Volatile private var lastNotify = 0L
+        private var cachedIntent: PendingIntent? = null
 
         private fun createChannel(ctx: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -80,10 +81,11 @@ class DownloadService : Service() {
         }
 
         private fun openAppIntent(ctx: Context): PendingIntent? {
+            cachedIntent?.let { return it }
             val launch = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName) ?: return null
             launch.flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             return PendingIntent.getActivity(ctx, 0, launch,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE).also { cachedIntent = it }
         }
 
         private fun buildNotification(ctx: Context): Notification {
@@ -101,6 +103,7 @@ class DownloadService : Service() {
                 .setContentText(if (pct >= 0) "$pct %" else "Descargando…")
                 .setProgress(100, pct.coerceAtLeast(0), pct < 0)
                 .setOngoing(true)
+                .setCategory(NotificationCompat.CATEGORY_PROGRESS)
                 .setOnlyAlertOnce(true)
                 .setSilent(true)
                 .setContentIntent(openAppIntent(ctx))
@@ -118,9 +121,10 @@ class DownloadService : Service() {
                     .onFailure { running = false }
                 return
             }
-            // Máximo 1 vez por segundo: Android limita las notificaciones y si se envían de más la barra se pega
+            // Cada 2 segundos, y solo si cambió el porcentaje: así la barra de notificaciones no se pega
             val now = System.currentTimeMillis()
-            if (now - lastNotify < 1000 && !(percent == 100 && prev?.second != 100)) return
+            if (prev?.second == percent) return
+            if (now - lastNotify < 2000 && percent != 100) return
             lastNotify = now
             runCatching {
                 app.getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(app))
@@ -160,4 +164,3 @@ object ActiveDownloads {
     /** Archivos que todavía se están descargando (incompletos): no se deben cargar como modelo. */
     val paths: MutableSet<String> = ConcurrentHashMap.newKeySet()
 }
-
