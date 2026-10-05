@@ -280,6 +280,36 @@ object GenieXEngineManager {
     }
 
     private suspend fun runVlmLocked(v: VlmWrapper, vm: List<VlmChatMessage>, maxTokens: Int, temperature: Float): String {
+        try {
+            return runVlmOnce(v, vm, maxTokens, temperature)
+        } catch (t: Throwable) {
+            if (!isTooLong(t)) throw t
+        }
+        // 🧹 La memoria del motor se llenó (pasa en la NPU tras varios mensajes): se limpia y se reintenta solo
+        Log.w(TAG, "VLM: prompt demasiado largo → limpio memoria y reintento")
+        runCatching { v.reset() }
+        try {
+            return runVlmOnce(v, vm, maxTokens, temperature)
+        } catch (t: Throwable) {
+            if (!isTooLong(t)) throw t
+        }
+        // Último intento: solo instrucciones + mensaje actual, recortados para que quepan
+        runCatching { v.reset() }
+        val budget = (loadedCtx * 2).coerceAtLeast(1500)   // ~2 caracteres por token, deja espacio a la respuesta
+        val sys = vm.firstOrNull { it.role == "system" }
+        val last = vm.last()
+        val small = ArrayList<VlmChatMessage>()
+        sys?.let { m -> small.add(VlmChatMessage(role = "system", contents = m.contents.map { c ->
+            if (c.type == "text") VlmContent("text", (c.text ?: "").take(budget / 3)) else c })) }
+        small.add(VlmChatMessage(role = last.role, contents = last.contents.map { c ->
+            if (c.type == "text") VlmContent("text", (c.text ?: "").take(budget)) else c }))
+        return runVlmOnce(v, small, maxTokens.coerceAtMost(loadedCtx / 3), temperature)
+    }
+
+    private fun isTooLong(t: Throwable): Boolean =
+        generateSequence(t) { it.cause }.any { (it.message ?: "").contains("too long", true) || (it.message ?: "").contains("context", true) }
+
+    private suspend fun runVlmOnce(v: VlmWrapper, vm: List<VlmChatMessage>, maxTokens: Int, temperature: Float): String {
         // GPU se limpia en cada mensaje (igual que en texto); la NPU no se toca
         if (loadedUnit != "npu") runCatching { v.reset() }
         val arr = vm.toTypedArray()
