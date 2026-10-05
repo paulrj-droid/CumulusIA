@@ -118,9 +118,9 @@ class DownloadService : Service() {
                     .onFailure { running = false }
                 return
             }
-            // Se actualiza como máximo 2 veces por segundo (y siempre que cambia el porcentaje entero)
+            // Máximo 1 vez por segundo: Android limita las notificaciones y si se envían de más la barra se pega
             val now = System.currentTimeMillis()
-            if (prev?.second == percent && now - lastNotify < 500) return
+            if (now - lastNotify < 1000 && !(percent == 100 && prev?.second != 100)) return
             lastNotify = now
             runCatching {
                 app.getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(app))
@@ -157,4 +157,7 @@ class DownloadService : Service() {
 /** Descargas en curso de toda la app (sobreviven a que se cierre la pantalla). */
 object ActiveDownloads {
     val map = ConcurrentHashMap<String, ResumableDownloader>()
+    /** Archivos que todavía se están descargando (incompletos): no se deben cargar como modelo. */
+    val paths: MutableSet<String> = ConcurrentHashMap.newKeySet()
 }
+
