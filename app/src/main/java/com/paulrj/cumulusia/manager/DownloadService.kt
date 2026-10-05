@@ -65,6 +65,7 @@ class DownloadService : Service() {
         @Volatile private var running = false
         @Volatile private var lastNotify = 0L
         private var cachedIntent: PendingIntent? = null
+        @Volatile private var lastShownPct = -1
 
         private fun createChannel(ctx: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -124,8 +125,11 @@ class DownloadService : Service() {
             // Cada 3 segundos, y solo si cambió el porcentaje: así la barra de notificaciones no se pega
             val now = System.currentTimeMillis()
             if (prev?.second == percent) return
+            // Solo cada 5 % (20 cambios en toda la descarga): casi no toca la barra mientras la miras
+            if (percent >= 0 && lastShownPct >= 0 && percent / 5 == lastShownPct / 5 && percent != 100) return
             if (now - lastNotify < 3000 && percent != 100) return
             lastNotify = now
+            lastShownPct = percent
             runCatching {
                 app.getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(app))
             }
@@ -150,6 +154,7 @@ class DownloadService : Service() {
             if (progress.isEmpty()) {
                 if (running) runCatching { app.stopService(Intent(app, DownloadService::class.java)) }
                 running = false
+                lastShownPct = -1
                 runCatching { nm.cancel(NOTIF_ID) }
             } else {
                 runCatching { nm.notify(NOTIF_ID, buildNotification(app)) }
@@ -164,4 +169,3 @@ object ActiveDownloads {
     /** Archivos que todavía se están descargando (incompletos): no se deben cargar como modelo. */
     val paths: MutableSet<String> = ConcurrentHashMap.newKeySet()
 }
-
