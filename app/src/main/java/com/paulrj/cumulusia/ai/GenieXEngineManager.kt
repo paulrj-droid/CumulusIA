@@ -38,6 +38,17 @@ object GenieXEngineManager {
     @Volatile private var sdkReady = false
     @Volatile private var lastErrors: String = ""
     @Volatile private var lastStats: String = ""
+
+    /** ✍️ Texto que va escribiendo el modelo (MainActivity lo usa para ver la app armándose en la vista previa). */
+    @Volatile var onPartial: ((String) -> Unit)? = null
+    @Volatile private var lastPartialAt = 0L
+    private fun emitPartial(sb: StringBuilder) {
+        val cb = onPartial ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastPartialAt < 400) return   // como mucho ~2 veces por segundo
+        lastPartialAt = now
+        runCatching { cb(sb.toString()) }
+    }
     @Volatile private var initInfo: String = "init: no llamado"
 
     private fun chain(t: Throwable?): String {
@@ -245,7 +256,7 @@ object GenieXEngineManager {
         var err: Throwable? = null
         w.generateStreamFlow(templated.formattedText, config).collect { r ->
             when (r) {
-                is LlmStreamResult.Token -> sb.append(r.text)
+                is LlmStreamResult.Token -> { sb.append(r.text); emitPartial(sb) }
                 is LlmStreamResult.Completed -> {
                     val p = r.profile
                     lastStats = String.format(
@@ -319,7 +330,7 @@ object GenieXEngineManager {
         var err: Throwable? = null
         v.generateStreamFlow(templated.formattedText, config).collect { r ->
             when (r) {
-                is LlmStreamResult.Token -> sb.append(r.text)
+                is LlmStreamResult.Token -> { sb.append(r.text); emitPartial(sb) }
                 is LlmStreamResult.Completed -> {
                     val p = r.profile
                     lastStats = String.format(
