@@ -6,9 +6,12 @@ import android.system.Os
 import android.util.Log
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
+import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.Conversation
+import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.Message
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -245,6 +248,45 @@ object LiteRtLmEngineManager {
             .ifBlank { response.toString() }
         lastMs = System.currentTimeMillis() - t0
         lastPromptChars = prompt.length
+        lastReplyChars = text.length
+        text
+    }
+
+    /**
+     * 🧵 Conversación con ROLES NATIVOS: instrucciones del sistema + historial (usuario / modelo) + mensaje actual.
+     * El motor aplica la plantilla de chat propia del modelo (como hacen la CPU y GenieX), en vez de recibir
+     * todo pegado como un solo texto. Si algo falla, MainActivity vuelve al formato de texto anterior.
+     */
+    suspend fun generateChat(system: String, roles: List<String>, contents: List<String>): String = engineMutex.withLock {
+        val currentEngine = engine
+            ?: throw IllegalStateException("LiteRT-LM no tiene un modelo cargado")
+        require(roles.isNotEmpty() && roles.size == contents.size) { "Conversación vacía" }
+        // Se juntan mensajes seguidos del mismo rol (algunas plantillas exigen usuario/modelo alternados)
+        val merged = mutableListOf<Pair<String, String>>()
+        for (i in roles.indices) {
+            val role = if (roles[i] == "assistant") "assistant" else "user"
+            if (merged.isNotEmpty() && merged.last().first == role) {
+                merged[merged.lastIndex] = role to (merged.last().second + "\n\n" + contents[i])
+            } else merged.add(role to contents[i])
+        }
+        // El historial debe empezar con el usuario y el último mensaje es el que se envía ahora
+        while (merged.isNotEmpty() && merged.first().first != "user") merged.removeAt(0)
+        val last = merged.removeLastOrNull()
+            ?: throw IllegalStateException("No hay mensaje del usuario")
+        val history = merged.map { (role, text) -> if (role == "assistant") Message.model(text) else Message.user(text) }
+        try { conversation?.close() } catch (_: Throwable) {}
+        conversation = currentEngine.createConversation(
+            if (system.isNotBlank()) ConversationConfig(systemInstruction = Contents.of(system), initialMessages = history)
+            else ConversationConfig(initialMessages = history)
+        )
+        val t0 = System.currentTimeMillis()
+        val response = conversation!!.sendMessage(last.second)
+        val text = response.contents.contents
+            .filterIsInstance<Content.Text>()
+            .joinToString(separator = "") { it.text }
+            .ifBlank { response.toString() }
+        lastMs = System.currentTimeMillis() - t0
+        lastPromptChars = system.length + contents.sumOf { it.length }
         lastReplyChars = text.length
         text
     }
