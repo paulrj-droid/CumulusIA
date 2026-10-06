@@ -314,9 +314,11 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
     // ------------------------------------------------------------------ VENTANA
     /**
      * Abre la ventana. [build] se vuelve a llamar con 🔄 para tomar la versión más nueva del chat.
+     * [live]: mientras devuelva true (la IA está escribiendo el código), la vista se actualiza sola
+     * cada pocos segundos para ver cómo se va armando la app.
      */
     @SuppressLint("SetJavaScriptEnabled")
-    fun open(activity: Activity, title: String, emptyMessage: String, build: () -> Pair<String, String>?) {
+    fun open(activity: Activity, title: String, emptyMessage: String, live: (() -> Boolean)? = null, build: () -> Pair<String, String>?) {
         val d = activity.resources.displayMetrics.density
         fun px(v: Int) = (v * d).toInt()
         val dialog = Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
@@ -326,9 +328,11 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(px(12), px(10), px(8), px(10)); setBackgroundColor(Color.parseColor("#141417"))
         }
-        bar.addView(TextView(activity).apply {
+        val titleView = TextView(activity).apply {
             text = title; textSize = 17f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            maxLines = 2
+        }
+        bar.addView(titleView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         fun pill(label: String, onClick: () -> Unit) = TextView(activity).apply {
             text = label; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
             setPadding(px(12), px(7), px(12), px(7))
@@ -364,11 +368,18 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
             (tabView.background as GradientDrawable).setColor(Color.parseColor(if (preview) "#3D5AFE" else "#2C2C30"))
             (tabCode.background as GradientDrawable).setColor(Color.parseColor(if (preview) "#2C2C30" else "#3D5AFE"))
         }
-        fun reload() {
+        var shown: String? = "\u0000"   // lo último que se mostró (para no recargar si no cambió)
+        fun isLive() = live != null && runCatching { live() }.getOrDefault(false)
+        fun reload(force: Boolean = true) {
             val result = runCatching { build() }.getOrNull()
+            val key = result?.first
+            if (!force && key == shown) return
+            shown = key
             if (result == null) {
+                val msg = if (isLive()) "✦ La IA está escribiendo el código de tu app…<br><br>Aquí vas a ver cómo se va armando; " +
+                    "esta ventana se actualiza sola." else emptyMessage
                 web.loadDataWithBaseURL(null, "<html><body style='background:#0b0b0d;color:#ccc;font-family:sans-serif;padding:24px;font-size:16px'>" +
-                    emptyMessage + "</body></html>", "text/html", "UTF-8", null)
+                    msg + "</body></html>", "text/html", "UTF-8", null)
                 codeView.text = "(sin código todavía)"
             } else {
                 web.loadDataWithBaseURL("https://preview.cumulus.local/", result.first, "text/html", "UTF-8", null)
@@ -385,9 +396,25 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
         root.addView(bar, LinearLayout.LayoutParams(-1, -2))
         root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
         dialog.setContentView(root)
-        dialog.setOnDismissListener { runCatching { web.destroy() } }
+        // ✦ Se está armando: se actualiza sola cada 2,5 s hasta que la IA termina (y una vez más al final)
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val tick = object : Runnable {
+            override fun run() {
+                if (!dialog.isShowing) return
+                val still = isLive()
+                titleView.text = if (still) "$title · ✦ armándose…" else title
+                reload(force = false)
+                if (still) handler.postDelayed(this, 2500)
+            }
+        }
+        dialog.setOnDismissListener { handler.removeCallbacks(tick); runCatching { web.destroy() } }
         select(true)
         reload()
+        if (isLive()) {
+            titleView.text = "$title · ✦ armándose…"
+            handler.postDelayed(tick, 2500)
+        }
         dialog.show()
     }
 }
+
