@@ -257,6 +257,14 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
             if (a["visibility"] == "gone") s.append("display:none;")
             if (a["visibility"] == "invisible") s.append("visibility:hidden;")
             dim(a["cardCornerRadius"])?.let { s.append("border-radius:$it;") }
+            // 🎨 Detalles de diseño moderno (Material 3) para que la maqueta se vea como la app
+            dim(a["cornerRadius"])?.let { s.append("border-radius:$it;") }
+            (dim(a["cardElevation"]) ?: dim(a["elevation"]))?.let { s.append("box-shadow:0 ${it} calc($it * 3) #0008;") }
+            val stroke = dim(a["strokeWidth"]); val strokeColor = color(a["strokeColor"])
+            if (stroke != null && strokeColor != null) s.append("border:$stroke solid $strokeColor;")
+            a["fontFamily"]?.let { f -> if (f.contains("medium")) s.append("font-weight:500;") else if (f.contains("bold") || f.contains("black")) s.append("font-weight:700;") }
+            a["letterSpacing"]?.toFloatOrNull()?.let { s.append("letter-spacing:${it}em;") }
+            a["alpha"]?.toFloatOrNull()?.let { s.append("opacity:$it;") }
             return s.toString()
         }
 
