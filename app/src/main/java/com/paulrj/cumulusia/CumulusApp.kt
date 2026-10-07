@@ -6,6 +6,8 @@ import android.content.Intent
 class CumulusApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // 🌐 Traduce toda la app (menús, diálogos, paneles) al idioma elegido
+        runCatching { com.paulrj.cumulusia.manager.LanguageManager.install(this) }
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
             try {
                 val sw = java.io.StringWriter()
