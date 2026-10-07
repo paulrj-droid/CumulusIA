@@ -104,12 +104,14 @@ object PreviewPanel {
         val layouts = LinkedHashMap<String, String>()
         val strings = HashMap<String, String>()
         val colors = HashMap<String, String>()
+        val shapes = HashMap<String, String>()   // fondos redondeados (res/drawable/*.xml con <shape>)
         var n = 1
         // Del más viejo al más nuevo, para que la versión nueva de un archivo reemplace a la vieja
         for (msg in messagesNewestFirst.asReversed()) for (b in codeBlocks(msg)) {
             val c = b.code
             if (!(b.lang == "xml" || c.trimStart().startsWith("<"))) continue
             when {
+                c.contains("<shape") && b.fileName != null -> shapes[b.fileName.substringBeforeLast('.')] = c
                 c.contains("<resources") -> {
                     Regex("<string\\s+name=\"([^\"]+)\"[^>]*>(.*?)</string>", RegexOption.DOT_MATCHES_ALL).findAll(c)
                         .forEach { strings[it.groupValues[1]] = it.groupValues[2].replace("\\'", "'").replace("\\n", " ").trim() }
@@ -128,7 +130,7 @@ object PreviewPanel {
         val tabs = StringBuilder(); val screens = StringBuilder()
         ordered.forEachIndexed { i, (name, xml) ->
             tabs.append("<button class='tab${if (i == 0) " on" else ""}' onclick='show($i)'>${esc(name)}</button>")
-            val body = runCatching { XmlToHtml(strings, colors, layouts).convert(xml, 0) }
+            val body = runCatching { XmlToHtml(strings, colors, layouts, shapes).convert(xml, 0) }
                 .getOrElse { "<div class='err'>No pude dibujar este diseño (el XML tiene un error):<br>${esc(it.message ?: "")}</div>" }
             screens.append("<div class='screen' id='s$i' style='display:${if (i == 0) "flex" else "none"}'>$body</div>")
         }
@@ -151,12 +153,19 @@ object PreviewPanel {
  .row{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #2a2a2e}
  .fab{position:absolute;right:16px;bottom:16px;width:56px;height:56px;border-radius:16px;background:#3D5AFE;color:#fff;border:none;font-size:24px}
  .err{color:#ff8a80;padding:16px}
+ .ibtn{background:transparent;border:none;color:#e8e8ea;width:44px;height:44px;min-width:44px;border-radius:50%;font-size:20px;display:flex;align-items:center;justify-content:center;flex:none;padding:0}
+ .dl{flex:1;min-height:624px}
+ .drawer{position:absolute;top:0;bottom:0;max-width:86%;z-index:6;transition:transform .25s;box-shadow:0 0 24px #000a;overflow:auto;align-self:stretch!important;height:auto!important;display:flex;flex-direction:column}
+ .dl-left{left:0;transform:translateX(-105%)} .dl-right{right:0;transform:translateX(105%)}
+ .dl.ol>.dl-left,.dl.or>.dl-right{transform:none}
+ .scrim{position:absolute;inset:0;background:#0008;z-index:5;display:none} .dl.ol>.scrim,.dl.or>.scrim{display:block}
  .note{font-size:12px;color:#8e8e93;text-align:center;padding:4px 12px 16px}
 </style></head><body>
 <div class="tabs">$tabs</div>
 <div class="phone">$screens</div>
 <div class="note">📱 Maqueta del diseño (XML). Los botones se ven pero la lógica Kotlin solo funciona al compilar la app.</div>
 <script>
+function dr(e,s){var d=e.closest('.dl');if(!d)return;d.classList.remove('ol','or');if(s)d.classList.add(s);}
 function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.style.display=k==i?'flex':'none'});
  document.querySelectorAll('.tab').forEach(function(t,k){t.classList.toggle('on',k==i)});}
 </script></body></html>"""
@@ -164,29 +173,65 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
         return page to code
     }
 
+    /**
+     * ✂️ Un diseño XML que llegó cortado (al modelo se le acabó el espacio): se quita la etiqueta a medias
+     * del final y se cierran las que quedaron abiertas, para que se pueda dibujar igual.
+     */
+    fun repairXml(xml: String): String {
+        var s = xml.trimEnd()
+        val lt = s.lastIndexOf('<'); val gt = s.lastIndexOf('>')
+        if (lt > gt) s = s.substring(0, lt).trimEnd()
+        val stack = ArrayDeque<String>()
+        Regex("<!--.*?-->|<\\?.*?\\?>|<!\\[CDATA\\[.*?]]>|<(/?)([A-Za-z_][\\w.:-]*)((?:[^<>\"']|\"[^\"]*\"|'[^']*')*?)(/?)>",
+            RegexOption.DOT_MATCHES_ALL).findAll(s).forEach { m ->
+            val name = m.groupValues[2]
+            if (name.isEmpty()) return@forEach
+            if (m.groupValues[1] == "/") {
+                val idx = stack.lastIndexOf(name)
+                if (idx >= 0) while (stack.size > idx) stack.removeLast()
+            } else if (m.groupValues[4] != "/") stack.addLast(name)
+        }
+        val sb = StringBuilder(s)
+        while (stack.isNotEmpty()) sb.append("\n</").append(stack.removeLast()).append(">")
+        return sb.toString()
+    }
+
     private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         .replace("'", "&#39;").replace("\"", "&quot;")
 
     /** Convierte un diseño XML de Android en HTML aproximado. */
-    private class XmlToHtml(val strings: Map<String, String>, val colors: Map<String, String>, val layouts: Map<String, String>) {
+    private class XmlToHtml(val strings: Map<String, String>, val colors: Map<String, String>, val layouts: Map<String, String>,
+                            val shapes: Map<String, String> = emptyMap()) {
 
-        fun convert(xml: String, depth: Int): String {
+        fun convert(xml: String, depth: Int): String = try { convertRaw(xml, depth) } catch (e: Exception) {
+            // Diseño cortado: se completa y se dibuja lo que alcanzó a escribir la IA
+            val fixed = repairXml(xml.trim().removePrefix("\uFEFF"))
+            if (fixed == xml.trim()) throw e
+            convertRaw(fixed, depth) + (if (depth == 0) "<div class='note'>✂️ Este diseño llegó cortado: completé lo que faltaba para poder mostrarlo.</div>" else "")
+        }
+
+        private fun convertRaw(xml: String, depth: Int): String {
             if (depth > 4) return ""
             val p = Xml.newPullParser()
             p.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
             p.setInput(StringReader(xml.trim().removePrefix("﻿")))
             val sb = StringBuilder()
             val closers = ArrayDeque<String>()
+            val parents = ArrayDeque<String>()
             var ev = p.eventType
             while (ev != XmlPullParser.END_DOCUMENT) {
                 when (ev) {
                     XmlPullParser.START_TAG -> {
                         val a = HashMap<String, String>()
                         for (i in 0 until p.attributeCount) a[p.getAttributeName(i).substringAfter(':')] = p.getAttributeValue(i)
-                        val (open, close) = element(p.name.substringAfterLast('.'), a, depth)
-                        sb.append(open); closers.addLast(close)
+                        val tag = p.name.substringAfterLast('.')
+                        val (open, close) = element(tag, a, depth, parents.lastOrNull())
+                        sb.append(open); closers.addLast(close); parents.addLast(tag)
                     }
-                    XmlPullParser.END_TAG -> if (closers.isNotEmpty()) sb.append(closers.removeLast())
+                    XmlPullParser.END_TAG -> {
+                        if (closers.isNotEmpty()) sb.append(closers.removeLast())
+                        if (parents.isNotEmpty()) parents.removeLast()
+                    }
                 }
                 ev = p.next()
             }
@@ -196,13 +241,29 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
         private fun res(v: String?): String? {
             if (v == null) return null
             return when {
-                v.startsWith("@string/") -> strings[v.removePrefix("@string/")] ?: v.removePrefix("@string/")
+                v.startsWith("@string/") -> (strings[v.removePrefix("@string/")] ?: v.removePrefix("@string/")).replace("\\'", "'").replace("\\\"", "\"")
                 v.startsWith("@android:string/") -> v.substringAfter('/')
                 v.startsWith("@color/") -> colors[v.removePrefix("@color/")]?.let { res(it) } ?: guessColor(v.removePrefix("@color/"))
                 v.startsWith("@android:color/") -> when (v.substringAfter('/')) { "white" -> "#FFFFFF"; "black" -> "#000000"; "transparent" -> "transparent"; else -> "#888888" }
                 v.startsWith("?") || v.startsWith("@") -> null
-                else -> v
+                else -> v.replace("\\'", "'").replace("\\@", "@").replace("\\?", "?")
             }
+        }
+
+        /** Fondo de un @drawable con <shape>: color, degradado, esquinas, borde y forma de círculo. */
+        private fun shapeCss(ref: String?): String? {
+            if (ref == null || !ref.startsWith("@drawable/")) return null
+            val xml = shapes[ref.removePrefix("@drawable/")] ?: return null
+            val s = StringBuilder()
+            fun attr(tag: String, name: String) = Regex("<$tag\\b[^>]*?android:$name=\"([^\"]+)\"", RegexOption.DOT_MATCHES_ALL).find(xml)?.groupValues?.get(1)
+            val g1 = color(attr("gradient", "startColor")); val g2 = color(attr("gradient", "endColor"))
+            if (g1 != null && g2 != null) s.append("background:linear-gradient(135deg,$g1,$g2);")
+            else color(attr("solid", "color"))?.let { s.append("background:$it;") }
+            dim(attr("corners", "radius"))?.let { s.append("border-radius:$it;") }
+            val sw = dim(attr("stroke", "width")); val sc = color(attr("stroke", "color"))
+            if (sw != null && sc != null) s.append("border:$sw solid $sc;")
+            if (Regex("android:shape=\"oval\"").containsMatchIn(xml)) s.append("border-radius:50%;")
+            return s.toString()
         }
 
         /**
@@ -265,13 +326,22 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
             (dim(a["layout_marginEnd"]) ?: dim(a["layout_marginRight"]))?.let { s.append("margin-right:$it;") }
             dim(a["layout_marginTop"])?.let { s.append("margin-top:$it;") }
             dim(a["layout_marginBottom"])?.let { s.append("margin-bottom:$it;") }
-            (color(a["background"]) ?: color(a["backgroundTint"]) ?: color(a["cardBackgroundColor"]))?.let { s.append("background:$it;") }
+            val shapeBg = shapeCss(a["background"])
+            if (shapeBg != null) s.append(shapeBg)
+            else (color(a["background"]) ?: color(a["backgroundTint"]) ?: color(a["cardBackgroundColor"]))?.let { s.append("background:$it;") }
             color(a["textColor"])?.let { s.append("color:$it;") }
             dim(a["textSize"])?.let { s.append("font-size:$it;") }
             if (a["textStyle"]?.contains("bold") == true) s.append("font-weight:700;")
             if (a["textStyle"]?.contains("italic") == true) s.append("font-style:italic;")
-            val g = (a["gravity"].orEmpty() + "|" + a["layout_gravity"].orEmpty())
-            if (g.contains("center")) s.append("text-align:center;justify-content:center;align-items:center;")
+            // gravity: «center» centra todo; «center_vertical» solo en vertical (el texto sigue a la izquierda)
+            val gv = a["gravity"].orEmpty()
+            val row = a["orientation"] == "horizontal"
+            if (Regex("(^|\\|)center(\\||$)").containsMatchIn(gv) || a["layout_gravity"]?.let { Regex("(^|\\|)center(\\||$)").containsMatchIn(it) } == true && gv.isEmpty() && tag.endsWith("TextView")) {
+                s.append("text-align:center;justify-content:center;align-items:center;")
+            } else {
+                if (gv.contains("center_vertical")) s.append(if (row) "align-items:center;" else "justify-content:center;")
+                if (gv.contains("center_horizontal")) s.append(if (row) "justify-content:center;" else "align-items:center;text-align:center;")
+            }
             if (a["layout_gravity"]?.contains("center") == true) s.append("align-self:center;")
             if (a["layout_gravity"]?.contains("end") == true || a["layout_gravity"]?.contains("right") == true) s.append("align-self:flex-end;")
             if (a["visibility"] == "gone") s.append("display:none;")
@@ -288,12 +358,49 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
             return s.toString()
         }
 
-        private fun element(tag: String, a: Map<String, String>, depth: Int): Pair<String, String> {
+        /** Ícono de un ImageButton según su imagen, id o descripción (☰ menú, ⚙ ajustes, 🎤, ➤ enviar…). */
+        private fun iconFor(a: Map<String, String>): String {
+            val k = (a["src"].orEmpty() + " " + a["srcCompat"].orEmpty() + " " + a["id"].orEmpty() + " " + a["contentDescription"].orEmpty()).lowercase()
+            return when {
+                Regex("menu|hamburg|drawer").containsMatchIn(k) -> "☰"
+                Regex("setting|ajuste|config|tune|gear|engran").containsMatchIn(k) -> "⚙"
+                Regex("mic|voz|voice|hablar|speak").containsMatchIn(k) -> "🎤"
+                Regex("send|enviar").containsMatchIn(k) -> "➤"
+                Regex("close|cerrar|clear").containsMatchIn(k) -> "✕"
+                Regex("search|buscar|lupa").containsMatchIn(k) -> "🔍"
+                Regex("back|atras|atrás|volver|arrow_left").containsMatchIn(k) -> "←"
+                Regex("add|agregar|plus|nuevo|new").containsMatchIn(k) -> "＋"
+                Regex("more|mas|más|overflow|dots").containsMatchIn(k) -> "⋮"
+                Regex("camera|camara|cámara|photo|foto").containsMatchIn(k) -> "📷"
+                Regex("share|compartir").containsMatchIn(k) -> "↗"
+                Regex("delete|borrar|eliminar|trash").containsMatchIn(k) -> "🗑"
+                Regex("play").containsMatchIn(k) -> "▶"
+                else -> "●"
+            }
+        }
+
+        private fun element(tag: String, a: Map<String, String>, depth: Int, parent: String? = null): Pair<String, String> {
             val st = style(tag, a)
             val text = esc(res(a["text"]) ?: "")
             val hint = esc(res(a["hint"]) ?: "")
             val id = a["id"]?.substringAfter('/')?.let { " title='${esc(it)}'" } ?: ""
+            val lg = a["layout_gravity"].orEmpty()
             return when {
+                // ☰ Paneles laterales (DrawerLayout): ocultos; se abren con los botones de menú y ajustes
+                tag == "DrawerLayout" ->
+                    "<div class='v dl'$id style='display:flex;flex-direction:column;position:relative;overflow:hidden;$st'>" to
+                        "<div class='scrim' onclick=\"dr(this,0)\"></div></div>"
+                parent == "DrawerLayout" && (lg.contains("start") || lg.contains("left")) ->
+                    "<div class='v drawer dl-left'$id style='$st'>" to "</div>"
+                parent == "DrawerLayout" && (lg.contains("end") || lg.contains("right")) ->
+                    "<div class='v drawer dl-right'$id style='$st'>" to "</div>"
+                tag == "ImageButton" -> {
+                    val icon = iconFor(a)
+                    val click = when (icon) { "☰" -> " onclick=\"dr(this,'ol')\""; "⚙" -> " onclick=\"dr(this,'or')\""; else -> "" }
+                    val tint = color(a["tint"])?.let { "color:$it;" } ?: ""
+                    "<button class='ibtn v'$id$click style='$tint$st'>$icon</button>" to ""
+                }
+                tag == "HorizontalScrollView" -> "<div class='v'$id style='display:flex;flex-direction:row;overflow-x:auto;$st'>" to "</div>"
                 tag == "LinearLayout" -> {
                     val dir = if (a["orientation"] == "horizontal") "row" else "column"
                     "<div class='v'$id style='display:flex;flex-direction:$dir;${if (dir == "row") "align-items:center;gap:6px;" else ""}$st'>" to "</div>"
@@ -308,8 +415,10 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
                     "<button class='fab'$id style='$st'>${if (text.isNotEmpty()) text else "+"}</button>" to ""
                 tag.endsWith("Button") && !tag.endsWith("RadioButton") && !tag.endsWith("ToggleButton") ->
                     "<button class='btn v'$id style='$st'>${if (text.isNotEmpty()) text else if (tag == "ImageButton") "⬤" else "Botón"}</button>" to ""
-                tag.endsWith("EditText") || tag == "AutoCompleteTextView" ->
-                    "<input class='inp v'$id placeholder='${if (hint.isNotEmpty()) hint else "Escribe aquí"}' value='$text' style='$st'>" to ""
+                tag.endsWith("EditText") || tag == "AutoCompleteTextView" -> {
+                    val flat = if (a["background"] == "@null" || a["background"] == "@android:color/transparent") "background:transparent;border:none;" else ""
+                    "<input class='inp v'$id placeholder='${if (hint.isNotEmpty()) hint else "Escribe aquí"}' value='$text' style='$flat$st'>" to ""
+                }
                 tag.endsWith("TextView") || tag == "Chip" ->
                     "<div class='txt v'$id style='$st'>${if (text.isNotEmpty()) text else "Texto"}</div>" to ""
                 tag.endsWith("ImageView") -> "<div class='img v'$id style='$st'>🖼️</div>" to ""
