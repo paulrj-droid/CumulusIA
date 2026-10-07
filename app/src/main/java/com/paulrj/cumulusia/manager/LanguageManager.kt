@@ -1,11 +1,21 @@
 package com.paulrj.cumulusia.manager
 
+import android.app.Activity
+import android.app.Application
 import android.content.Context
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.Spanned
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.widget.EditText
 import android.widget.TextView
+import java.util.Collections
 import java.util.Locale
+import java.util.WeakHashMap
 
 object LanguageManager {
     private const val PREFS_NAME = "CumulusAppPermissions"
@@ -14,6 +24,7 @@ object LanguageManager {
     fun setLocale(context: Context, languageCode: String) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putString(KEY_SELECTED_LANGUAGE, languageCode).apply()
+        onLanguageChanged(context, languageCode)
         
         val locale = Locale(languageCode)
         Locale.setDefault(locale)
@@ -40,28 +51,354 @@ object LanguageManager {
     }
 
     fun applyToViewTree(root: View, languageCode: String = getSelectedLanguage(root.context)) {
-        if (root is TextView) {
-            val currentText = root.text?.toString().orEmpty()
-            translate(languageCode, currentText)?.let { root.text = it }
-            if (root is EditText) {
-                val currentHint = root.hint?.toString().orEmpty()
-                translate(languageCode, currentHint)?.let { root.hint = it }
-            }
-        }
-        if (root is ViewGroup) {
-            for (index in 0 until root.childCount) {
-                applyToViewTree(root.getChildAt(index), languageCode)
-            }
-        }
+        if (appContext == null) appContext = root.context.applicationContext
+        translateTree(root, languageCode)
     }
 
     fun text(context: Context, spanishText: String): String {
+        if (appContext == null) appContext = context.applicationContext
         return translate(getSelectedLanguage(context), spanishText) ?: spanishText
     }
 
     private fun translate(code: String, source: String): String? {
         if (code == "es") return source
-        return translations[code]?.get(source)
+        return translateText(code, source) ?: translations[code]?.get(source)
+    }
+
+    // ========================================================================
+    // 🌐 TRADUCCIÓN DE TODA LA APP: pantalla principal, menús, ventanas emergentes, diálogos,
+    //    paneles y avisos. Se traduce todo lo que se ve con el diccionario de
+    //    assets/i18n/ui.json (español → inglés, portugués, ruso, chino, coreano y japonés).
+    //    No se traduce lo que escribes tú, las respuestas de la IA ni el código.
+    // ========================================================================
+    private const val DICT_ASSET = "i18n/ui.json"
+    @Volatile private var appContext: Context? = null
+    @Volatile private var dictLoaded = false
+    @Volatile private var currentLang: String? = null
+    private val dictLock = Any()
+    /** idioma → texto en español (tal cual) → traducción */
+    private val exactDict = HashMap<String, HashMap<String, String>>()
+    /** idioma → texto en español en minúsculas → traducción (para «GUARDAR API KEY» = «Guardar API Key») */
+    private val lowerDict = HashMap<String, HashMap<String, String>>()
+    /** idioma → frases con datos variables: «Modo: {0}», «Máximo {0} imágenes»… */
+    private val patterns = HashMap<String, MutableList<Triple<Regex, List<Int>, String>>>()
+    /** Resultados ya calculados (un texto se traduce una sola vez). "" = no tiene traducción. */
+    private val resultCache = HashMap<String, String>()
+    private val noTranslateViews: MutableSet<View> = Collections.newSetFromMap(WeakHashMap())
+    private val lastSetText = WeakHashMap<TextView, String>()
+    private val lastSetHint = WeakHashMap<TextView, String>()
+
+    /** Lo que nunca se traduce (por ejemplo un texto que el usuario escribió). */
+    fun noTranslate(view: View) { noTranslateViews.add(view) }
+
+    private fun currentLanguage(): String {
+        currentLang?.let { return it }
+        val c = appContext ?: return "es"
+        return getSelectedLanguage(c).also { currentLang = it }
+    }
+
+    private fun onLanguageChanged(context: Context, code: String) {
+        if (appContext == null) appContext = context.applicationContext
+        currentLang = code
+        synchronized(dictLock) { resultCache.clear() }
+        lastSetText.clear(); lastSetHint.clear()
+    }
+
+    private fun normalize(s: String): String =
+        s.trim().replace('…'.toString(), "...").replace(Regex("[ \\t\\u00A0]+"), " ").replace(Regex(" ?\\n ?"), "\n")
+
+    private fun isUpperText(s: String): Boolean {
+        var letters = 0
+        for (ch in s) if (ch.isLetter()) { letters++; if (ch.isLowerCase()) return false }
+        return letters >= 2 && s != s.lowercase(Locale.ROOT)
+    }
+
+    private fun isDecor(cp: Int): Boolean = !Character.isLetterOrDigit(cp) &&
+        cp != '¿'.code && cp != '¡'.code && cp != '«'.code && cp != '»'.code && cp != '('.code && cp != ')'.code &&
+        cp != '"'.code && cp != '\''.code && cp != '.'.code && cp != '?'.code && cp != '!'.code && cp != '%'.code && cp != '…'.code
+
+    /** Separa adornos del principio y del final (emojis, flechas, «▴», espacios): (antes, centro, después). */
+    private fun splitDecor(s: String): Triple<String, String, String> {
+        var a = 0
+        while (a < s.length) { val cp = s.codePointAt(a); if (!isDecor(cp)) break; a += Character.charCount(cp) }
+        var b = s.length
+        while (b > a) { val cp = s.codePointBefore(b); if (!isDecor(cp)) break; b -= Character.charCount(cp) }
+        return Triple(s.substring(0, a), s.substring(a, b), s.substring(b))
+    }
+
+    private fun addEntry(lang: String, es: String, tr: String) {
+        val key = normalize(es)
+        val value = normalize(tr)
+        if (key.isEmpty() || value.isEmpty()) return
+        if (key.contains("{0}")) {
+            // Frase con datos: se arma una expresión que reconoce el texto con cualquier dato en su lugar
+            val parts = key.split(Regex("\\{(\\d)\\}"))
+            val order = Regex("\\{(\\d)\\}").findAll(key).map { it.groupValues[1].toInt() }.toList()
+            if (parts.joinToString("").count { it.isLetter() } < 4) return
+            val rx = buildString {
+                append('^')
+                parts.forEachIndexed { i, p ->
+                    append(Regex.escape(p))
+                    if (i < parts.size - 1) append("(.+?)")
+                }
+                append('$')
+            }
+            runCatching { Regex(rx, RegexOption.DOT_MATCHES_ALL) }.getOrNull()?.let {
+                patterns.getOrPut(lang) { mutableListOf() }.add(Triple(it, order, value))
+            }
+            return
+        }
+        exactDict.getOrPut(lang) { HashMap() }.putIfAbsent(key, value)
+        lowerDict.getOrPut(lang) { HashMap() }.putIfAbsent(key.lowercase(Locale.ROOT), value)
+        // También sin adornos: «🌙 Modo oscuro» enseña «Modo oscuro»
+        val (_, coreEs, _) = splitDecor(key)
+        val (_, coreTr, _) = splitDecor(value)
+        if (coreEs != key && coreEs.isNotBlank() && coreTr.isNotBlank()) {
+            exactDict.getValue(lang).putIfAbsent(coreEs, coreTr)
+            lowerDict.getValue(lang).putIfAbsent(coreEs.lowercase(Locale.ROOT), coreTr)
+        }
+    }
+
+    private fun ensureDict(ctx: Context?): Boolean {
+        if (dictLoaded) return true
+        synchronized(dictLock) {
+            if (dictLoaded) return true
+            val c = ctx ?: appContext ?: return false
+            runCatching {
+                val json = c.assets.open(DICT_ASSET).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val root = org.json.JSONObject(json)
+                val langs = root.getJSONArray("langs")
+                val s = root.getJSONObject("s")
+                val keys = s.keys()
+                while (keys.hasNext()) {
+                    val es = keys.next()
+                    val arr = s.getJSONArray(es)
+                    for (i in 0 until langs.length()) {
+                        val tr = arr.optString(i, "")
+                        if (tr.isNotEmpty()) addEntry(langs.getString(i), es, tr)
+                    }
+                }
+            }.onFailure { Log.e("LanguageManager", "No se pudo leer el diccionario: ${it.message}") }
+            // Lo que ya estaba en la app también sirve
+            translations.forEach { (lang, map) -> map.forEach { (es, tr) -> addEntry(lang, es, tr) } }
+            patterns.values.forEach { list -> list.sortByDescending { it.first.pattern.length } }
+            dictLoaded = true
+            return true
+        }
+    }
+
+    private fun lookup(lang: String, text: String): String? {
+        val key = normalize(text)
+        if (key.isEmpty()) return null
+        exactDict[lang]?.get(key)?.let { return it }
+        val tr = lowerDict[lang]?.get(key.lowercase(Locale.ROOT)) ?: return null
+        val loc = Locale.forLanguageTag(lang)
+        return when {
+            isUpperText(key) -> tr.uppercase(loc)
+            isUpperText(tr) -> tr.lowercase(loc).replaceFirstChar { it.titlecase(loc) }
+            else -> tr
+        }
+    }
+
+    private fun matchPattern(lang: String, text: String): String? {
+        val key = normalize(text)
+        val list = patterns[lang] ?: return null
+        for ((rx, order, tpl) in list) {
+            val m = rx.matchEntire(key) ?: continue
+            var out = tpl
+            order.forEachIndexed { i, n ->
+                val v = m.groupValues[i + 1]
+                out = out.replace("{$n}", lookup(lang, v) ?: v)
+            }
+            return if (isUpperText(key)) out.uppercase(Locale.forLanguageTag(lang)) else out
+        }
+        return null
+    }
+
+    /** Un trozo que no hace falta traducir: nombres de archivo, marcas, números (gemma.gguf, mmproj, Q4_0). */
+    private fun isTokenLike(s: String): Boolean {
+        val t = s.trim()
+        if (t.isEmpty() || !t.any { it.isLetter() }) return true
+        if (t.length > 40 || t.contains(' ')) return false
+        return t.none { it in "áéíóúñÁÉÍÓÚÑ¿¡" }
+    }
+
+    private fun translateOne(lang: String, text: String): String? {
+        // Primero sin adornos: así el emoji y sus espacios quedan tal cual
+        val (pre, core, post) = splitDecor(text)
+        if (core.isNotEmpty() && (pre.isNotEmpty() || post.isNotEmpty())) {
+            lookup(lang, core)?.let { return pre + it + post }
+        }
+        lookup(lang, text)?.let { return it }
+        matchPattern(lang, text)?.let { return it }
+        if (core.isNotEmpty() && core != text) matchPattern(lang, core)?.let { return pre + it + post }
+        return null
+    }
+
+    private val segmentSplit = Regex("(\\n| · | — | – | \\| |: )")
+
+    /** Traduce un texto de la pantalla. null = no hay traducción (se deja como está). */
+    fun translateText(lang: String, text: String): String? {
+        if (lang == "es" || text.isBlank()) return null
+        if (!ensureDict(null)) return null
+        synchronized(dictLock) { resultCache[text]?.let { return it.ifEmpty { null } } }
+        val lead = text.takeWhile { it.isWhitespace() }
+        val trail = text.takeLastWhile { it.isWhitespace() }
+        var result = translateOne(lang, text)
+        if (result == null && text.length <= 300) {
+            // Texto armado por partes: «Carga automática: ACTIVADA», «mmproj\nNinguno», «Modelo: x [CPU - Activo]»
+            val pieces = mutableListOf<String>()
+            var last = 0
+            segmentSplit.findAll(text).forEach { m ->
+                pieces += text.substring(last, m.range.first); pieces += m.value; last = m.range.last + 1
+            }
+            pieces += text.substring(last)
+            if (pieces.size in 3..15) {
+                var any = false
+                var ok = true
+                val out = StringBuilder()
+                pieces.forEachIndexed { i, p ->
+                    if (i % 2 == 1) { out.append(p); return@forEachIndexed }
+                    val t = if (p.isBlank()) null else translateOne(lang, p)
+                    when {
+                        t != null -> { any = true; out.append(p.takeWhile { it.isWhitespace() }).append(t).append(p.takeLastWhile { it.isWhitespace() }) }
+                        isTokenLike(p) -> out.append(p)
+                        else -> ok = false
+                    }
+                }
+                if (any && ok) result = out.toString()
+            }
+        }
+        val final = result?.let { r -> if (r.startsWith(lead) && r.endsWith(trail)) r else lead + r.trim() + trail }
+        synchronized(dictLock) {
+            if (resultCache.size > 4000) resultCache.clear()
+            resultCache[text] = final ?: ""
+        }
+        return final
+    }
+
+    /** Recorre una ventana y traduce sus textos. Devuelve true si cambió algo. */
+    private fun translateTree(root: View, lang: String = currentLanguage()): Boolean {
+        if (lang == "es") return false
+        var changed = false
+        fun visit(v: View) {
+            if (v in noTranslateViews) return
+            if (v is android.webkit.WebView) return
+            if (v is TextView) {
+                // Lo que escribe el usuario y los mensajes del chat (texto que se puede seleccionar) no se tocan
+                if (v !is EditText && !v.isTextSelectable) {
+                    val cs = v.text
+                    val cur = cs?.toString().orEmpty()
+                    if (cur.isNotEmpty() && lastSetText[v] != cur) {
+                        val spans = if (cs is Spanned) cs.getSpans(0, cs.length, Any::class.java) else emptyArray()
+                        if (spans.isEmpty()) {
+                            translateText(lang, cur)?.let { out ->
+                                if (out != cur) { v.text = out; changed = true }
+                                lastSetText[v] = out
+                            }
+                        } else {
+                            // Texto con estilo solo en el adorno del inicio (ej. «✔  Guardar» con el ✔ en negrita):
+                            // se traduce la palabra y el adorno conserva su estilo
+                            val pre = splitDecor(cur).first
+                            val sp = cs as Spanned
+                            if (pre.isNotEmpty() && spans.all { sp.getSpanEnd(it) <= pre.length }) {
+                                translateText(lang, cur)?.let { out ->
+                                    if (out != cur && out.startsWith(pre)) {
+                                        v.text = android.text.SpannableStringBuilder(cs.subSequence(0, pre.length)).append(out.substring(pre.length))
+                                        changed = true
+                                    }
+                                    lastSetText[v] = out
+                                }
+                            }
+                        }
+                    }
+                }
+                val h = v.hint
+                if (!h.isNullOrEmpty() && h !is Spanned) {
+                    val cur = h.toString()
+                    if (lastSetHint[v] != cur) {
+                        translateText(lang, cur)?.let { out ->
+                            if (out != cur) { v.hint = out; changed = true }
+                            lastSetHint[v] = out
+                        }
+                    }
+                }
+            }
+            if (v is ViewGroup) for (i in 0 until v.childCount) v.getChildAt(i)?.let { visit(it) }
+        }
+        runCatching { visit(root) }.onFailure { Log.e("LanguageManager", "Error al traducir: ${it.message}") }
+        return changed
+    }
+
+    // ---------- Vigilante: traduce cada ventana nueva (menús, diálogos, paneles) antes de dibujarse ----------
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val hooked = WeakHashMap<View, java.lang.ref.WeakReference<ViewTreeObserver>>()
+    private val dirty = WeakHashMap<View, Boolean>()
+    private var resumed = 0
+    private var tickerOn = false
+    private val ticker = object : Runnable {
+        override fun run() {
+            if (resumed <= 0 || currentLanguage() == "es") { tickerOn = false; return }
+            scanWindows(full = true)
+            mainHandler.postDelayed(this, 250)
+        }
+    }
+
+    private fun hook(root: View) {
+        val vto = root.viewTreeObserver
+        if (!vto.isAlive || hooked[root]?.get() === vto) return
+        hooked[root] = java.lang.ref.WeakReference(vto)
+        vto.addOnGlobalLayoutListener { dirty[root] = true }
+        var lastWalk = 0L
+        var cancels = 0
+        vto.addOnPreDrawListener {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (dirty[root] == true && now - lastWalk >= 40) {
+                dirty[root] = false
+                lastWalk = now
+                // Si cambió algún texto, se salta este dibujo y se dibuja ya traducido (sin parpadeo)
+                if (translateTree(root) && cancels < 2) { cancels++; return@addOnPreDrawListener false }
+            }
+            cancels = 0
+            true
+        }
+        vto.addOnWindowFocusChangeListener { has -> if (!has) scanWindowsSoon() }
+    }
+
+    private fun scanWindows(full: Boolean) {
+        if (currentLanguage() == "es") return
+        val roots = runCatching { android.view.inspector.WindowInspector.getGlobalWindowViews() }.getOrNull() ?: return
+        for (r in roots) {
+            val isNew = hooked[r]?.get() !== r.viewTreeObserver
+            if (isNew) hook(r)
+            if (isNew || full) translateTree(r)
+        }
+    }
+
+    /** Revisa enseguida si se abrió un menú o una ventana (se llama al tocar la pantalla). */
+    fun scanWindowsSoon() {
+        if (currentLanguage() == "es") return
+        mainHandler.post { scanWindows(full = false) }
+    }
+
+    /** Se llama una vez al abrir la app (CumulusApp). */
+    fun install(app: Application) {
+        appContext = app.applicationContext
+        currentLang = getSelectedLanguage(app)
+        if (currentLang != "es") Thread { ensureDict(app) }.start()
+        app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) {
+                resumed++
+                if (!tickerOn) { tickerOn = true; mainHandler.post(ticker) }
+                scanWindowsSoon()
+            }
+            override fun onActivityPaused(activity: Activity) { resumed = (resumed - 1).coerceAtLeast(0) }
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityStarted(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        })
     }
 
     private val translations = mapOf(
