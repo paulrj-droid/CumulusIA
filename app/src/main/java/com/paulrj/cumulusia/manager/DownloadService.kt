@@ -66,6 +66,8 @@ class DownloadService : Service() {
         @Volatile private var lastNotify = 0L
         private var cachedIntent: PendingIntent? = null
         @Volatile private var lastShownPct = -1
+        // La hora de la notificación queda fija: si cambia en cada aviso, la barra la reordena y la vuelve a dibujar
+        @Volatile private var startedAt = 0L
 
         private fun createChannel(ctx: Context) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -98,8 +100,13 @@ class DownloadService : Service() {
             }
             val known = items.map { it.second }.filter { it >= 0 }
             val pct = if (known.isEmpty()) -1 else known.sum() / known.size
+            if (startedAt == 0L) startedAt = System.currentTimeMillis()
             return NotificationCompat.Builder(ctx, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_download)
+                .setWhen(startedAt)
+                .setShowWhen(false)
+                // Solo en el teléfono: no se reenvía a cada rato al reloj inteligente u otros dispositivos
+                .setLocalOnly(true)
                 .setContentTitle(title)
                 .setContentText(if (pct >= 0) "$pct %" else "Descargando…")
                 .setProgress(100, pct.coerceAtLeast(0), pct < 0)
@@ -155,6 +162,7 @@ class DownloadService : Service() {
                 if (running) runCatching { app.stopService(Intent(app, DownloadService::class.java)) }
                 running = false
                 lastShownPct = -1
+                startedAt = 0L
                 runCatching { nm.cancel(NOTIF_ID) }
             } else {
                 runCatching { nm.notify(NOTIF_ID, buildNotification(app)) }
