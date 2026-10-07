@@ -368,11 +368,57 @@ object AiActivity {
         render()
         panelRefresh = { if (dialog.isShowing) render() }
         dialog.setOnDismissListener { panelRefresh = null }
-        dialog.setContentView(root)
+
+        // 👆 Se arrastra con el dedo: hacia arriba sube casi a pantalla completa; hacia abajo vuelve
+        //    a la altura normal; y si desde la altura normal la bajas otra vez, se cierra.
+        //    Al volver a abrirla aparece siempre a la altura normal.
+        val screenH = context.resources.displayMetrics.heightPixels
+        val normalH = (screenH * 0.62f).toInt()
+        val tallH = (screenH * 0.92f).toInt()
+        var tall = false
+        val frame = android.widget.FrameLayout(context).apply {
+            setOnClickListener { dialog.dismiss() }   // tocar lo de arriba (fuera de la ventana) la cierra
+        }
+        frame.addView(root, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, normalH, Gravity.BOTTOM))
+        fun setHeight(h: Int) { root.layoutParams = root.layoutParams.apply { height = h } }
+        fun animateTo(target: Int, then: (() -> Unit)? = null) {
+            android.animation.ValueAnimator.ofInt(root.layoutParams.height, target).apply {
+                duration = 220
+                addUpdateListener { setHeight(it.animatedValue as Int) }
+                addListener(object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) { then?.invoke() }
+                })
+                start()
+            }
+        }
+        var startY = 0f
+        var startH = 0
+        // Se arrastra desde cualquier parte de la ventana que no sea la lista (la lista sigue deslizando sus pasos)
+        root.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> { startY = e.rawY; startH = root.layoutParams.height; true }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    setHeight((startH - (e.rawY - startY)).toInt().coerceIn(dp(80), tallH)); true
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    val dy = e.rawY - startY
+                    when {
+                        kotlin.math.abs(dy) < dp(8) -> { v.performClick(); animateTo(if (tall) tallH else normalH) }
+                        !tall && dy < -dp(40) -> { tall = true; animateTo(tallH) }              // ↑ sube más
+                        tall && dy > dp(40) -> { tall = false; animateTo(normalH) }             // ↓ vuelve a la altura normal
+                        !tall && dy > dp(60) -> animateTo(0) { if (dialog.isShowing) dialog.dismiss() }   // ↓ otra vez: se cierra
+                        else -> animateTo(if (tall) tallH else normalH)
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+
+        dialog.setContentView(frame)
         dialog.window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            val h = (context.resources.displayMetrics.heightPixels * 0.62f).toInt()
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, h)
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, tallH)
             setGravity(Gravity.BOTTOM)
         }
         dialog.show()
@@ -488,4 +534,3 @@ class RunnerDrawable(private val running: () -> Boolean) : Drawable() {
     @Deprecated("Deprecated in Java")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
-
