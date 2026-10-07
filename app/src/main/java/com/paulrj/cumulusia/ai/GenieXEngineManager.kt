@@ -20,7 +20,17 @@ import kotlinx.coroutines.sync.withLock
 /**
  * ⚡ Motor GenieX (SDK oficial de Qualcomm) para modelos GGUF en NPU / GPU.
  * Usa llama.cpp con los parches de Qualcomm para Hexagon (NPU) y Adreno (GPU).
- * Recomendado: modelos GGUF Q4_0 (la NPU Hexagon los soporta mejor).
+ * Recomendado: modelos GGUF Q4_0 (la NPU Hexagon los soporta mejor; los K-quant como Q4_K_M
+ * mandan partes del modelo a la CPU: más lento y más calor).
+ *
+ * Ajustes según la documentación de GenieX 0.8.0:
+ *  - NPU = «hybrid» (NPU + CPU por partes): el modo más rápido. Si falla, NPU fija y luego GPU.
+ *  - 🚀 VELOCIDAD MÁXIMA: power_mode «burst» (la NPU a su máxima frecuencia), 6 hilos de CPU para escribir
+ *    (lo que usa Qualcomm en sus pruebas) y los 8 núcleos para leer el mensaje (la parte más pesada).
+ *  - La GPU usa todas las capas del modelo (nGpuLayers = -1).
+ *  - Visión (mmproj) va SIEMPRE en la GPU: en la NPU cierra la app (probado en el S25); en GPU y CPU funciona.
+ *    Sin mmproj, el modelo va en la NPU.
+ *  - 🛡️ Si un modelo cierra la app en NPU/GPU, esa combinación se recuerda y no se repite.
  */
 object GenieXEngineManager {
     private const val TAG = "CumulusGenieX"
@@ -33,7 +43,83 @@ object GenieXEngineManager {
     private var loadedPath: String? = null
     private var loadedUnit: String? = null
     private var loadedCtx: Int = 2048
+    private var loadedKey: String? = null
     private var lastSystem: String? = null
+    @Volatile private var visionSkipped: String? = null
+
+    // 🚀 Potencia de la NPU al máximo («burst»). Es lo más rápido; el teléfono se puede entibiar en respuestas largas.
+    //    Si algún día se prefiere menos calor: "sustained_high_performance".
+    private const val POWER_MODE = "burst"
+    // 🧵 Hilos de CPU: 6 para escribir (lo que usa Qualcomm; escribir depende más de la memoria que de los núcleos)
+    //    y los 8 núcleos del Snapdragon 8 Elite para leer el mensaje (prefill, la parte que más cálculo pide)
+    private const val CPU_THREADS = 6
+    private val CPU_THREADS_BATCH = Runtime.getRuntime().availableProcessors().coerceIn(4, 8)
+
+    private fun modelConfig(nCtx: Int) = ModelConfig(
+        nCtx = nCtx, nThreads = CPU_THREADS, nThreadsBatch = CPU_THREADS_BATCH,
+        nBatch = 2048, nUBatch = 512, nGpuLayers = -1, power_mode = POWER_MODE
+    )
+
+    // ======================================================================
+    // 🛡️ PROTECCIÓN: si un GGUF cierra la app en NPU/GPU, esa combinación se recuerda
+    //    (modelo + unidad + visión) y la próxima vez se prueba la siguiente opción.
+    // ======================================================================
+    private var guard: android.content.SharedPreferences? = null
+
+    private fun guardKey(path: String, unit: String, vision: Boolean) =
+        path + "|" + java.io.File(path).length() + "|" + unit + "|" + (if (vision) "vision" else "texto")
+
+    private fun isBlocked(key: String) = guard?.getStringSet("blocked", null)?.contains(key) == true
+
+    /** Se escribe ANTES de cada paso riesgoso (commit: queda guardado aunque la app se cierre al instante). */
+    private fun markAttempt(key: String?, phase: String = "load") {
+        val g = guard ?: return
+        if (key == null) g.edit().remove("attempt").remove("phase").commit()
+        else g.edit().putString("attempt", key).putString("phase", phase).commit()
+    }
+
+    private fun unitName(unit: String) = when (unit) {
+        "hybrid" -> "NPU (híbrida)"
+        "npu" -> "NPU"
+        "gpu" -> "GPU"
+        else -> unit.uppercase()
+    }
+
+    private fun describe(key: String): String {
+        val p = key.split("|")
+        val name = java.io.File(p.getOrElse(0) { "" }).name
+        return "«$name» en ${unitName(p.getOrElse(2) { "" })}" + (if (p.getOrNull(3) == "vision") " con visión" else "")
+    }
+
+    /**
+     * Al abrir la app: si quedó un paso de GenieX a medias, la app se cerró ahí → esa combinación se bloquea.
+     * [crashed] = hubo un cierre real (el registro del sistema lo muestra). Devuelve el aviso para el usuario, o null.
+     */
+    fun checkPreviousCrash(context: Context, crashed: Boolean): String? {
+        val g = context.getSharedPreferences("geniex_guard", Context.MODE_PRIVATE)
+        guard = g
+        // Una versión nueva de la app puede traer el arreglo: se vuelve a probar todo
+        val updated = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime }.getOrDefault(0L)
+        if (g.getLong("app_update", 0L) != updated) g.edit().putLong("app_update", updated).remove("blocked").commit()
+        val attempt = g.getString("attempt", null) ?: return null
+        val phase = g.getString("phase", "load")
+        markAttempt(null)
+        // Si se cerró mientras respondía pero no hay registro de cierre, la cerraste tú: no es culpa del modelo
+        if (!crashed && phase != "load") return null
+        g.edit().putStringSet("blocked", (g.getStringSet("blocked", null) ?: emptySet()) + attempt).commit()
+        Log.w(TAG, "Bloqueado por cerrar la app: $attempt")
+        return describe(attempt)
+    }
+
+    /** «Volver a intentar»: el modelo puede probar otra vez la NPU/GPU. */
+    fun clearBlocked(context: Context, path: String? = null) {
+        val g = context.getSharedPreferences("geniex_guard", Context.MODE_PRIVATE)
+        val left = if (path == null) emptySet() else (g.getStringSet("blocked", null) ?: emptySet()).filterNot { it.startsWith("$path|") }.toSet()
+        g.edit().putStringSet("blocked", left).commit()
+    }
+
+    /** Si la visión se dejó fuera (GPU), el motivo; si no, null. */
+    fun visionSkippedReason(): String? = visionSkipped
     @Volatile private var label: String = "GenieX sin cargar"
     @Volatile private var sdkReady = false
     @Volatile private var lastErrors: String = ""
@@ -99,6 +185,7 @@ object GenieXEngineManager {
 
     /** Se llama al abrir la app. Si el SDK no está en el APK, simplemente queda desactivado. */
     fun init(context: Context) {
+        if (guard == null) guard = context.getSharedPreferences("geniex_guard", Context.MODE_PRIVATE)
         try {
             GenieXSdk.getInstance().init(context.applicationContext, object : GenieXSdk.InitCallback {
                 override fun onSuccess() {
@@ -135,54 +222,70 @@ object GenieXEngineManager {
             lastErrors = lastErrors.ifBlank { "GenieX no está iniciado" }
             return@withLock false
         }
-        val units = if (backend.contains("NPU", true)) listOf("npu", "gpu") else listOf("gpu")
+        // ⚡ NPU: primero «hybrid» (NPU + CPU por partes, el más rápido según Qualcomm), luego NPU fija y al final GPU
+        val units = if (backend.contains("NPU", true)) listOf("hybrid", "npu", "gpu") else listOf("gpu")
         val errors = StringBuilder()
         val mm = mmproj?.takeIf { it.isNotBlank() && java.io.File(it).exists() }
-        for (unit in units) {
-            // 👁️ Primero con visión (modelo + mmproj). Si no se puede, sigue igual que antes solo texto.
-            if (mm != null) {
-                try {
-                    Log.i(TAG, "Cargando VLM $path + $mm en $unit")
-                    val vr = VlmWrapper.builder()
-                        .vlmCreateInput(
-                            VlmCreateInput(
-                                model_path = path,
-                                mmproj_path = mm,
-                                config = ModelConfig(nCtx = nCtx, nGpuLayers = -1),
-                                runtime_id = "llama_cpp",
-                                compute_unit = unit
-                            )
+        visionSkipped = null
+        // 👁️ Con visión (modelo + mmproj) se carga SIEMPRE en la GPU: en la NPU la visión cierra la app
+        //    (probado en el Galaxy S25); en GPU y CPU funciona bien.
+        if (mm != null) {
+            if (backend.contains("NPU", true)) errors.append("• NPU visión: en la NPU la visión (mmproj) cierra la app, así que el modelo con visión va en la GPU\n")
+            val vkey = guardKey(path, "gpu", true)
+            if (isBlocked(vkey)) {
+                errors.append("• GPU visión: se omite (antes cerró la app)\n")
+            } else try {
+                markAttempt(vkey)
+                Log.i(TAG, "Cargando VLM $path + $mm en gpu")
+                val vr = VlmWrapper.builder()
+                    .vlmCreateInput(
+                        VlmCreateInput(
+                            model_path = path,
+                            mmproj_path = mm,
+                            config = modelConfig(nCtx),
+                            runtime_id = "llama_cpp",
+                            compute_unit = "gpu"
                         )
-                        .build()
-                    val vw = vr.getOrNull()
-                    if (vw != null) {
-                        vlm = vw
-                        loadedMmproj = mm
-                        loadedPath = path
-                        loadedUnit = unit
-                        loadedCtx = nCtx
-                        lastSystem = null
-                        label = when (unit) {
-                            "npu" -> "⚡ NPU Hexagon 👁️ (GenieX)"
-                            else -> if (backend.contains("NPU", true)) "⚡ NPU→🎮 GPU 👁️ (GenieX)" else "🎮 GPU Adreno 👁️ (GenieX)"
-                        }
-                        lastErrors = errors.toString()
-                        Log.i(TAG, "GenieX VLM activo: $label")
-                        return@withLock true
-                    }
-                    errors.append("• ").append(unit.uppercase()).append(" visión: ")
-                        .append(vr.exceptionOrNull()?.let { chain(it) } ?: "error desconocido").append("\n")
-                } catch (t: Throwable) {
-                    errors.append("• ").append(unit.uppercase()).append(" visión: ").append(chain(t)).append("\n")
+                    )
+                    .build()
+                val vw = vr.getOrNull()
+                if (vw != null) {
+                    vlm = vw
+                    loadedMmproj = mm
+                    loadedPath = path
+                    loadedUnit = "gpu"
+                    loadedCtx = nCtx
+                    loadedKey = vkey
+                    lastSystem = null
+                    label = if (backend.contains("NPU", true)) "⚡ NPU→🎮 GPU 👁️ (GenieX)" else "🎮 GPU Adreno 👁️ (GenieX)"
+                    lastErrors = errors.toString()
+                    Log.i(TAG, "GenieX VLM activo: $label")
+                    return@withLock true
                 }
+                errors.append("• GPU visión: ")
+                    .append(vr.exceptionOrNull()?.let { chain(it) } ?: "error desconocido").append("\n")
+            } catch (t: Throwable) {
+                errors.append("• GPU visión: ").append(chain(t)).append("\n")
+            } finally {
+                markAttempt(null)
+            }
+            visionSkipped = "La visión (mmproj) no se pudo cargar en la GPU con este modelo: para fotos usa la CPU."
+        }
+        // 💬 Solo texto: NPU (si la elegiste) y luego GPU
+        for (unit in units) {
+            val key = guardKey(path, unit, false)
+            if (isBlocked(key)) {
+                errors.append("• ").append(unitName(unit)).append(": se omite (antes cerró la app con este modelo)\n")
+                continue
             }
             try {
+                markAttempt(key)
                 Log.i(TAG, "Cargando $path en $unit")
                 val result = LlmWrapper.builder()
                     .llmCreateInput(
                         LlmCreateInput(
                             model_path = path,
-                            config = ModelConfig(nCtx = nCtx, nGpuLayers = -1),
+                            config = modelConfig(nCtx),
                             runtime_id = "llama_cpp",
                             compute_unit = unit
                         )
@@ -194,20 +297,23 @@ object GenieXEngineManager {
                     loadedPath = path
                     loadedUnit = unit
                     loadedCtx = nCtx
+                    loadedKey = key
                     lastSystem = null
                     label = when (unit) {
-                        "npu" -> "⚡ NPU Hexagon (GenieX)"
-                        else -> if (backend.contains("NPU", true)) "⚡ NPU→🎮 GPU (GenieX)" else "🎮 GPU Adreno (GenieX)"
+                        "gpu" -> if (backend.contains("NPU", true)) "⚡ NPU→🎮 GPU (GenieX)" else "🎮 GPU Adreno (GenieX)"
+                        else -> "⚡ NPU Hexagon (GenieX)"
                     }
                     // Si la NPU falló y se usó la GPU, se guarda por qué (la app lo muestra)
                     lastErrors = errors.toString()
                     Log.i(TAG, "GenieX activo: $label")
                     return@withLock true
                 }
-                errors.append("• ").append(unit.uppercase()).append(": ")
+                errors.append("• ").append(unitName(unit)).append(": ")
                     .append(result.exceptionOrNull()?.let { chain(it) } ?: "error desconocido").append("\n")
             } catch (t: Throwable) {
-                errors.append("• ").append(unit.uppercase()).append(": ").append(chain(t)).append("\n")
+                errors.append("• ").append(unitName(unit)).append(": ").append(chain(t)).append("\n")
+            } finally {
+                markAttempt(null)
             }
         }
         lastErrors = errors.toString()
@@ -233,12 +339,7 @@ object GenieXEngineManager {
                 contents = listOf(VlmContent("text", contents[i]))))
             return@withLock runVlmLocked(v, vm, maxTokens, temperature)
         }
-        var w = llm ?: throw IllegalStateException("GenieX no tiene un modelo cargado")
-        // 🧹 GPU: se limpia la memoria en cada mensaje (reutilizarla hacía que repitiera
-        //    respuestas viejas). Releer todo en la GPU cuesta ~1 s.
-        // ⚠️ NPU: NO se limpia ni se recarga (las dos cosas cerraban la app). Los nombres y
-        //    la hora van pegados a cada mensaje, así que no dependen de la memoria vieja.
-        if (loadedUnit != "npu") runCatching { w.reset() }
+        val w = llm ?: throw IllegalStateException("GenieX no tiene un modelo cargado")
         lastSystem = system
         val msgs = ArrayList<ChatMessage>()
         msgs.add(ChatMessage("system", system))
@@ -252,9 +353,28 @@ object GenieXEngineManager {
             stopCount = stops.size,
             samplerConfig = SamplerConfig(temperature = temperature, topK = 40, topP = 0.95f, minP = 0.05f)
         )
+        // ⚡ Ya NO se limpia la memoria en cada mensaje: GenieX reutiliza lo que ya leyó de la conversación
+        //    («prefix reuse») y solo lee lo nuevo. Antes la GPU releía TODO el chat en cada mensaje (lo más lento).
+        markAttempt(loadedKey, "gen")
+        try {
+            var text = runLlmOnce(w, templated.formattedText, config)
+            // 🧹 Si responde igual que su respuesta anterior (memoria vieja), se limpia y se responde de nuevo
+            val prev = contents.indices.lastOrNull { roles[it] == "assistant" }?.let { contents[it].trim() }
+            if (prev != null && prev.length > 20 && text.trim().take(160) == prev.take(160)) {
+                Log.w(TAG, "Repitió la respuesta anterior → limpio memoria y respondo de nuevo")
+                runCatching { w.reset() }
+                text = runLlmOnce(w, templated.formattedText, config)
+            }
+            text
+        } finally {
+            markAttempt(null)
+        }
+    }
+
+    private suspend fun runLlmOnce(w: LlmWrapper, prompt: String, config: GenerationConfig): String {
         val sb = StringBuilder()
         var err: Throwable? = null
-        w.generateStreamFlow(templated.formattedText, config).collect { r ->
+        w.generateStreamFlow(prompt, config).collect { r ->
             when (r) {
                 is LlmStreamResult.Token -> { sb.append(r.text); emitPartial(sb) }
                 is LlmStreamResult.Completed -> {
@@ -272,7 +392,7 @@ object GenieXEngineManager {
         // Si se detuvo en la etiqueta de búsqueda y el motor la omitió, se completa
         if (text.contains("<buscar>") && !text.contains("</buscar>")) text += "</buscar>"
         if (text.contains("<abrir>") && !text.contains("</abrir>")) text += "</abrir>"
-        text
+        return text
     }
 
     /**
@@ -298,6 +418,15 @@ object GenieXEngineManager {
     }
 
     private suspend fun runVlmLocked(v: VlmWrapper, vm: List<VlmChatMessage>, maxTokens: Int, temperature: Float): String {
+        markAttempt(loadedKey, "gen")
+        try {
+            return runVlmGuarded(v, vm, maxTokens, temperature)
+        } finally {
+            markAttempt(null)
+        }
+    }
+
+    private suspend fun runVlmGuarded(v: VlmWrapper, vm: List<VlmChatMessage>, maxTokens: Int, temperature: Float): String {
         try {
             return runVlmOnce(v, vm, maxTokens, temperature)
         } catch (t: Throwable) {
@@ -314,8 +443,8 @@ object GenieXEngineManager {
         generateSequence(t) { it.cause }.any { (it.message ?: "").contains("too long", true) || (it.message ?: "").contains("context", true) }
 
     private suspend fun runVlmOnce(v: VlmWrapper, vm: List<VlmChatMessage>, maxTokens: Int, temperature: Float): String {
-        // GPU se limpia en cada mensaje (igual que en texto); la NPU no se toca
-        if (loadedUnit != "npu") runCatching { v.reset() }
+        // La NPU no se limpia (limpiarla cerraba la app); GenieX reutiliza lo ya leído
+        if (loadedUnit == "gpu") runCatching { v.reset() }
         val arr = vm.toTypedArray()
         val templated = v.applyChatTemplate(arr, null, false).getOrThrow()
         val stops = arrayOf("</buscar>", "</abrir>")
@@ -365,6 +494,8 @@ object GenieXEngineManager {
         loadedMmproj = null
         loadedPath = null
         loadedUnit = null
+        loadedKey = null
         label = "GenieX sin cargar"
     }
 }
+
