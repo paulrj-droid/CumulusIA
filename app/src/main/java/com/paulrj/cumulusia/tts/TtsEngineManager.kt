@@ -4,7 +4,10 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import com.paulrj.cumulusia.ai.CumulusEngine
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -22,6 +25,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 // ============================================================================
 // ENUMERACIÓN DE PROVEEDORES DE VOZ
@@ -64,6 +68,17 @@ class TtsEngineManager(
     // Último motivo por el que ElevenLabs rechazó la voz (se muestra al usuario en vez de callar)
     @Volatile var lastElevenError: String? = null
 
+    // 🔔 La voz de Android avisa cuándo TERMINA de hablar. Antes avisaba apenas empezaba, y la
+    //    conversación por voz creía que la IA ya se había callado (la interrupción no funcionaba
+    //    y su propia voz se tomaba como si hablaras tú).
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val androidDone = ConcurrentHashMap<String, Pair<Int, () -> Unit>>()
+    @Volatile private var pendingAndroid: Pair<String, (() -> Unit)?>? = null
+    // La parte de ElevenLabs que está sonando espera aquí a que termine (stop() la libera)
+    private var playbackWaiter: (() -> Unit)? = null
+    // Cada vez que se habla o se detiene cambia el número: así un audio viejo nunca suena encima del nuevo
+    private val speakSession = AtomicInteger(0)
+
     init {
         // Inicializar TTS nativo de Android
         androidTts = TextToSpeech(context.applicationContext, this)
@@ -86,8 +101,32 @@ class TtsEngineManager(
         if (status == TextToSpeech.SUCCESS) {
             androidTts?.language = Locale.getDefault()
             applyAndroidVoice()
+            androidTts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) = Unit
+                override fun onDone(utteranceId: String?) = finishAndroid(utteranceId)
+                @Deprecated("Deprecated in Java")
+                override fun onError(utteranceId: String?) = finishAndroid(utteranceId)
+                override fun onError(utteranceId: String?, errorCode: Int) = finishAndroid(utteranceId)
+            })
             isAndroidTtsReady = true
+            // Lo que se pidió decir mientras la voz se preparaba, se dice ahora (antes se perdía)
+            pendingAndroid?.let { (text, done) ->
+                pendingAndroid = null
+                mainHandler.post { speakWithAndroidTts(text, done) }
+            }
+        } else {
+            // Sin voz de Android: no se deja a nadie esperando a que termine de hablar
+            pendingAndroid?.let { (_, done) ->
+                pendingAndroid = null
+                if (done != null) mainHandler.post { done() }
+            }
         }
+    }
+
+    // Terminó de hablar (o no pudo): avisa en el hilo principal, solo si nadie la detuvo antes
+    private fun finishAndroid(utteranceId: String?) {
+        val (session, done) = androidDone.remove(utteranceId ?: return) ?: return
+        mainHandler.post { if (session == speakSession.get()) done() }
     }
 
     /**
@@ -120,11 +159,44 @@ class TtsEngineManager(
     }
 
     private fun speakWithAndroidTts(text: String, onComplete: (() -> Unit)?) {
-        if (isAndroidTtsReady) {
-            applyAndroidVoice()
-            androidTts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "TTS_ID_${System.currentTimeMillis()}")
-            onComplete?.invoke()
+        if (!isAndroidTtsReady) {
+            // La voz de Android aún se está preparando: habla apenas esté lista
+            pendingAndroid = text to onComplete
+            return
         }
+        applyAndroidVoice()
+        val tts = androidTts ?: run { if (onComplete != null) mainHandler.post { onComplete() }; return }
+        // Android lee hasta ~4000 letras de una vez: una respuesta larga se divide en partes seguidas
+        val parts = splitForAndroid(text)
+        val base = "TTS_ID_${System.currentTimeMillis()}"
+        val lastId = "${base}_${parts.size - 1}"
+        // El aviso «terminé» llega cuando suena la ÚLTIMA parte (no al empezar)
+        if (onComplete != null) androidDone[lastId] = speakSession.get() to onComplete
+        var failed = false
+        parts.forEachIndexed { i, part ->
+            val mode = if (i == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+            if (tts.speak(part, mode, null, "${base}_$i") != TextToSpeech.SUCCESS) failed = true
+        }
+        // Si no pudo hablar, igual avisa que terminó (así la conversación sigue)
+        if (failed) finishAndroid(lastId)
+    }
+
+    private fun splitForAndroid(text: String): List<String> {
+        val max = 3500
+        if (text.length <= max) return listOf(text)
+        val parts = mutableListOf<String>()
+        val sb = StringBuilder()
+        for (sentence in Regex("[^.!?\\n]*[.!?\\n]+|[^.!?\\n]+").findAll(text).map { it.value }) {
+            if (sb.isNotEmpty() && sb.length + sentence.length > max) { parts.add(sb.toString()); sb.clear() }
+            var s = sentence
+            while (s.length > max) {   // una frase larguísima se corta en un espacio
+                val cut = s.lastIndexOf(' ', max).takeIf { it > max / 2 } ?: max
+                parts.add(s.substring(0, cut)); s = s.substring(cut)
+            }
+            sb.append(s)
+        }
+        if (sb.isNotBlank()) parts.add(sb.toString())
+        return parts.ifEmpty { listOf(text) }
     }
 
     private fun applyAndroidVoice() {
@@ -145,9 +217,6 @@ class TtsEngineManager(
             speakWithAndroidTts(text, onComplete) // Fallback
         }
     }
-
-    // Cada vez que se habla o se detiene cambia el número: así un audio viejo nunca suena encima del nuevo
-    private val speakSession = AtomicInteger(0)
 
     /**
      * Divide la respuesta en partes: la primera es corta (primera frase) para que la voz
@@ -275,6 +344,7 @@ class TtsEngineManager(
     }
 
     private fun playAudioFile(file: File, onComplete: (() -> Unit)?) {
+        playbackWaiter = onComplete
         try {
             mediaPlayer?.release()
             mediaPlayer = MediaPlayer().apply {
@@ -287,9 +357,11 @@ class TtsEngineManager(
                 setDataSource(file.absolutePath)
                 prepare()
                 setOnCompletionListener {
+                    if (playbackWaiter === onComplete) playbackWaiter = null
                     onComplete?.invoke()
                 }
                 setOnErrorListener { _, _, _ ->
+                    if (playbackWaiter === onComplete) playbackWaiter = null
                     onComplete?.invoke()
                     true
                 }
@@ -297,24 +369,29 @@ class TtsEngineManager(
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            if (playbackWaiter === onComplete) playbackWaiter = null
             onComplete?.invoke()
         }
     }
 
     fun stop() {
         speakSession.incrementAndGet() // cancela las partes pendientes de ElevenLabs
+        pendingAndroid = null
+        androidDone.clear()            // lo que se detiene no avisa «terminé» (igual que ElevenLabs)
         try {
-            if (androidTts?.isSpeaking == true) {
-                androidTts?.stop()
+            // Se detiene SIEMPRE (antes solo si ya estaba sonando: lo que estaba por empezar se escapaba
+            // y la IA seguía hablando aunque la interrumpieras)
+            androidTts?.stop()
+            mediaPlayer?.let { mp ->
+                runCatching { if (mp.isPlaying) mp.stop() }
+                mp.release()
             }
-            if (mediaPlayer?.isPlaying == true) {
-                mediaPlayer?.stop()
-                mediaPlayer?.release()
-                mediaPlayer = null
-            }
+            mediaPlayer = null
         } catch (e: Exception) {
             e.printStackTrace()
         }
+        // La parte de ElevenLabs que esperaba terminar de sonar se libera (y su archivo se borra)
+        playbackWaiter?.let { waiter -> playbackWaiter = null; waiter() }
     }
 
     fun setProvider(provider: TtsProvider, voicePath: String? = null) {
@@ -352,6 +429,9 @@ class TtsEngineManager(
     }
 
     fun release() {
+        speakSession.incrementAndGet() // las partes de ElevenLabs que faltaban ya no suenan
+        pendingAndroid = null
+        androidDone.clear()
         try {
             androidTts?.stop()
             androidTts?.shutdown()
@@ -361,5 +441,6 @@ class TtsEngineManager(
         } catch (e: Exception) {
             e.printStackTrace()
         }
+        playbackWaiter?.let { waiter -> playbackWaiter = null; waiter() }
     }
 }
