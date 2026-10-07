@@ -17,7 +17,8 @@ jobs:
         - /usr/local/.ghcup:/host_free/ghcup
 
     env:
-      LLAMA_GIT_TAG: v0.2.0
+      # llama.cpp del motor CPU (con visión mtmd): la versión más nueva (5 oct 2026). Si algún día falla, volver a v0.2.0
+      LLAMA_GIT_TAG: v0.6.0
       #  Version de las librerias QNN de Qualcomm (NPU). Cambiala aqui si hace falta.
       QNN_VERSION: 2.47.0
       # LiteRT-LM 0.17.x esta compilado con QAIRT 2.47  Dispatch de LiteRT v2.2.0 (tambien QAIRT 2.47)
@@ -216,4 +217,5 @@ jobs:
         with:
           name: app-full-debug
           path: ${{ github.workspace }}/repo/app/build/outputs/apk/debug/app-debug.apk
+
 
