@@ -60,7 +60,7 @@
             android:layout_weight="1"
             android:text="â–¶ Reanudar"
             android:textColor="#FFFFFF"
-            android:backgroundTint="#3D5AFE"
+            android:backgroundTint="#3949AB"
             android:enabled="false"
             android:layout_marginEnd="6dp" />
 
