@@ -31,6 +31,10 @@ class ResumableDownloader {
     @Volatile private var lastNotify = 0L
     var listener: Listener? = null
 
+    private companion object {
+        const val SYNC_EVERY = 8L shl 20   // 8 MB
+    }
+
     fun start(url: String, file: File) {
         if (state == State.DOWNLOADING) return
         this.url = url
@@ -86,7 +90,12 @@ class ResumableDownloader {
                 input = connection.inputStream
                 // ⚡ Escritura en bloques grandes (1 MB): antes escribía de a 8 KB y eso
                 //    cargaba al teléfono hasta pegar la barra de notificaciones
-                output = java.io.BufferedOutputStream(FileOutputStream(file, downloaded > 0), 1 shl 20) // reanudar = añadir
+                val fileOut = FileOutputStream(file, downloaded > 0)   // reanudar = añadir
+                output = java.io.BufferedOutputStream(fileOut, 1 shl 20)
+                // 💾 Cada 8 MB se manda al almacenamiento de a poco. Si no, Android junta cientos de MB
+                //    en memoria y los escribe todos de golpe: en ese momento el teléfono entero (y la
+                //    barra de notificaciones) se pegaba por intervalos.
+                var sinceSync = 0L
 
                 val buffer = ByteArray(256 * 1024)
                 var read: Int
@@ -94,6 +103,12 @@ class ResumableDownloader {
                     if (cancelRequested) break
                     output.write(buffer, 0, read)
                     downloaded += read
+                    sinceSync += read
+                    if (sinceSync >= SYNC_EVERY) {
+                        sinceSync = 0
+                        output.flush()
+                        runCatching { fileOut.fd.sync() }
+                    }
                     val percent = if (totalSize > 0) ((downloaded * 100) / totalSize).toInt() else -1
                     // Aviso de avance máximo ~5 veces por segundo (antes en cada bloque)
                     val now = System.currentTimeMillis()
@@ -125,3 +140,4 @@ class ResumableDownloader {
         thread?.start()
     }
 }
+
