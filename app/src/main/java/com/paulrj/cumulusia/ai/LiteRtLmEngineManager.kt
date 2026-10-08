@@ -19,9 +19,8 @@ import java.io.File
 /**
  * Motor de proceso único para modelos .litertlm.
  *
- * Intenta el acelerador solicitado y conserva un fallback seguro:
- * NPU -> GPU -> CPU, o GPU -> CPU. El backend publicado siempre corresponde
- * al motor que realmente logró inicializarse.
+ * 🎛️ Usa SOLO el motor que eligió el usuario (NPU, GPU o CPU): ya no se pasa solo a otro.
+ * Si ese motor no puede con el modelo, la carga falla y se muestra el motivo (lastLoadErrors).
  */
 object LiteRtLmEngineManager {
     private const val TAG = "CumulusLiteRtLM"
@@ -169,12 +168,11 @@ object LiteRtLmEngineManager {
                         }
                     )
                 }
-                add(BackendCandidate("⚡ NPU→🎮 GPU (LiteRT fallback)") { Backend.GPU() })
-                add(BackendCandidate("⚡ NPU→💻 CPU (LiteRT fallback)") { Backend.CPU() })
+                // 🎛️ El motor lo eliges TÚ: ya no se pasa solo de la NPU a la GPU o a la CPU
             }
+            // 🎛️ GPU elegida → solo GPU (ya no se pasa sola a la CPU; si falla, se explica por qué)
             requestedBackend.contains("GPU", ignoreCase = true) -> listOf(
-                BackendCandidate("🎮 GPU (LiteRT-LM)") { Backend.GPU() },
-                BackendCandidate("🎮 GPU→💻 CPU (LiteRT fallback)") { Backend.CPU() }
+                BackendCandidate("🎮 GPU (LiteRT-LM)") { Backend.GPU() }
             )
             else -> listOf(
                 BackendCandidate("💻 CPU (LiteRT-LM)") { Backend.CPU() }
@@ -334,3 +332,4 @@ object LiteRtLmEngineManager {
         activeBackendLabel = "LiteRT-LM sin cargar"
     }
 }
+
