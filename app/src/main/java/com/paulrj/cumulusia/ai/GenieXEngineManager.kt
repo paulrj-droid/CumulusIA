@@ -92,8 +92,10 @@ object GenieXEngineManager {
     }
 
     /**
-     * Al abrir la app: si quedó un paso de GenieX a medias, la app se cerró ahí → esa combinación se bloquea.
-     * [crashed] = hubo un cierre real (el registro del sistema lo muestra). Devuelve el aviso para el usuario, o null.
+     * Al abrir la app: si quedó un paso de GenieX a medias Y Android anotó que la app se cayó por un error,
+     * esa combinación se bloquea. [crashed] = cierre real por error (ApplicationExitInfo de Android).
+     * Si la cerraste tú, si se actualizó o si Android la sacó de memoria en segundo plano, NO se bloquea nada.
+     * Devuelve el aviso para el usuario, o null.
      */
     fun checkPreviousCrash(context: Context, crashed: Boolean): String? {
         val g = context.getSharedPreferences("geniex_guard", Context.MODE_PRIVATE)
@@ -104,10 +106,11 @@ object GenieXEngineManager {
         val attempt = g.getString("attempt", null) ?: return null
         val phase = g.getString("phase", "load")
         markAttempt(null)
-        // Si se cerró mientras respondía pero no hay registro de cierre, la cerraste tú: no es culpa del modelo
-        if (!crashed && phase != "load") return null
+        // Antes, si la app se cerraba MIENTRAS CARGABA el modelo, se culpaba al modelo aunque la hubieras
+        // cerrado tú. Ahora solo cuenta un cierre por error de verdad (lo anota Android).
+        if (!crashed) return null
         g.edit().putStringSet("blocked", (g.getStringSet("blocked", null) ?: emptySet()) + attempt).commit()
-        Log.w(TAG, "Bloqueado por cerrar la app: $attempt")
+        Log.w(TAG, "Bloqueado por cerrar la app ($phase): $attempt")
         return describe(attempt)
     }
 
@@ -498,4 +501,5 @@ object GenieXEngineManager {
         label = "GenieX sin cargar"
     }
 }
+
 
