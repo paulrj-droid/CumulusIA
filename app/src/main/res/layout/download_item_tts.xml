@@ -1,76 +1,143 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 📥 Tarjeta de una descarga de voces TTS: fondo gris oscuro (un poco más claro que los botones),
+     arriba el tipo y el nombre, barra roja con el % a la derecha y botones píldora.
+     Pausar y Reanudar: gris oscuro. Eliminar: rojo. (El código le pone las esquinas curvas.) -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/layout_download_panel_tts"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginBottom="16dp"
+    android:layout_marginBottom="14dp"
     android:orientation="vertical"
     android:background="@drawable/bg_card_dark"
-    android:padding="14dp">
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingTop="16dp"
+    android:paddingBottom="8dp">
 
+    <!-- Tipo de descarga: «1. Voces TTS» -->
+    <TextView
+        android:id="@+id/tv_download_kind_tts"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Voces TTS"
+        android:textColor="#FFFFFF"
+        android:textSize="17sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tv_download_label_tts"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="Nombre de la voz"
+        android:textColor="#8E8E93"
+        android:textSize="12sp" />
+
+    <!-- Nombre del archivo que se descarga -->
     <TextView
         android:id="@+id/tv_download_title_tts"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
         android:text="Descargando..."
         android:textColor="#FFFFFF"
-        android:textSize="16sp"
-        android:textStyle="bold" />
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:maxLines="2"
+        android:ellipsize="end" />
 
+    <!-- Barra de progreso roja y el porcentaje en la esquina derecha -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ProgressBar
+            android:id="@+id/progress_download_tts"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="0dp"
+            android:layout_height="8dp"
+            android:layout_weight="1"
+            android:minHeight="8dp"
+            android:maxHeight="8dp"
+            android:max="100"
+            android:progress="0" />
+
+        <TextView
+            android:id="@+id/tv_download_percent_tts"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:minWidth="44dp"
+            android:gravity="end"
+            android:text="0%"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Estado: MB descargados, en pausa, completada o error -->
     <TextView
         android:id="@+id/tv_download_status_tts"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
         android:text="Preparando descarga..."
         android:textColor="#808080"
-        android:textSize="13sp"
-        android:layout_marginTop="6dp" />
-
-    <ProgressBar
-        android:id="@+id/progress_download_tts"
-        style="?android:attr/progressBarStyleHorizontal"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:max="100"
-        android:progress="0"
-        android:progressTint="#3D5AFE"
-        android:progressBackgroundTint="#171719"
-        android:layout_marginTop="10dp" />
+        android:textSize="12sp" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginTop="10dp">
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal">
 
         <Button
             android:id="@+id/btn_pause_tts"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="â¸ Pausar"
+            android:layout_marginEnd="8dp"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:maxLines="2"
+            android:letterSpacing="0.02"
+            android:text="Pausar"
+            android:textSize="13sp"
             android:textColor="#FFFFFF"
-            android:backgroundTint="#2C2C2E"
-            android:layout_marginEnd="6dp" />
+            android:backgroundTint="#1F1F1F" />
 
         <Button
             android:id="@+id/btn_resume_tts"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="â–¶ Reanudar"
+            android:layout_marginEnd="8dp"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:maxLines="2"
+            android:letterSpacing="0.02"
+            android:text="Reanudar"
+            android:textSize="13sp"
             android:textColor="#FFFFFF"
-            android:backgroundTint="#3949AB"
-            android:enabled="false"
-            android:layout_marginEnd="6dp" />
+            android:backgroundTint="#1F1F1F"
+            android:enabled="false" />
 
         <Button
             android:id="@+id/btn_delete_tts"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="ðŸ—‘ Eliminar"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:maxLines="2"
+            android:letterSpacing="0.02"
+            android:text="Eliminar"
+            android:textSize="13sp"
             android:textColor="#FFFFFF"
             android:backgroundTint="#C62828" />
     </LinearLayout>
 </LinearLayout>
+
