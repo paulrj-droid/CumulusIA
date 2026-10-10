@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">Cumulus IA</string>
+    <!-- Nombre que sale debajo del ícono en el teléfono -->
+    <string name="app_name">Cumulus</string>
 </resources>
