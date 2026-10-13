@@ -5,9 +5,16 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+# Si subes varios archivos seguidos, solo se compila el último cambio (las compilaciones viejas se cancelan solas)
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Si algo se traba, GitHub corta el build a los 60 min (antes podia quedar 6 horas colgado)
+    timeout-minutes: 60
     container:
       image: ghcr.io/snapdragon-toolchain/arm64-android:v0.7
       volumes:
@@ -68,9 +75,15 @@ jobs:
       #    cerrar la app en la GPU Adreno 830 (llama.cpp issue #28635)
       - name: Instalar glslc de NDK r29 (Vulkan compatible con Adreno 830)
         shell: bash
+        # Normalmente tarda 1-2 min. Si la descarga se cuelga, se corta a los 15 min.
+        timeout-minutes: 15
         run: |
           set -eo pipefail
-          curl -sL -o /tmp/ndk29.zip https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+          # Descarga con limite: si se queda trabada (menos de 100 KB/s por 60 s) se corta y reintenta sola (hasta 5 veces)
+          curl -fsSL --retry 5 --retry-delay 5 --connect-timeout 30 --max-time 600 \
+               --speed-limit 100000 --speed-time 60 \
+               -o /tmp/ndk29.zip https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+          ls -lh /tmp/ndk29.zip
           mkdir -p /opt/ndk29
           # Se extrae con sus carpetas originales: glslc encuentra solo sus librerias
           unzip -q -o /tmp/ndk29.zip "android-ndk-r29/shader-tools/*" -d /opt/ndk29
@@ -155,6 +168,128 @@ jobs:
             echo "=== $G (lineas relevantes)"
             grep -n -E 'geniex|qnn-|minSdk|compileSdk|pickFirst' "$G"
           done
+          exit 0
+
+      # 🪄 IA DE IMÁGENES (crear una versión nueva de una foto): stable-diffusion.cpp en su propia
+      #    librería (libcumulus_sd.so), aparte del motor del chat. Si algo falla aquí, la app se compila
+      #    igual: solo esa función avisa en el chat que no vino incluida (lo demás sigue funcionando).
+      - name: Compilar IA de imágenes (stable-diffusion.cpp)
+        working-directory: ${{ github.workspace }}/repo
+        shell: bash
+        timeout-minutes: 25
+        env:
+          SD_GIT_TAG: master-959-d637cfb
+        run: |
+          set +e
+          # NDK de Android que trae el contenedor de Snapdragon
+          NDK="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-${ANDROID_NDK:-}}}"
+          if [ -z "$NDK" ] || [ ! -f "$NDK/build/cmake/android.toolchain.cmake" ]; then
+            NDK=""
+            for d in /opt/android-ndk* /opt/android-sdk/ndk/* "$ANDROID_HOME"/ndk/*; do
+              [ -f "$d/build/cmake/android.toolchain.cmake" ] && NDK="$d"
+            done
+          fi
+          echo "NDK: ${NDK:-NO ENCONTRADO}"
+          if [ -z "$NDK" ]; then echo "AVISO: sin NDK, la IA de imágenes no se incluye"; exit 0; fi
+          if ! command -v cmake >/dev/null; then
+            apt-get install -y --no-install-recommends cmake ninja-build >/dev/null 2>&1 || true
+          fi
+          cmake --version | head -n 1
+          rm -rf /tmp/sdcpp /tmp/sdbuild
+          if ! git clone -q --depth 1 --branch "$SD_GIT_TAG" https://github.com/leejet/stable-diffusion.cpp /tmp/sdcpp; then
+            echo "AVISO: no se pudo bajar stable-diffusion.cpp $SD_GIT_TAG"; exit 0
+          fi
+          if ! git -C /tmp/sdcpp submodule update -q --init --depth 1 ggml; then
+            echo "AVISO: no se pudo bajar ggml de stable-diffusion.cpp"; exit 0
+          fi
+          if [ ! -f app/src/main/sdcpp/sd-jni.cpp ]; then
+            echo "AVISO: falta app/src/main/sdcpp/sd-jni.cpp"; exit 0
+          fi
+          # El CMakeLists de esta librería se escribe aquí (no va en el repo: así no se confunde con el del chat)
+          mkdir -p /tmp/sdwrap
+          cat > /tmp/sdwrap/CMakeLists.txt <<'CMAKE_EOF'
+            # ============================================================================
+            # 🎨 IA DE IMÁGENES (libcumulus_sd.so): stable-diffusion.cpp + su propio ggml
+            #    Se compila APARTE del motor del chat (lo hace el workflow de GitHub y copia el
+            #    .so a jniLibs). Todo queda escondido dentro de la librería: solo se ven las
+            #    funciones JNI, así su ggml no se mezcla con el de llama.cpp ni con el de GenieX.
+            #
+            #    El workflow escribe este archivo en /tmp (así no se confunde con el CMakeLists.txt del chat)
+            #    y le pasa: -DSDCPP_DIR=/tmp/sdcpp -DCUMULUS_SD_JNI=app/src/main/sdcpp/sd-jni.cpp
+            # ============================================================================
+            cmake_minimum_required(VERSION 3.18)
+            project(cumulus_sd C CXX)
+
+            set(CMAKE_CXX_STANDARD 17)
+            set(CMAKE_CXX_STANDARD_REQUIRED ON)
+            set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+            set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+            if (NOT CMAKE_BUILD_TYPE)
+                set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+            endif()
+            set(CMAKE_C_FLAGS_RELEASE   "-O3 -DNDEBUG")
+            set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+
+            if (NOT SDCPP_DIR OR NOT EXISTS "${SDCPP_DIR}/CMakeLists.txt")
+                message(FATAL_ERROR "Falta SDCPP_DIR (carpeta de stable-diffusion.cpp con su submódulo ggml)")
+            endif()
+
+            # stable-diffusion.cpp: solo la librería (sin ejemplos, sin WebP/WebM, sin OpenMP)
+            set(SD_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+            set(SD_WEBP OFF CACHE BOOL "" FORCE)
+            set(SD_WEBM OFF CACHE BOOL "" FORCE)
+            set(SD_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+            set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+            set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+            set(GGML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+            set(GGML_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+            if (ANDROID)
+                # Instrucciones rápidas del Snapdragon 8 Elite (S25): dotprod + i8mm + fp16
+                set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+i8mm+fp16" CACHE STRING "" FORCE)
+            endif()
+
+            add_subdirectory("${SDCPP_DIR}" "${CMAKE_BINARY_DIR}/stable-diffusion" EXCLUDE_FROM_ALL)
+
+            if (NOT CUMULUS_SD_JNI)
+                set(CUMULUS_SD_JNI "${CMAKE_CURRENT_SOURCE_DIR}/sd-jni.cpp")
+            endif()
+            add_library(cumulus_sd SHARED "${CUMULUS_SD_JNI}")
+            target_link_libraries(cumulus_sd PRIVATE stable-diffusion)
+            target_include_directories(cumulus_sd PRIVATE "${SDCPP_DIR}/include" "${SDCPP_DIR}/ggml/include")
+
+            if (ANDROID)
+                find_library(log-lib log)
+                target_link_libraries(cumulus_sd PRIVATE ${log-lib})
+                # Solo se exportan las funciones JNI · páginas de 16 KB (requisito de Google Play)
+                target_link_options(cumulus_sd PRIVATE
+                    "-Wl,--exclude-libs,ALL"
+                    "-Wl,--gc-sections"
+                    "-Wl,-z,max-page-size=16384")
+            else()
+                # Prueba en PC: JNI del JDK
+                find_package(JNI REQUIRED)
+                target_include_directories(cumulus_sd PRIVATE ${JNI_INCLUDE_DIRS})
+                target_link_options(cumulus_sd PRIVATE "-Wl,--exclude-libs,ALL")
+            endif()
+          CMAKE_EOF
+          GEN="Unix Makefiles"; command -v ninja >/dev/null && GEN=Ninja
+          cmake -S /tmp/sdwrap -B /tmp/sdbuild -G "$GEN" \
+            -DSDCPP_DIR=/tmp/sdcpp -DCUMULUS_SD_JNI="$PWD/app/src/main/sdcpp/sd-jni.cpp" \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-34 -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -n 25
+          cmake --build /tmp/sdbuild --target cumulus_sd -j"$(nproc)" 2>&1 | grep -E "error|Error|warning: unused|Linking|cumulus_sd" | tail -n 40
+          if [ -f /tmp/sdbuild/libcumulus_sd.so ]; then
+            STRIP=$(ls "$NDK"/toolchains/llvm/prebuilt/*/bin/llvm-strip 2>/dev/null | head -n 1)
+            [ -n "$STRIP" ] && "$STRIP" --strip-unneeded /tmp/sdbuild/libcumulus_sd.so
+            mkdir -p app/src/main/jniLibs/arm64-v8a
+            cp -f /tmp/sdbuild/libcumulus_sd.so app/src/main/jniLibs/arm64-v8a/
+            ls -la app/src/main/jniLibs/arm64-v8a/libcumulus_sd.so
+            echo "OK: IA de imágenes (stable-diffusion.cpp $SD_GIT_TAG) incluida en el APK"
+          else
+            echo "AVISO: no se compiló la IA de imágenes (la app sigue funcionando; solo «versión nueva» avisará)"
+          fi
           exit 0
 
       - name: Prepare Android SDK licenses
