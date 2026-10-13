@@ -24,7 +24,13 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
+        android:largeHeap="true"
         android:theme="@style/Theme.CumulusIA">
+
+        <!-- 🧠 IA de Google para separar personas y objetos del fondo (editor de imágenes) -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="subject_segment" />
 
         <!-- Bibliotecas opcionales usadas por LiteRT-LM para aceleración. -->
         <uses-native-library
