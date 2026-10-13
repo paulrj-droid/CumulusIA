@@ -12,6 +12,7 @@ import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.SamplerConfig
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -237,7 +238,7 @@ object LiteRtLmEngineManager {
         val currentEngine = engine
             ?: throw IllegalStateException("LiteRT-LM no tiene un modelo cargado")
         try { conversation?.close() } catch (_: Throwable) {}
-        conversation = currentEngine.createConversation()
+        conversation = newConversation(currentEngine, ConversationConfig())
         val t0 = System.currentTimeMillis()
         val response = conversation!!.sendMessage(prompt)
         val text = response.contents.contents
@@ -247,7 +248,28 @@ object LiteRtLmEngineManager {
         lastMs = System.currentTimeMillis() - t0
         lastPromptChars = prompt.length
         lastReplyChars = text.length
-        text
+        SamplingSettings.cutAtStops(text)
+    }
+
+    /**
+     * 🎛️ Conversación con TUS ajustes de ⚙️ (temperatura, Top K y Top P). LiteRT-LM no tiene Min-P
+     * ni deja cambiar la plantilla: siempre usa la que trae el modelo .litertlm.
+     * Si este modelo no acepta ajustes propios, se crea con los suyos (y se anota en el registro).
+     */
+    private fun newConversation(engine: Engine, base: ConversationConfig): Conversation {
+        val sampler = runCatching {
+            SamplerConfig(
+                topK = SamplingSettings.topK.let { if (it <= 0) 100 else it },
+                topP = SamplingSettings.topP.toDouble().coerceIn(0.0, 1.0),
+                temperature = SamplingSettings.temperature.toDouble().coerceAtLeast(0.0)
+            )
+        }.getOrNull() ?: return engine.createConversation(base)
+        return try {
+            engine.createConversation(base.copy(samplerConfig = sampler))
+        } catch (t: Throwable) {
+            Log.w(TAG, "Este modelo no aceptó los ajustes de muestreo: ${t.message}")
+            engine.createConversation(base)
+        }
     }
 
     /**
@@ -273,7 +295,7 @@ object LiteRtLmEngineManager {
             ?: throw IllegalStateException("No hay mensaje del usuario")
         val history = merged.map { (role, text) -> if (role == "assistant") Message.model(text) else Message.user(text) }
         try { conversation?.close() } catch (_: Throwable) {}
-        conversation = currentEngine.createConversation(
+        conversation = newConversation(currentEngine,
             if (system.isNotBlank()) ConversationConfig(systemInstruction = Contents.of(system), initialMessages = history)
             else ConversationConfig(initialMessages = history)
         )
@@ -286,7 +308,7 @@ object LiteRtLmEngineManager {
         lastMs = System.currentTimeMillis() - t0
         lastPromptChars = system.length + contents.sumOf { it.length }
         lastReplyChars = text.length
-        text
+        SamplingSettings.cutAtStops(text)
     }
 
     suspend fun generate(prompt: String): String = engineMutex.withLock {
