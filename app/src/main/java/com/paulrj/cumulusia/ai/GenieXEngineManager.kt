@@ -367,32 +367,47 @@ object GenieXEngineManager {
         val msgs = ArrayList<ChatMessage>()
         msgs.add(ChatMessage("system", system))
         for (i in roles.indices) msgs.add(ChatMessage(if (roles[i] == "assistant") "assistant" else "user", contents[i]))
-        val templated = w.applyChatTemplate(msgs.toTypedArray(), null, false).getOrThrow()
+        // 💬 Plantilla de chat: la del modelo, o la que elegiste en ⚙️ → Configuración del modelo
+        val prompt = SamplingSettings.formatPrompt(system, roles, contents)
+            ?: w.applyChatTemplate(msgs.toTypedArray(), null, false).getOrThrow().formattedText
 
-        val stops = arrayOf("</buscar>", "</abrir>")
+        val stops = chatStops()
         val config = GenerationConfig(
             maxTokens = maxTokens.coerceIn(64, 4096),
             stopWords = stops,
             stopCount = stops.size,
-            samplerConfig = SamplerConfig(temperature = temperature, topK = 40, topP = 0.95f, minP = 0.05f)
+            samplerConfig = userSampler(temperature)
         )
         // ⚡ Ya NO se limpia la memoria en cada mensaje: GenieX reutiliza lo que ya leyó de la conversación
         //    («prefix reuse») y solo lee lo nuevo. Antes la GPU releía TODO el chat en cada mensaje (lo más lento).
         markAttempt(loadedKey, "gen")
         try {
-            var text = runLlmOnce(w, templated.formattedText, config)
+            var text = runLlmOnce(w, prompt, config)
             // 🧹 Si responde igual que su respuesta anterior (memoria vieja), se limpia y se responde de nuevo
             val prev = contents.indices.lastOrNull { roles[it] == "assistant" }?.let { contents[it].trim() }
             if (prev != null && prev.length > 20 && text.trim().take(160) == prev.take(160)) {
                 Log.w(TAG, "Repitió la respuesta anterior → limpio memoria y respondo de nuevo")
                 runCatching { w.reset() }
-                text = runLlmOnce(w, templated.formattedText, config)
+                text = runLlmOnce(w, prompt, config)
             }
             text
         } finally {
             markAttempt(null)
         }
     }
+
+    /** 🎛️ Tus ajustes (Top K, Top P, Min-P y temperatura de ⚙️). */
+    private fun userSampler(temperature: Float) = SamplerConfig(
+        temperature = temperature,
+        topK = SamplingSettings.topK,
+        topP = SamplingSettings.topP,
+        minP = SamplingSettings.minP
+    )
+
+    /** 🛑 Donde se deja de escribir: los de la app + tus stop tokens + el fin de turno de la plantilla elegida. */
+    private fun chatStops(): Array<String> =
+        (listOf("</buscar>", "</abrir>") + SamplingSettings.stops + SamplingSettings.templateStops())
+            .filter { it.isNotEmpty() }.distinct().take(24).toTypedArray()
 
     private suspend fun runLlmOnce(w: LlmWrapper, prompt: String, config: GenerationConfig): String {
         val sb = StringBuilder()
@@ -411,7 +426,7 @@ object GenieXEngineManager {
             }
         }
         if (sb.isEmpty() && err != null) throw err!!
-        var text = sb.toString()
+        var text = SamplingSettings.cutAtStops(sb.toString(), SamplingSettings.stops + SamplingSettings.templateStops())
         // Si se detuvo en la etiqueta de búsqueda y el motor la omitió, se completa
         if (text.contains("<buscar>") && !text.contains("</buscar>")) text += "</buscar>"
         if (text.contains("<abrir>") && !text.contains("</abrir>")) text += "</abrir>"
@@ -473,8 +488,13 @@ object GenieXEngineManager {
         //    anterior de la cámara. Con solo texto, la NPU reutiliza lo ya leído (más rápido).
         if (images || loadedUnit == "gpu") runCatching { v.reset() }
         val arr = vm.toTypedArray()
-        val templated = v.applyChatTemplate(arr, null, false).getOrThrow()
-        val stops = arrayOf("</buscar>", "</abrir>")
+        // 💬 Solo texto: se puede usar la plantilla que elegiste en ⚙️ · con fotos: siempre la del modelo
+        val custom = if (images) null else SamplingSettings.formatPrompt(
+            vm.firstOrNull { it.role == "system" }?.contents?.filter { it.type == "text" }?.joinToString("\n") { it.text.orEmpty() }.orEmpty(),
+            vm.filter { it.role != "system" }.map { it.role.orEmpty() },
+            vm.filter { it.role != "system" }.map { m -> m.contents.filter { it.type == "text" }.joinToString("\n") { it.text.orEmpty() } })
+        val promptText = custom ?: v.applyChatTemplate(arr, null, false).getOrThrow().formattedText
+        val stops = if (images) (listOf("</buscar>", "</abrir>") + SamplingSettings.stops).distinct().toTypedArray() else chatStops()
         val base = GenerationConfig(
             maxTokens = maxTokens.coerceIn(64, 4096),
             stopWords = stops,
@@ -483,12 +503,12 @@ object GenieXEngineManager {
             //    suave de repetición 1.05). Así no se pone a repetir la descripción ni escribe letras raras.
             samplerConfig = if (images)
                 SamplerConfig(temperature = minOf(temperature, 0.2f), topK = 40, topP = 0.95f, minP = 0.15f, repetitionPenalty = 1.05f)
-            else SamplerConfig(temperature = temperature, topK = 40, topP = 0.95f, minP = 0.05f)
+            else userSampler(temperature)
         )
         val config = v.injectMediaPathsToConfig(arr, base)
         val sb = StringBuilder()
         var err: Throwable? = null
-        v.generateStreamFlow(templated.formattedText, config).collect { r ->
+        v.generateStreamFlow(promptText, config).collect { r ->
             when (r) {
                 is LlmStreamResult.Token -> { sb.append(r.text); emitPartial(sb) }
                 is LlmStreamResult.Completed -> {
@@ -502,7 +522,7 @@ object GenieXEngineManager {
             }
         }
         if (sb.isEmpty() && err != null) throw err!!
-        var text = sb.toString()
+        var text = SamplingSettings.cutAtStops(sb.toString(), SamplingSettings.stops + (if (images) emptyList() else SamplingSettings.templateStops()))
         if (text.contains("<buscar>") && !text.contains("</buscar>")) text += "</buscar>"
         if (text.contains("<abrir>") && !text.contains("</abrir>")) text += "</abrir>"
         return text
