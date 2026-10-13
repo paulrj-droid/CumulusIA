@@ -243,6 +243,38 @@ else()
     message(STATUS "Visión (mtmd) no disponible en este tag de llama.cpp")
 endif()
 
+# ============================================================================
+# 💬 PLANTILLA DE CHAT DE CADA GGUF (Jinja): el motor Jinja de llama.cpp ejecuta la plantilla
+#    oficial que trae cada modelo (tokenizer.chat_template), así cualquier familia usa sus
+#    propias etiquetas. Se compila solo el motor Jinja (no todo llama-common).
+# ============================================================================
+set(CUMULUS_JINJA_DIR "${llama_SOURCE_DIR}/common")
+if (EXISTS "${CUMULUS_JINJA_DIR}/jinja/runtime.h" AND EXISTS "${CUMULUS_JINJA_DIR}/jinja/caps.h"
+        AND EXISTS "${CUMULUS_JINJA_DIR}/unicode.cpp" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cumulus-jinja.cpp")
+    file(GLOB CUMULUS_JINJA_SOURCES "${CUMULUS_JINJA_DIR}/jinja/*.cpp")
+    set(CUMULUS_JINJA_EXTRA "${CUMULUS_JINJA_DIR}/unicode.cpp")
+    if (EXISTS "${CUMULUS_JINJA_DIR}/json.h" AND EXISTS "${CUMULUS_JINJA_DIR}/json.cpp")
+        list(APPEND CUMULUS_JINJA_EXTRA "${CUMULUS_JINJA_DIR}/json.cpp")
+    endif()
+    add_library(cumulus_jinja STATIC ${CUMULUS_JINJA_SOURCES} ${CUMULUS_JINJA_EXTRA} cumulus-jinja.cpp)
+    set_target_properties(cumulus_jinja PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_include_directories(cumulus_jinja PRIVATE "${CUMULUS_JINJA_DIR}" "${llama_SOURCE_DIR}/vendor")
+    target_compile_features(cumulus_jinja PRIVATE cxx_std_17)
+    target_compile_options(cumulus_jinja PRIVATE -Wno-cast-qual -Wno-missing-prototypes)
+    if (EXISTS "${CUMULUS_JINJA_DIR}/json.h")
+        target_compile_definitions(cumulus_jinja PRIVATE CUMULUS_JINJA_COMMON_JSON)
+    endif()
+    if (TARGET vendor::nlohmann)
+        target_link_libraries(cumulus_jinja PRIVATE vendor::nlohmann)
+    endif()
+    target_link_libraries(cumulus_jinja PRIVATE ggml)
+    target_link_libraries(cumulus_native cumulus_jinja)
+    target_compile_definitions(cumulus_native PRIVATE CUMULUS_HAS_JINJA)
+    message(STATUS "Plantillas Jinja de los GGUF ACTIVADAS")
+else()
+    message(STATUS "Plantillas Jinja no disponibles en este tag de llama.cpp (se usa la detección de llama.cpp)")
+endif()
+
 if (CUMULUS_HAS_VULKAN)
     target_compile_definitions(cumulus_native PRIVATE CUMULUS_HAS_VULKAN)
 endif()
@@ -279,4 +311,5 @@ target_link_libraries(
 # El motor ggml-hexagon queda enlazado dentro de libllama/libggml (no hace falta enlazarlo aparte).
 # Las librerías que corren DENTRO de la NPU (libggml-htp-v79.so, etc.) las copia
 # el workflow de GitHub a jniLibs para que vayan en el APK.
+
 
