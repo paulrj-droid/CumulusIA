@@ -53,11 +53,29 @@ class DownloadService : Service() {
     /**
      * ⏱️ Android 15 y 16: un servicio de descargas puede estar en primer plano hasta 6 horas al día.
      * Si se cumple el plazo, Android avisa aquí y hay que cerrarlo en segundos (si no, cierra la app).
-     * La descarga sigue mientras la app esté abierta y, si se corta, se retoma desde donde quedó.
+     * La descarga NO se pierde: sigue mientras Android deje viva la app y, apenas abres Cumulus,
+     * el servicio vuelve a arrancar y la descarga sigue sola desde el último byte guardado.
      */
     override fun onTimeout(startId: Int, fgsType: Int) {
+        blockedUntilForeground = true
+        running = false
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         stopSelf()
+        // Aviso: abrir la app la deja seguir en segundo plano otras 6 horas
+        runCatching {
+            val app = applicationContext
+            app.getSystemService(NotificationManager::class.java).notify(PAUSE_NOTIF_ID,
+                NotificationCompat.Builder(app, CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.stat_sys_download)
+                    .setContentTitle("Descarga larga: abre Cumulus para que siga")
+                    .setContentText("Android limita a 6 horas las descargas en segundo plano. Al abrir la app, sigue sola desde donde quedó.")
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(
+                        "Android limita a 6 horas las descargas en segundo plano. Toca aquí para abrir Cumulus: " +
+                            "la descarga sigue sola desde donde quedó, sin empezar de cero."))
+                    .setAutoCancel(true)
+                    .setContentIntent(openAppIntent(app))
+                    .build())
+        }
     }
 
     override fun onDestroy() {
@@ -69,6 +87,10 @@ class DownloadService : Service() {
         private const val CHANNEL_ID = "cumulus_downloads"
         private const val NOTIF_ID = 4711
         private const val DONE_NOTIF_ID = 4712
+        private const val PAUSE_NOTIF_ID = 4714
+
+        /** ⏱️ Android ya usó las 6 horas en segundo plano: no se puede volver a arrancar hasta que abras la app. */
+        @Volatile private var blockedUntilForeground = false
 
         /** id de la descarga → (título, porcentaje) de las que están bajando ahora. */
         private val progress = ConcurrentHashMap<String, Pair<String, Int>>()
@@ -132,7 +154,7 @@ class DownloadService : Service() {
         fun onProgress(ctx: Context, id: String, title: String, percent: Int) {
             val app = ctx.applicationContext
             val prev = progress.put(id, title to percent)
-            if (!running) {
+            if (!running && !blockedUntilForeground) {
                 running = true
                 createChannel(app)
                 runCatching { androidx.core.content.ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java)) }
@@ -149,6 +171,23 @@ class DownloadService : Service() {
             lastShownPct = percent
             runCatching {
                 app.getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(app))
+            }
+        }
+
+        /**
+         * 📱 Llamar cuando abres o vuelves a la app: Android reinicia el plazo de 6 horas, así que si hay
+         * descargas bajando, el servicio vuelve a arrancar y siguen en segundo plano.
+         */
+        fun onAppForeground(ctx: Context) {
+            val app = ctx.applicationContext
+            val wasBlocked = blockedUntilForeground
+            blockedUntilForeground = false
+            if (wasBlocked) runCatching { app.getSystemService(NotificationManager::class.java).cancel(PAUSE_NOTIF_ID) }
+            if (progress.isNotEmpty() && !running) {
+                running = true
+                createChannel(app)
+                runCatching { androidx.core.content.ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java)) }
+                    .onFailure { running = false }
             }
         }
 
@@ -187,3 +226,4 @@ object ActiveDownloads {
     /** Archivos que todavía se están descargando (incompletos): no se deben cargar como modelo. */
     val paths: MutableSet<String> = ConcurrentHashMap.newKeySet()
 }
+
