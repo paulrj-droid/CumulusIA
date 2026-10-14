@@ -64,7 +64,7 @@ object GeneralFinder {
         Kind.TUTORIAL -> "Respuesta directa en 1 línea y luego:\n🧰 Qué necesitas\n🪜 Pasos numerados, cortos y claros\n⚠️ Precauciones o errores comunes\n" +
             "Los videos tutoriales de YouTube los agrega la app debajo."
         Kind.KNOWLEDGE -> "Respuesta directa en 1-2 líneas y luego:\n📅 Fechas y hechos clave en orden\n• Datos importantes o curiosos en viñetas\n" +
-            "El resumen de Wikipedia con su foto lo agrega la app debajo."
+            "El resumen de Wikipedia con su foto lo agrega la app (la foto se ve arriba de tu respuesta)."
         Kind.OTHER -> "Respuesta directa en 1-2 líneas y luego los detalles en viñetas (fechas, cifras, pasos o requisitos, según el tema)."
     }
 
@@ -120,7 +120,7 @@ object GeneralFinder {
     }
 
     fun wikiBlock(w: Wiki, photoNumber: Int?): String =
-        "📖 Wikipedia — ${w.title}" + (photoNumber?.let { " · 🖼️ Foto $it (abajo)" } ?: "") + ":\n" + w.extract +
+        "📖 Wikipedia — ${w.title}" + (photoNumber?.let { " · 🖼️ Foto $it (arriba)" } ?: "") + ":\n" + w.extract +
             (if (w.url.isNotBlank()) "\n🔗 ${w.url}" else "")
 
     // =====================================================================
