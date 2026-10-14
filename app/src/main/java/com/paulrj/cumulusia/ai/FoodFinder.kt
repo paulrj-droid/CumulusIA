@@ -247,7 +247,7 @@ object FoodFinder {
             sb.append("\n").append(i + 1).append(". ").append(p.name)
             val kind = listOf(p.cuisine.ifBlank { p.kind }, distanceLabel(p.distanceM)).filter { it.isNotBlank() }
             sb.append(" — ").append(kind.joinToString(" · ")).append('\n')
-            sb.append("   📍 ").append(p.address.ifBlank { "Dirección: toca el mapa de abajo" }).append('\n')
+            sb.append("   📍 ").append(p.address.ifBlank { "Dirección: toca el mapa" }).append('\n')
             if (p.phone.isNotBlank()) sb.append("   📞 ").append(p.phone).append('\n')
             if (p.hours.isNotBlank()) sb.append("   🕒 ").append(p.hours).append('\n')
             when (p.delivery) {
@@ -257,7 +257,7 @@ object FoodFinder {
             }
             if (p.website.isNotBlank()) sb.append("   🌐 ").append(p.website).append('\n')
             sb.append("   🗺️ ").append(p.mapsUrl).append('\n')
-            photoNumbers.getOrNull(i)?.let { sb.append("   🖼️ Foto ").append(it).append(" (abajo): su carta o lo que vende\n") }
+            photoNumbers.getOrNull(i)?.let { sb.append("   🖼️ Foto ").append(it).append(" (arriba): su carta o lo que vende\n") }
         }
         sb.append("\n🔎 Ver más locales en el mapa: ").append(moreUrl)
         if (places.none { it.phone.isNotBlank() })
@@ -270,4 +270,3 @@ object FoodFinder {
         "https://www.google.com/maps/search/" + URLEncoder.encode(
             (if (req.what == "comida") "restaurantes" else req.what) + (if (req.delivery) " delivery" else "") + " cerca de " + areaLabel, "UTF-8")
 }
-
