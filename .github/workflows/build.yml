@@ -14,7 +14,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     # Si algo se traba, GitHub corta el build a los 60 min (antes podia quedar 6 horas colgado)
-    timeout-minutes: 60
+    timeout-minutes: 120
     container:
       image: ghcr.io/snapdragon-toolchain/arm64-android:v0.7
       volumes:
@@ -45,7 +45,7 @@ jobs:
       - name: Install JDK 17, node y herramientas
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends nodejs ca-certificates git curl unzip g++ python3
+          apt-get install -y --no-install-recommends nodejs ca-certificates git curl unzip g++ python3 openssl
           python3 --version || echo "python3 no disponible"
           if ! apt-get install -y --no-install-recommends openjdk-17-jdk-headless; then
             echo "openjdk-17 no disponible via apt, instalando Temurin 17 manualmente..."
@@ -348,10 +348,51 @@ jobs:
           fi
           exit $CODE
 
+      # AAB FIRMADO PARA GOOGLE PLAY: solo si ya creaste la llave (workflow "Crear llave de firma")
+      # y guardaste los secretos SIGNING_KEY y KEYSTORE_PASSWORD. Si no, este paso se salta solo.
+      - name: Crear AAB firmado para Google Play
+        working-directory: ${{ github.workspace }}/repo
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=1g"
+        run: |
+          set +e
+          if [ -z "$SIGNING_KEY" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "Sin llave de firma todavia: no se arma el AAB (el APK de prueba si)."
+            exit 0
+          fi
+          printf '%s' "$SIGNING_KEY" | tr -d ' \r\n' | openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -a -A \
+            -pass env:KEYSTORE_PASSWORD -out /tmp/cumulus.jks
+          if [ ! -s /tmp/cumulus.jks ]; then
+            echo "ERROR: no se pudo abrir la llave. Revisa que KEYSTORE_PASSWORD sea la misma con la que la creaste."
+            exit 1
+          fi
+          export CUMULUS_KEYSTORE=/tmp/cumulus.jks
+          export CUMULUS_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
+          export CUMULUS_VERSION_CODE="${{ github.run_number }}"
+          gradle bundleRelease --no-daemon --console=plain | tee /tmp/bundle.log
+          CODE=${PIPESTATUS[0]}
+          rm -f /tmp/cumulus.jks
+          if [ "$CODE" -ne 0 ]; then
+            grep -n -E 'error:|Error:|FAILED|What went wrong' /tmp/bundle.log | head -n 40
+            exit $CODE
+          fi
+          ls -la app/build/outputs/bundle/release/
+          echo "AAB listo. Version (versionCode): $CUMULUS_VERSION_CODE"
+
+      - name: Upload AAB (Google Play)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab-google-play
+          path: ${{ github.workspace }}/repo/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: ignore
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-full-debug
           path: ${{ github.workspace }}/repo/app/build/outputs/apk/debug/app-debug.apk
+
 
 
