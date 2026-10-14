@@ -348,7 +348,17 @@ object JokeBank {
         return text.substring(0, cut).trimEnd() + " " + giggle + " " + text.substring(cut)
     }
 
-    fun format(jokes: List<Joke>, random: java.util.Random = java.util.Random()): String {
+    /** Palabras de la respuesta para saber si adivinó: «El aguacate (la palta)» → [aguacate, palta]. */
+    fun answerKeys(joke: Joke): List<String> = norm(joke.answer).split(Regex("[^a-z]+"))
+        .filter { it.length >= 3 && it !in setOf("los", "las", "del", "una", "uno", "que") }
+
+    /** Minúsculas y sin tildes (para comparar lo que dijo por voz). */
+    fun norm(s: String): String = java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
+
+    /**
+     * @param hideAnswers por voz: la adivinanza va SIN la respuesta (la dice cuando el usuario responde o se rinde).
+     */
+    fun format(jokes: List<Joke>, random: java.util.Random = java.util.Random(), hideAnswers: Boolean = false): String {
         val sb = StringBuilder(INTROS[random.nextInt(INTROS.size)])
         for ((i, joke) in jokes.withIndex()) {
             sb.append("\n\n")
@@ -356,13 +366,15 @@ object JokeBank {
             if (joke.kind != Kind.GENERAL) sb.append(joke.kind.flag).append(" ").append(joke.kind.label).append(":\n")
             // Adivinanzas y trabalenguas no tienen remate: la risita va antes de la respuesta o al final
             sb.append(if (joke.answer.isBlank() && joke.kind != Kind.TRABALENGUAS) withGiggle(joke.text, random) else joke.text)
-            if (joke.answer.isNotBlank()) sb.append("\n\n🤫 ¿La sabes? Piénsalo un poquito… ").append(DURING[random.nextInt(DURING.size)])
+            if (joke.answer.isNotBlank() && hideAnswers) sb.append("\n\n🤫 ¿Qué es? ¡Dime tu respuesta! ").append(DURING[random.nextInt(DURING.size)])
+                .append("\n(Si no la sabes, dime «me rindo» y te la digo 😄)")
+            else if (joke.answer.isNotBlank()) sb.append("\n\n🤫 ¿La sabes? Piénsalo un poquito… ").append(DURING[random.nextInt(DURING.size)])
                 .append("\n👉 Respuesta: ").append(joke.answer).append("\n¡Jajaja! 😄")
             if (joke.note.isNotBlank()) sb.append("\n💡 ").append(joke.note)
             if (joke.kind != Kind.TRABALENGUAS && joke.answer.isBlank()) sb.append("\n").append(LAUGHS[random.nextInt(LAUGHS.size)])
             else if (joke.kind == Kind.TRABALENGUAS) sb.append("\n¡Jajaja, a ver si lo dices tres veces rápido! 😜")
         }
-        sb.append("\n\n").append(CLOSES[random.nextInt(CLOSES.size)])
+        if (!(hideAnswers && jokes.any { it.answer.isNotBlank() })) sb.append("\n\n").append(CLOSES[random.nextInt(CLOSES.size)])
         return sb.toString()
     }
 }
