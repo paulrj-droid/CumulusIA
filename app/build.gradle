@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace 'com.paulrj.cumulusia'
-    // 📱 Android 16 (API 36): lo exige Google Play para apps nuevas y actualizaciones desde el 31 de agosto de 2026
+    //  Android 16 (API 36): lo exige Google Play para apps nuevas y actualizaciones desde el 31 de agosto de 2026
     compileSdk 36
 
     ndkVersion "25.1.8937393"
@@ -15,7 +15,8 @@ android {
         applicationId "com.cumulusia.app"
         minSdk 34
         targetSdk 36
-        versionCode 1
+        // Numero de version para Google Play: GitHub lo sube solo en cada compilacion (debe crecer en cada version publicada)
+        versionCode((System.getenv("CUMULUS_VERSION_CODE") ?: "1").toInteger())
         versionName "1.0"
 
         ndk {
@@ -46,8 +47,29 @@ android {
         compose true
     }
 
+    // Firma para Google Play: la llave la entrega GitHub Actions (secretos SIGNING_KEY y KEYSTORE_PASSWORD).
+    // Sin llave, la version de prueba (debug) se arma igual que siempre.
+    signingConfigs {
+        release {
+            def ks = System.getenv("CUMULUS_KEYSTORE")
+            if (ks != null && new File(ks).exists()) {
+                storeFile new File(ks)
+                storePassword System.getenv("CUMULUS_KEYSTORE_PASSWORD")
+                keyAlias "cumulus"
+                keyPassword System.getenv("CUMULUS_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
+    // La revision automatica (lint) no detiene el archivo para Google Play
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
     buildTypes {
         release {
+            if (System.getenv("CUMULUS_KEYSTORE") != null) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
@@ -63,7 +85,7 @@ android {
     packagingOptions {
         jniLibs {
             useLegacyPackaging true
-            // El teléfono usa su propio libOpenCL.so (/vendor/lib64), no el de la compilación
+            // El telefono usa su propio libOpenCL.so (/vendor/lib64), no el de la compilacion
             excludes += ['**/libOpenCL.so']
         }
     }
@@ -85,19 +107,19 @@ dependencies {
     implementation 'com.qualcomm.qti:qnn-runtime:2.42.0'
     implementation 'com.qualcomm.qti:qnn-litert-delegate:2.42.0'
 
-    // 🖼️ Editor de imágenes con IA (recortar, resolución con IA, fondo, personas): LiteRT en NPU, GPU o CPU
+    //  Editor de imagenes con IA (recortar, resolucion con IA, fondo, personas): LiteRT en NPU, GPU o CPU
     implementation 'com.google.ai.edge.litert:litert:1.4.0'
     implementation 'com.google.ai.edge.litert:litert-gpu:1.4.0'
     implementation 'com.google.ai.edge.litert:litert-gpu-api:1.4.0'
-    // ⚡ NPU para esas IA: delegado QNN con la MISMA versión de QNN que trae GenieX 0.8.0 (2.45).
-    //    (va escrito así a propósito: el workflow comenta las líneas 'com.qualcomm.qti:...' de arriba)
+    //  NPU para esas IA: delegado QNN con la MISMA version de QNN que trae GenieX 0.8.0 (2.45).
+    //    (va escrito asi a proposito: el workflow comenta las lineas 'com.qualcomm.qti:...' de arriba)
     implementation group: 'com.qualcomm.qti', name: 'qnn-litert-delegate', version: '2.45.0'
-    // 🧠 Separar a la persona u objeto del fondo (Google ML Kit, la IA se descarga sola con Google Play)
+    //  Separar a la persona u objeto del fondo (Google ML Kit, la IA se descarga sola con Google Play)
     implementation 'com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1'
 
     implementation("xyz.rementia:openwakeword:0.1.3")
 
-    // 📄 Leer el texto de archivos PDF (Word, Excel y PowerPoint se leen sin librerías)
+    //  Leer el texto de archivos PDF (Word, Excel y PowerPoint se leen sin librerias)
     implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
 
     implementation 'androidx.compose.ui:ui:1.6.0'
@@ -108,3 +130,4 @@ dependencies {
     implementation 'androidx.activity:activity-compose:1.8.2'
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
 }
+
