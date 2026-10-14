@@ -131,7 +131,7 @@ object NearbyFinder {
             sb.append("   💲 Precio por noche, disponibilidad y valoraciones: https://www.google.com/travel/hotels?q=")
                 .append(URLEncoder.encode("${s.name} $city", "UTF-8")).append('\n')
             sb.append("   🗺️ ").append(s.mapsUrl).append('\n')
-            photoNumbers.getOrNull(i)?.let { sb.append("   🖼️ Foto ").append(it).append(" (abajo)\n") }
+            photoNumbers.getOrNull(i)?.let { sb.append("   🖼️ Foto ").append(it).append(" (arriba)\n") }
         }
         return sb.toString().trimEnd()
     }
@@ -144,7 +144,7 @@ object NearbyFinder {
             if (s.hours.isNotBlank()) sb.append("   🕒 ").append(s.hours).append('\n')
             if (s.website.isNotBlank()) sb.append("   🌐 ").append(s.website).append('\n')
             sb.append("   🗺️ ").append(s.mapsUrl).append('\n')
-            photoNumbers.getOrNull(i)?.let { sb.append("   🖼️ Foto ").append(it).append(" (abajo)\n") }
+            photoNumbers.getOrNull(i)?.let { sb.append("   🖼️ Foto ").append(it).append(" (arriba)\n") }
         }
         return sb.toString().trimEnd()
     }
@@ -298,4 +298,3 @@ object NearbyFinder {
         return "$s (hemisferio ${if (south) "sur" else "norte"})"
     }
 }
-
