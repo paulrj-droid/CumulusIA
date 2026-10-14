@@ -1,0 +1,40 @@
+name: Crear llave de firma (UNA SOLA VEZ)
+
+# Se ejecuta a mano: Actions -> "Crear llave de firma (UNA SOLA VEZ)" -> Run workflow.
+# Antes crea el secreto KEYSTORE_PASSWORD (Settings -> Secrets and variables -> Actions).
+# Resultado: el artefacto "llave-cifrada" con SIGNING_KEY.txt. Copia TODO su texto en un
+# secreto nuevo llamado SIGNING_KEY. La llave va cifrada con tu clave: sin la clave no sirve.
+# NO lo vuelvas a ejecutar despues de publicar: crearia otra llave distinta.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  llave:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Crear la llave y cifrarla
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ ${#KEYSTORE_PASSWORD} -lt 12 ]; then
+            echo "ERROR: primero crea el secreto KEYSTORE_PASSWORD (minimo 12 caracteres)."
+            exit 1
+          fi
+          keytool -genkeypair -keystore /tmp/cumulus.jks -storetype PKCS12 -alias cumulus \
+            -keyalg RSA -keysize 4096 -validity 10000 \
+            -storepass "$KEYSTORE_PASSWORD" -keypass "$KEYSTORE_PASSWORD" \
+            -dname "CN=Cumulus IA, O=Cumulus IA, C=CL"
+          mkdir -p out
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -a -A \
+            -pass env:KEYSTORE_PASSWORD -in /tmp/cumulus.jks -out out/SIGNING_KEY.txt
+          rm -f /tmp/cumulus.jks
+          echo "Listo. Descarga el artefacto llave-cifrada y copia el texto de SIGNING_KEY.txt en el secreto SIGNING_KEY."
+
+      - name: Guardar la llave cifrada
+        uses: actions/upload-artifact@v4
+        with:
+          name: llave-cifrada
+          path: out/SIGNING_KEY.txt
+          retention-days: 7
+
