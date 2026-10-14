@@ -533,6 +533,13 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
         root.addView(bar, LinearLayout.LayoutParams(-1, -2))
         root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
         dialog.setContentView(root)
+        // 📱 Android 15/16 dibujan de borde a borde: la barra de arriba y la de gestos no tapan la vista previa ni sus botones
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val b = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                androidx.core.view.WindowInsetsCompat.Type.displayCutout() or androidx.core.view.WindowInsetsCompat.Type.ime())
+            v.setPadding(b.left, b.top, b.right, b.bottom)
+            insets
+        }
         // ✦ Se está armando: se actualiza sola cada 2,5 s hasta que la IA termina (y una vez más al final)
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         val tick = object : Runnable {
