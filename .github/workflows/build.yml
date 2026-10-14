@@ -5,7 +5,7 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
-# Si subes varios archivos seguidos, solo se compila el Ãºltimo cambio (las compilaciones viejas se cancelan solas)
+# Si subes varios archivos seguidos, solo se compila el ultimo cambio (las compilaciones viejas se cancelan solas)
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -24,9 +24,9 @@ jobs:
         - /usr/local/.ghcup:/host_free/ghcup
 
     env:
-      # llama.cpp del motor CPU (con visiÃ³n mtmd): la versiÃ³n mÃ¡s nueva (5 oct 2026). Si algÃºn dÃ­a falla, volver a v0.2.0
+      # llama.cpp del motor CPU (con vision mtmd): la version mas nueva (5 oct 2026). Si algun dia falla, volver a v0.2.0
       LLAMA_GIT_TAG: v0.6.0
-      #  Version de las librerias QNN de Qualcomm (NPU). Cambiala aqui si hace falta.
+      # Version de las librerias QNN de Qualcomm (NPU). Cambiala aqui si hace falta.
       QNN_VERSION: 2.47.0
       # LiteRT-LM 0.17.x esta compilado con QAIRT 2.47  Dispatch de LiteRT v2.2.0 (tambien QAIRT 2.47)
       LITERT_NPU_TAG: v2.2.0
@@ -64,7 +64,7 @@ jobs:
           fi
           java -version 2>&1 || true
 
-      # ðŸ“± Gradle 8.14.3: lo pide el plugin de Android 8.13.2 (compila para Android 16 / API 36)
+      # Gradle 8.14.3: lo pide el plugin de Android 8.13.2 (compila para Android 16 / API 36)
       - name: Install Gradle 8.14.3
         run: |
           curl -sL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.14.3-bin.zip
@@ -72,8 +72,8 @@ jobs:
           rm -f /tmp/gradle.zip
           echo "/opt/gradle-8.14.3/bin" >> "$GITHUB_PATH"
 
-      #  glslc del NDK r29: el de NDK viejos genera shaders que hacen
-      #    cerrar la app en la GPU Adreno 830 (llama.cpp issue #28635)
+      # glslc del NDK r29: el de NDK viejos genera shaders que hacen
+      # cerrar la app en la GPU Adreno 830 (llama.cpp issue #28635)
       - name: Instalar glslc de NDK r29 (Vulkan compatible con Adreno 830)
         shell: bash
         # Normalmente tarda 1-2 min. Si la descarga se cuelga, se corta a los 15 min.
@@ -171,10 +171,10 @@ jobs:
           done
           exit 0
 
-      # ðŸª„ IA DE IMÃGENES (crear una versiÃ³n nueva de una foto): stable-diffusion.cpp en su propia
-      #    librerÃ­a (libcumulus_sd.so), aparte del motor del chat. Si algo falla aquÃ­, la app se compila
-      #    igual: solo esa funciÃ³n avisa en el chat que no vino incluida (lo demÃ¡s sigue funcionando).
-      - name: Compilar IA de imÃ¡genes (stable-diffusion.cpp)
+      # IA DE IMAGENES (crear una version nueva de una foto): stable-diffusion.cpp en su propia
+      # libreria (libcumulus_sd.so), aparte del motor del chat. Si algo falla aqui, la app se compila
+      # igual: solo esa funcion avisa en el chat que no vino incluida (lo demas sigue funcionando).
+      - name: Compilar IA de imagenes (stable-diffusion.cpp)
         working-directory: ${{ github.workspace }}/repo
         shell: bash
         timeout-minutes: 25
@@ -191,7 +191,7 @@ jobs:
             done
           fi
           echo "NDK: ${NDK:-NO ENCONTRADO}"
-          if [ -z "$NDK" ]; then echo "AVISO: sin NDK, la IA de imÃ¡genes no se incluye"; exit 0; fi
+          if [ -z "$NDK" ]; then echo "AVISO: sin NDK, la IA de imagenes no se incluye"; exit 0; fi
           if ! command -v cmake >/dev/null; then
             apt-get install -y --no-install-recommends cmake ninja-build >/dev/null 2>&1 || true
           fi
@@ -206,17 +206,17 @@ jobs:
           if [ ! -f app/src/main/sdcpp/sd-jni.cpp ]; then
             echo "AVISO: falta app/src/main/sdcpp/sd-jni.cpp"; exit 0
           fi
-          # El CMakeLists de esta librerÃ­a se escribe aquÃ­ (no va en el repo: asÃ­ no se confunde con el del chat)
+          # El CMakeLists de esta libreria se escribe aqui (no va en el repo: asi no se confunde con el del chat)
           mkdir -p /tmp/sdwrap
           cat > /tmp/sdwrap/CMakeLists.txt <<'CMAKE_EOF'
             # ============================================================================
-            # ðŸŽ¨ IA DE IMÃGENES (libcumulus_sd.so): stable-diffusion.cpp + su propio ggml
-            #    Se compila APARTE del motor del chat (lo hace el workflow de GitHub y copia el
-            #    .so a jniLibs). Todo queda escondido dentro de la librerÃ­a: solo se ven las
-            #    funciones JNI, asÃ­ su ggml no se mezcla con el de llama.cpp ni con el de GenieX.
+            # IA DE IMAGENES (libcumulus_sd.so): stable-diffusion.cpp + su propio ggml
+            # Se compila APARTE del motor del chat (lo hace el workflow de GitHub y copia el
+            # .so a jniLibs). Todo queda escondido dentro de la libreria: solo se ven las
+            # funciones JNI, asi su ggml no se mezcla con el de llama.cpp ni con el de GenieX.
             #
-            #    El workflow escribe este archivo en /tmp (asÃ­ no se confunde con el CMakeLists.txt del chat)
-            #    y le pasa: -DSDCPP_DIR=/tmp/sdcpp -DCUMULUS_SD_JNI=app/src/main/sdcpp/sd-jni.cpp
+            # El workflow escribe este archivo en /tmp (asi no se confunde con el CMakeLists.txt del chat)
+            # y le pasa: -DSDCPP_DIR=/tmp/sdcpp -DCUMULUS_SD_JNI=app/src/main/sdcpp/sd-jni.cpp
             # ============================================================================
             cmake_minimum_required(VERSION 3.18)
             project(cumulus_sd C CXX)
@@ -233,10 +233,10 @@ jobs:
             set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
             if (NOT SDCPP_DIR OR NOT EXISTS "${SDCPP_DIR}/CMakeLists.txt")
-                message(FATAL_ERROR "Falta SDCPP_DIR (carpeta de stable-diffusion.cpp con su submÃ³dulo ggml)")
+                message(FATAL_ERROR "Falta SDCPP_DIR (carpeta de stable-diffusion.cpp con su submodulo ggml)")
             endif()
 
-            # stable-diffusion.cpp: solo la librerÃ­a (sin ejemplos, sin WebP/WebM, sin OpenMP)
+            # stable-diffusion.cpp: solo la libreria (sin ejemplos, sin WebP/WebM, sin OpenMP)
             set(SD_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
             set(SD_WEBP OFF CACHE BOOL "" FORCE)
             set(SD_WEBM OFF CACHE BOOL "" FORCE)
@@ -246,7 +246,7 @@ jobs:
             set(GGML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
             set(GGML_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
             if (ANDROID)
-                # Instrucciones rÃ¡pidas del Snapdragon 8 Elite (S25): dotprod + i8mm + fp16
+                # Instrucciones rapidas del Snapdragon 8 Elite (S25): dotprod + i8mm + fp16
                 set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+i8mm+fp16" CACHE STRING "" FORCE)
             endif()
 
@@ -262,7 +262,7 @@ jobs:
             if (ANDROID)
                 find_library(log-lib log)
                 target_link_libraries(cumulus_sd PRIVATE ${log-lib})
-                # Solo se exportan las funciones JNI Â· pÃ¡ginas de 16 KB (requisito de Google Play)
+                # Solo se exportan las funciones JNI  paginas de 16 KB (requisito de Google Play)
                 target_link_options(cumulus_sd PRIVATE
                     "-Wl,--exclude-libs,ALL"
                     "-Wl,--gc-sections"
@@ -287,9 +287,9 @@ jobs:
             mkdir -p app/src/main/jniLibs/arm64-v8a
             cp -f /tmp/sdbuild/libcumulus_sd.so app/src/main/jniLibs/arm64-v8a/
             ls -la app/src/main/jniLibs/arm64-v8a/libcumulus_sd.so
-            echo "OK: IA de imÃ¡genes (stable-diffusion.cpp $SD_GIT_TAG) incluida en el APK"
+            echo "OK: IA de imagenes (stable-diffusion.cpp $SD_GIT_TAG) incluida en el APK"
           else
-            echo "AVISO: no se compilÃ³ la IA de imÃ¡genes (la app sigue funcionando; solo Â«versiÃ³n nuevaÂ» avisarÃ¡)"
+            echo "AVISO: no se compilo la IA de imagenes (la app sigue funcionando; solo "version nueva" avisara)"
           fi
           exit 0
 
@@ -307,21 +307,21 @@ jobs:
         run: |
           set +e
           echo "glslc para Vulkan: $CUMULUS_GLSLC"
-          #  NPU: la app necesita permiso para usar libcdsprpc.so (canal hacia la NPU)
+          # NPU: la app necesita permiso para usar libcdsprpc.so (canal hacia la NPU)
           MANI=app/src/main/AndroidManifest.xml
-          #  GenieX: su plugin llama_cpp necesita libOpenCL.so (GPU Adreno) y libcdsprpc.so (NPU)
-          #    Sin este permiso Android le bloquea esas librerias  "Cannot registerPlugin llama_cpp"
+          # GenieX: su plugin llama_cpp necesita libOpenCL.so (GPU Adreno) y libcdsprpc.so (NPU)
+          # Sin este permiso Android le bloquea esas librerias  "Cannot registerPlugin llama_cpp"
           for LIB in libcdsprpc.so libOpenCL.so libOpenCL_adreno.so; do
             if [ -f "$MANI" ] && ! grep -q "\"$LIB\"" "$MANI"; then
-              sed -i "s#</application>#    <uses-native-library android:name=\"$LIB\" android:required=\"false\" />\n    </application>#" "$MANI"
+              sed -i "s#</application># <uses-native-library android:name=\"$LIB\" android:required=\"false\" />\n    </application>#" "$MANI"
               echo "Manifest: agregado $LIB"
             fi
           done
           grep -n "uses-native-library" "$MANI"
           gradle assembleDebug --no-daemon --console=plain | tee /tmp/build.log
           CODE=${PIPESTATUS[0]}
-          #  NPU: las librerias que corren dentro de la NPU (libggml-htp-v79.so...)
-          #    se copian al APK y se vuelve a empaquetar (segunda pasada, rapida)
+          # NPU: las librerias que corren dentro de la NPU (libggml-htp-v79.so...)
+          # se copian al APK y se vuelve a empaquetar (segunda pasada, rapida)
           if [ "$CODE" -eq 0 ]; then
             SKELS=$(find app/.cxx -name 'libggml-htp-v*.so' 2>/dev/null | sort -u)
             if [ -n "$SKELS" ]; then
