@@ -5,7 +5,7 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
-# Si subes varios archivos seguidos, solo se compila el último cambio (las compilaciones viejas se cancelan solas)
+# Si subes varios archivos seguidos, solo se compila el Ãºltimo cambio (las compilaciones viejas se cancelan solas)
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -24,7 +24,7 @@ jobs:
         - /usr/local/.ghcup:/host_free/ghcup
 
     env:
-      # llama.cpp del motor CPU (con visión mtmd): la versión más nueva (5 oct 2026). Si algún día falla, volver a v0.2.0
+      # llama.cpp del motor CPU (con visiÃ³n mtmd): la versiÃ³n mÃ¡s nueva (5 oct 2026). Si algÃºn dÃ­a falla, volver a v0.2.0
       LLAMA_GIT_TAG: v0.6.0
       #  Version de las librerias QNN de Qualcomm (NPU). Cambiala aqui si hace falta.
       QNN_VERSION: 2.47.0
@@ -64,12 +64,13 @@ jobs:
           fi
           java -version 2>&1 || true
 
-      - name: Install Gradle 8.7
+      # ðŸ“± Gradle 8.14.3: lo pide el plugin de Android 8.13.2 (compila para Android 16 / API 36)
+      - name: Install Gradle 8.14.3
         run: |
-          curl -sL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          curl -sL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.14.3-bin.zip
           unzip -q /tmp/gradle.zip -d /opt
           rm -f /tmp/gradle.zip
-          echo "/opt/gradle-8.7/bin" >> "$GITHUB_PATH"
+          echo "/opt/gradle-8.14.3/bin" >> "$GITHUB_PATH"
 
       #  glslc del NDK r29: el de NDK viejos genera shaders que hacen
       #    cerrar la app en la GPU Adreno 830 (llama.cpp issue #28635)
@@ -170,10 +171,10 @@ jobs:
           done
           exit 0
 
-      # 🪄 IA DE IMÁGENES (crear una versión nueva de una foto): stable-diffusion.cpp en su propia
-      #    librería (libcumulus_sd.so), aparte del motor del chat. Si algo falla aquí, la app se compila
-      #    igual: solo esa función avisa en el chat que no vino incluida (lo demás sigue funcionando).
-      - name: Compilar IA de imágenes (stable-diffusion.cpp)
+      # ðŸª„ IA DE IMÃGENES (crear una versiÃ³n nueva de una foto): stable-diffusion.cpp en su propia
+      #    librerÃ­a (libcumulus_sd.so), aparte del motor del chat. Si algo falla aquÃ­, la app se compila
+      #    igual: solo esa funciÃ³n avisa en el chat que no vino incluida (lo demÃ¡s sigue funcionando).
+      - name: Compilar IA de imÃ¡genes (stable-diffusion.cpp)
         working-directory: ${{ github.workspace }}/repo
         shell: bash
         timeout-minutes: 25
@@ -190,7 +191,7 @@ jobs:
             done
           fi
           echo "NDK: ${NDK:-NO ENCONTRADO}"
-          if [ -z "$NDK" ]; then echo "AVISO: sin NDK, la IA de imágenes no se incluye"; exit 0; fi
+          if [ -z "$NDK" ]; then echo "AVISO: sin NDK, la IA de imÃ¡genes no se incluye"; exit 0; fi
           if ! command -v cmake >/dev/null; then
             apt-get install -y --no-install-recommends cmake ninja-build >/dev/null 2>&1 || true
           fi
@@ -205,16 +206,16 @@ jobs:
           if [ ! -f app/src/main/sdcpp/sd-jni.cpp ]; then
             echo "AVISO: falta app/src/main/sdcpp/sd-jni.cpp"; exit 0
           fi
-          # El CMakeLists de esta librería se escribe aquí (no va en el repo: así no se confunde con el del chat)
+          # El CMakeLists de esta librerÃ­a se escribe aquÃ­ (no va en el repo: asÃ­ no se confunde con el del chat)
           mkdir -p /tmp/sdwrap
           cat > /tmp/sdwrap/CMakeLists.txt <<'CMAKE_EOF'
             # ============================================================================
-            # 🎨 IA DE IMÁGENES (libcumulus_sd.so): stable-diffusion.cpp + su propio ggml
+            # ðŸŽ¨ IA DE IMÃGENES (libcumulus_sd.so): stable-diffusion.cpp + su propio ggml
             #    Se compila APARTE del motor del chat (lo hace el workflow de GitHub y copia el
-            #    .so a jniLibs). Todo queda escondido dentro de la librería: solo se ven las
-            #    funciones JNI, así su ggml no se mezcla con el de llama.cpp ni con el de GenieX.
+            #    .so a jniLibs). Todo queda escondido dentro de la librerÃ­a: solo se ven las
+            #    funciones JNI, asÃ­ su ggml no se mezcla con el de llama.cpp ni con el de GenieX.
             #
-            #    El workflow escribe este archivo en /tmp (así no se confunde con el CMakeLists.txt del chat)
+            #    El workflow escribe este archivo en /tmp (asÃ­ no se confunde con el CMakeLists.txt del chat)
             #    y le pasa: -DSDCPP_DIR=/tmp/sdcpp -DCUMULUS_SD_JNI=app/src/main/sdcpp/sd-jni.cpp
             # ============================================================================
             cmake_minimum_required(VERSION 3.18)
@@ -232,10 +233,10 @@ jobs:
             set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
             if (NOT SDCPP_DIR OR NOT EXISTS "${SDCPP_DIR}/CMakeLists.txt")
-                message(FATAL_ERROR "Falta SDCPP_DIR (carpeta de stable-diffusion.cpp con su submódulo ggml)")
+                message(FATAL_ERROR "Falta SDCPP_DIR (carpeta de stable-diffusion.cpp con su submÃ³dulo ggml)")
             endif()
 
-            # stable-diffusion.cpp: solo la librería (sin ejemplos, sin WebP/WebM, sin OpenMP)
+            # stable-diffusion.cpp: solo la librerÃ­a (sin ejemplos, sin WebP/WebM, sin OpenMP)
             set(SD_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
             set(SD_WEBP OFF CACHE BOOL "" FORCE)
             set(SD_WEBM OFF CACHE BOOL "" FORCE)
@@ -245,7 +246,7 @@ jobs:
             set(GGML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
             set(GGML_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
             if (ANDROID)
-                # Instrucciones rápidas del Snapdragon 8 Elite (S25): dotprod + i8mm + fp16
+                # Instrucciones rÃ¡pidas del Snapdragon 8 Elite (S25): dotprod + i8mm + fp16
                 set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+i8mm+fp16" CACHE STRING "" FORCE)
             endif()
 
@@ -261,7 +262,7 @@ jobs:
             if (ANDROID)
                 find_library(log-lib log)
                 target_link_libraries(cumulus_sd PRIVATE ${log-lib})
-                # Solo se exportan las funciones JNI · páginas de 16 KB (requisito de Google Play)
+                # Solo se exportan las funciones JNI Â· pÃ¡ginas de 16 KB (requisito de Google Play)
                 target_link_options(cumulus_sd PRIVATE
                     "-Wl,--exclude-libs,ALL"
                     "-Wl,--gc-sections"
@@ -286,9 +287,9 @@ jobs:
             mkdir -p app/src/main/jniLibs/arm64-v8a
             cp -f /tmp/sdbuild/libcumulus_sd.so app/src/main/jniLibs/arm64-v8a/
             ls -la app/src/main/jniLibs/arm64-v8a/libcumulus_sd.so
-            echo "OK: IA de imágenes (stable-diffusion.cpp $SD_GIT_TAG) incluida en el APK"
+            echo "OK: IA de imÃ¡genes (stable-diffusion.cpp $SD_GIT_TAG) incluida en el APK"
           else
-            echo "AVISO: no se compiló la IA de imágenes (la app sigue funcionando; solo «versión nueva» avisará)"
+            echo "AVISO: no se compilÃ³ la IA de imÃ¡genes (la app sigue funcionando; solo Â«versiÃ³n nuevaÂ» avisarÃ¡)"
           fi
           exit 0
 
