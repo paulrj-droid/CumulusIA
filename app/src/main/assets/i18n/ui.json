@@ -3375,6 +3375,30 @@
    "选择图片",
    "이미지 선택",
    "画像を選択"
+  ],
+  "Subir GGUF": [
+   "Upload GGUF",
+   "Carregar GGUF",
+   "Загрузить GGUF",
+   "导入 GGUF",
+   "GGUF 불러오기",
+   "GGUFを追加"
+  ],
+  "Subir TTS": [
+   "Upload TTS",
+   "Carregar TTS",
+   "Загрузить TTS",
+   "导入 TTS",
+   "TTS 불러오기",
+   "TTSを追加"
+  ],
+  "Cargar mmproj": [
+   "Load mmproj",
+   "Carregar mmproj",
+   "Загрузить mmproj",
+   "导入 mmproj",
+   "mmproj 불러오기",
+   "mmprojを読み込む"
   ]
  }
 }
