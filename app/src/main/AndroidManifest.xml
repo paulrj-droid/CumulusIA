@@ -17,6 +17,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 📍 Ubicación aproximada: locales para comer, cines, hoteles, atractivos y paraderos cerca de ti (se pide solo al usarlo) -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <application
         android:name=".CumulusApp"
         android:allowBackup="true"
@@ -76,4 +79,5 @@
     </application>
 
 </manifest>
+
 
