@@ -50,6 +50,16 @@ class DownloadService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * ⏱️ Android 15 y 16: un servicio de descargas puede estar en primer plano hasta 6 horas al día.
+     * Si se cumple el plazo, Android avisa aquí y hay que cerrarlo en segundos (si no, cierra la app).
+     * La descarga sigue mientras la app esté abierta y, si se corta, se retoma desde donde quedó.
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        stopSelf()
+    }
+
     override fun onDestroy() {
         running = false
         super.onDestroy()
