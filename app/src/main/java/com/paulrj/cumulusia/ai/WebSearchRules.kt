@@ -155,7 +155,6 @@ object WebSearchRules {
     // ------------------------------------------------------------------------
     private val ORDER: List<Pair<Regex, Category>> = listOf(
         rx("youtube music", "yt music") to YOUTUBE_MUSIC,
-        rx("youtube", "youtubers?", "\\byt\\b") to YOUTUBE,
         rx("google play", "play ?store", "tienda de google", "\\bapks?\\b", "\\bapps?\\b", "\\baplicaci[oó]n(es)?\\b") to GOOGLE_PLAY,
         rx("\\bvideojuegos?\\b", "\\bjuegos?\\b", "\\bgamers?\\b", "\\bgaming\\b", "free fire", "fortnite", "minecraft", "roblox", "pubg",
             "call of duty", "warzone", "valorant", "league of legends", "genshin", "clash (royale|of clans)", "brawl stars", "\\bea fc\\b",
@@ -173,6 +172,8 @@ object WebSearchRules {
             "sencillos?", "\\bsingles?\\b", "cantantes?", "bandas? (de m[uú]sica|musical(es)?|de rock)", "reggaet[oó]n",
             "\\brap\\b", "\\btrap\\b", "\\brock\\b", "\\bpop\\b", "cumbia", "bachata", "\\bsalsa\\b", "playlists?", "spotify",
             "top 50", "billboard", "\\bcharts?\\b", "lo m[aá]s escuchado") to MUSICA,
+        // «YouTube» a secas va después de música/películas/series: «una canción de X en YouTube» es MÚSICA (con su enlace)
+        rx("youtube", "youtubers?", "\\byt\\b") to YOUTUBE,
         rx("\\bvideos?\\b", "tiktok", "twitch", "\\breels?\\b", "\\bvirales?\\b") to VIDEOS,
         rx("\\bvuelos?\\b", "aerol[ií]neas?", "pasajes? a[eé]reos?", "\\bavi[oó]n(es)?\\b", "aeropuertos?", "equipaje",
             "\\blatam\\b", "sky airline", "jetsmart", "aerom[eé]xico", "avianca", "iberia", "check-?in") to VUELOS,
@@ -200,7 +201,7 @@ object WebSearchRules {
         rx("delivery", "a domicilio", "pedidos ?ya", "rappi", "uber eats", "didi food", "cornershop", "\\breparto\\b") to DELIVERY,
         rx("supermercados?", "\\bs[uú]per\\b", "canasta b[aá]sica", "abarrotes", "\\bl[ií]der\\b", "\\bjumbo\\b", "unimarc",
             "santa isabel", "tottus", "acuenta", "walmart", "soriana", "carrefour", "mercadona", "folletos?") to SUPERMERCADOS,
-        rx("recetas?", "\\bcomidas?\\b", "restaurant(es|e)?", "restoranes?", "\\bmen[uú]\\b", "\\bcarta de\\b", "cocinar",
+        rx("recetas?", "\\bcomidas?\\b", "\\bcomer\\b", "hambre", "antojo", "almorzar", "\\bcenar\\b", "desayunar", "restaurant(es|e)?", "restoranes?", "\\bmen[uú]\\b", "\\bcarta de\\b", "cocinar",
             "\\bplatos?\\b", "almuerzo", "\\bcena\\b", "desayuno", "sushi", "pizzas?", "hamburguesas?", "empanadas?",
             "gastronom", "picadas?", "d[oó]nde comer") to COMIDA,
         rx("maquillaje", "cosm[eé]tic", "labial(es)?", "r[ií]mel", "pesta[ñn]as?", "skin ?care", "\\bcremas?\\b", "perfumes?",
@@ -233,6 +234,242 @@ object WebSearchRules {
     }
 
     // ------------------------------------------------------------------------
+    // ▶️ PEDIDOS DIRECTOS A YOUTUBE: «dame una canción de Amar Azul en YouTube», «pon Bailando de Enrique»,
+    //    «el tráiler de Dune 3»… La APP busca en YouTube y entrega los enlaces reales con su miniatura
+    //    (como las noticias: la IA no puede negarse ni inventar enlaces).
+    // ------------------------------------------------------------------------
+    enum class YtKind { MUSIC, TRAILER, VIDEO }
+
+    class YtRequest(val query: String, val kind: YtKind, val count: Int, val label: String, val icon: String)
+
+    private val ytWord = rx("youtube", "\\byt\\b")
+
+    /** Cualquier cosa que se ve o se escucha: así la búsqueda en YouTube sirve para TODO tema, no solo para algunos. */
+    private val ytMediaNoun = rx("\\bvideos?\\b", "video ?clips?", "pel[ií]culas?", "\\bpelis?\\b", "\\bseries?\\b", "documental(es)?",
+        "tr[aá]ilers?", "canci[oó]n(es)?", "m[uú]sica", "[aá]lbum(es)?", "\\bdiscos?\\b", "k-?dramas?", "doramas?", "\\banimes?\\b",
+        "caricaturas?", "dibujos animados", "tutorial(es)?", "\\bcursos? (de|del|para)\\b", "\\bclases? (de|del|para)\\b", "rese[ñn]as?",
+        "\\breviews?\\b", "unboxing", "gameplays?", "podcasts?", "entrevistas?", "cortometrajes?", "cap[ií]tulos?", "episodios?",
+        "telenovelas?", "stand ?up", "karaoke", "playlists?", "\\bmix\\b", "enganchados?", "cumbias?", "reggaet[oó]n", "baladas?",
+        "\\bshorts?\\b", "\\bclips?\\b", "transmisi[oó]n", "en vivo")
+    /** Pedir algo: «dame», «quiero», «muéstrame», «busca», «recomiéndame», «pásame el link»… */
+    private val ytRequestVerb = rx("\\bdame\\b", "\\bquiero\\b", "quisiera", "mu[eé]strame", "ens[eé][ñn]ame", "\\bbusca(me|r)?\\b",
+        "b[uú]scame", "\\bpon(me|eme|er)?\\b", "reproduc", "p[aá]same", "m[aá]ndame", "\\btienes\\b", "recomi[eé]nda(me)?",
+        "recomi[eé]ndame", "sugi[eé]reme", "me (das|pasas|puedes|podr[ií]as|muestras|mandas|recomiendas|pones)", "necesito",
+        "\\blinks?\\b", "enlaces?", "para (ver|escuchar|o[ií]r|aprender)", "comp[aá]rteme", "d[eé]jame", "\\ben videos?\\b")
+    private val ytSingular = rx("\\b(una|alguna|otra) (canci[oó]n|pel[ií]cula|peli|serie|cumbia|balada|clase|entrevista|rese[ñn]a|" +
+        "telenovela|caricatura|playlist)", "\\b(un|alg[uú]n|otro) (video|videoclip|tr[aá]iler|[aá]lbum|disco|documental|tutorial|curso|anime|" +
+        "k-?drama|dorama|cap[ií]tulo|episodio|podcast|clip|short|cortometraje|karaoke|mix|enganchado)\\b")
+    private val ytHasVideoWord = rx("\\bvideos?\\b", "documental", "tutorial", "\\bclips?\\b")
+    /** Esto se responde mejor buscando en la web (tendencias, canales, preguntas sobre YouTube…) o no es para reproducir. */
+    private val ytNotDirect = rx("m[aá]s vist[oa]s", "tendencias?", "\\bcanales\\b", "youtubers?", "qu[eé] es youtube",
+        "c[oó]mo (subir|descargar|monetizar|crear)", "descargar", "\\bletras?\\b", "premium", "suscriptores", "\\btop\\b",
+        "c[oó]digo", "\\bapi\\b", "escr[ií]b", "comp[oó]n", "\\bcrea(r|me)?\\b", "inventa", "\\bhaz(me)?\\b", "redact", "genera",
+        "cu[aá]nto (paga|pagan|gana|ganan|cuesta|vale)", "c[oó]mo funciona",
+        "qui[eé]n (cre[oó]|fund[oó]|es (el )?due[ñn]o)", "monetiz", "suscrib", "\\bcuenta\\b", "contrase[ñn]a", "bloque",
+        "\\berror", "no (funciona|carga|abre|me deja)", "\\bpol[ií]tica", "derechos de autor", "copyright",
+        "traduc", "anali[zc]", "expl[ií]ca", "significa", "qui[eé]n canta", "de qu[eé] (trata|habla)", "alarma", "recordatorio",
+        "temporizador", "cron[oó]metro", "bot[oó]n", "pantalla", "\\bapps?\\b", "aplicaci", "funci[oó]n", "\\bcolor", "\\bfondo\\b",
+        "\\btexto\\b", "imagen", "\\bfotos?\\b", "\\blogo", "[ií]cono", "\\bmodo\\b",
+        "oscuro", "\\bclaro\\b", "idioma", "brillo", "volumen", "\\bwi-?fi\\b", "\\bnotas?\\b",
+        // un video/archivo que el usuario adjuntó o algo que hay que hacerle a un video
+        "(este|ese|esta|esa) (video|canci[oó]n|audio|archivo)", "adjunt", "resum", "transcrib", "subt[ií]tul", "\\bedita", "recorta",
+        "comprim", "convierte", "\\bsube\\b",
+        // «serie» y «disco» que no son para ver ni escuchar
+        "serie de (pasos|n[uú]meros|fibonacci|taylor|fourier|ejercicios|preguntas|ideas|instrucciones|datos|tiempo)", "disco duro", "\\bssd\\b")
+    /** «ponme X», «reproduce X», «quiero escuchar X»: siempre es para reproducir. */
+    private val ytStrongPlay = rx("^\\s*(oye\\s+|por favor\\s+)?(pon(me|eme)?|reproduce(me)?)\\b", "quiero (escuchar|o[ií]r)", "para (escuchar|o[ií]r)")
+
+    /** Sin nombrar YouTube ni pedir un video, esto NO se busca allí (lo responden las noticias, el clima, el editor de fotos…). */
+    private val ytOtherTopics = rx("noticias?", "titulares", "\\bclima\\b", "\\btiempo\\b", "pron[oó]stico", "d[oó]lar", "\\bhora\\b",
+        "\\bfecha\\b", "archivos?", "documentos?", "\\bpdf\\b", "correos?", "mensajes?", "historial", "configuraci", "ajustes",
+        "\\bmodelos?\\b", "precios?", "ofertas?", "\\bmapa\\b", "c[oó]mo llego", "resultados?", "\\bmarcador\\b")
+
+    /** «quiero una de Enrique Iglesias», «dame otra de Maná», «ponme uno de Shakira». */
+    private val ytOneOf = Regex("(?iu)^(oye\\s+|por favor\\s+|y\\s+|ahora\\s+)?(quiero|quisiera|dame|ponme|p[aá]same|m[aá]ndame|" +
+        "me (das|pasas|mandas|pones|puedes (dar|pasar|poner))|busca(me)?)\\s+(una|otra|alguna|uno|otro|algo|algunas?|unas)\\s+(de|del)\\s+" +
+        "(?!(esas?|esos|estas?|estos|ellas?|ellos|tus|mis|sus|nuestr\\p{L}*|ese|este|eso|esto|aqu\\p{L}*|ah[ií]|all[aá]|lo|qu[eé]|" +
+        "c[oó]mo|cu[aá]l\\p{L}*|cu[aá]nt\\p{L}*|d[oó]nde|cu[aá]ndo|qui[eé]n\\p{L}*|por qu[eé]|chocolate|vainilla|fresa)(\\s|$))(.{2,50})$")
+
+    /** «quiero ver Titanic», «me gustaría ver El Juego del Calamar». */
+    private val ytWantToSee = Regex("(?iu)^(oye\\s+|por favor\\s+)?(quiero|quisiera|me gustar[ií]a|deseo)\\s+ver\\s+(.{2,60})$")
+
+    /** Justo después de una respuesta de YouTube: «y una de Enrique Iglesias», «otra de Maná», «ahora de Shakira», «y de Soda Stereo?». */
+    private val ytFollow = Regex("(?iu)^(y\\s+|ahora\\s+|oye\\s+|tambi[eé]n\\s+|y ahora\\s+)*((quiero|dame|ponme|p[aá]same|m[aá]ndame|" +
+        "me (das|pasas|mandas|pones)|busca(me)?)\\s+)?((otra|otro|una|uno|alguna|algo|m[aá]s|otras|otros|unas)\\s+)?" +
+        "((canci[oó]n(es)?|temas?|videos?|pel[ií]culas?|series?|tr[aá]ilers?)\\s+)?(de|del)\\s+" +
+        "(?!(esas?|esos|estas?|estos|ellas?|ellos|tus|mis|sus|lo|qu[eé]|c[oó]mo|cu[aá]l\\p{L}*|cu[aá]nt\\p{L}*|d[oó]nde|cu[aá]ndo|" +
+        "qui[eé]n\\p{L}*|por qu[eé]|nuevo|nuevas?)(\\s|$))(.{2,50})$")
+
+    /** Lo que NO es parte de lo que se busca: el pedido, la cortesía, «en YouTube», «el link de», «un video de»… */
+    private val ytAskWords = rx("por favor", "\\bporfa\\b", "^\\s*(oye|hola)\\b",
+        "me (puedes|podr[ií]as) (dar|pasar|poner|mostrar|buscar|recomendar|mandar|enviar|compartir)",
+        "me (das|pasas|pones|muestras|mandas|env[ií]as|recomiendas|compartes)", "\\bpuedes\\b", "\\bpodr[ií]as\\b",
+        "\\bdame\\b", "d[eé]jame", "\\bquiero( ver| escuchar| o[ií]r)?\\b", "quisiera( ver| escuchar)?", "me gustar[ií]a( ver| escuchar)?",
+        "mu[eé]strame", "ens[eé][ñn]ame", "\\bb[uú]sca(me|r)?\\b", "\\bpon(me|eme|er)?\\b", "reproduc\\p{L}*", "p[aá]same", "m[aá]ndame",
+        "\\btienes\\b", "recomi[eé]nda(me)?", "recomi[eé]ndame", "sugi[eé]reme", "necesito", "comp[aá]rteme",
+        "\\b(en|por|de|desde|del) (youtube( music)?|yt)\\b", "youtube( music)?", "\\byt\\b",
+        "para (ver|escuchar|o[ií]r)( en)?\\b", "\\ben videos?\\b",
+        "\\b((el|un|los|unos)\\s+)?(links?|enlaces?)(\\s+(de|del|para))?\\b",
+        "\\b((el|la|un|una|los|las|unos|unas)\\s+)?(canci[oó]n(es)?|videos?|video ?clips?|clips?|tr[aá]ilers?( oficial(es)?)?)\\s+(de|del)\\b")
+
+    /**
+     * ¿Pide algo para ver o escuchar? Se busca en YouTube EXACTAMENTE lo que pidió (cualquier tema: «un video de inteligencia
+     * artificial», «una película de comedia romántica», «un documental de la segunda guerra mundial»…).
+     * Devuelve null si no es un pedido para YouTube (sigue el camino normal).
+     * @param prevKind si la respuesta anterior fue de YouTube, su tipo: así «y una de Enrique Iglesias» sigue con canciones.
+     */
+    fun youtubeRequest(prompt: String, prevKind: YtKind? = null): YtRequest? {
+        val raw = prompt.trim().trimEnd('?', '!', '.', ' ').trimStart('¿', '¡', ' ')
+        val p = raw.lowercase()
+        if (p.length < 4 || ytNotDirect.containsMatchIn(p)) return null
+        val yt = ytWord.containsMatchIn(p)
+        if (!yt && !ytHasVideoWord.containsMatchIn(p) && ytOtherTopics.containsMatchIn(p)) return null
+        val explicitKind = when {
+            Regex("tr[aá]iler").containsMatchIn(p) -> YtKind.TRAILER
+            Regex("canci[oó]n|m[uú]sica|video ?clip|[aá]lbum|\\bdisco|cumbia|reggaet|balada|karaoke|\\bmix\\b|enganchado|playlist").containsMatchIn(p) -> YtKind.MUSIC
+            ytMediaNoun.containsMatchIn(p) -> YtKind.VIDEO
+            else -> null
+        }
+        // 🧵 Sigue la conversación de YouTube: «y una de Enrique Iglesias» → otra canción, ahora de Enrique Iglesias
+        if (prevKind != null && !yt) {
+            ytFollow.find(raw)?.let { m ->
+                val name = cleanName(m.groupValues.last())
+                if (isName(name) && name.split(' ').size <= 7) {
+                    val plural = Regex("\\b(otras|otros|unas|m[aá]s|canciones|temas|videos|pel[ií]culas|series)\\b").containsMatchIn(p)
+                    return build(name, explicitKind ?: prevKind, if (plural) 5 else 3, iconHint(p))
+                }
+            }
+        }
+        // 🎯 «quiero una de Enrique Iglesias» (sin decir canción): se busca ese nombre en YouTube
+        ytOneOf.find(raw)?.let { m ->
+            val name = cleanName(m.groupValues.last())
+            if (isName(name) && name.split(' ').size <= 7) {
+                val plural = Regex("\\b(algunas|unas)\\b").containsMatchIn(p)
+                return build(name, explicitKind ?: prevKind ?: YtKind.VIDEO, if (plural) 5 else 3, iconHint(p))
+            }
+        }
+        // 🎬 «quiero ver Titanic», «quiero ver una película de comedia»
+        if (!yt) ytWantToSee.find(raw)?.let { m ->
+            val name = cleanName(m.groupValues.last()).replace(Regex("(?iu)^(la|el|los|las|una?|unos|unas|alg[uú]n|alguna)\\s+"), "")
+            if (isName(name) && name.split(' ').size <= 9) return build(name, explicitKind ?: YtKind.VIDEO, 5, iconHint(p) ?: "🎬")
+        }
+        // 🔎 Búsqueda general: nombraste YouTube, o pides algo que se ve/escucha («dame un video de tecnología»)
+        val media = ytMediaNoun.containsMatchIn(p)
+        val verb = ytRequestVerb.containsMatchIn(p)
+        val singular = ytSingular.containsMatchIn(p)
+        val strong = ytStrongPlay.containsMatchIn(p)
+        if (!yt && !(media && verb) && !(singular && media) && !strong) return null
+        val kind = explicitKind ?: if (strong && !ytHasVideoWord.containsMatchIn(p)) YtKind.MUSIC else YtKind.VIDEO
+        var q = p.replace(Regex("[¿?¡!.,;:«»\"“”]"), " ")
+        q = ytAskWords.replace(q, " ").replace(Regex("\\s+"), " ").trim()
+        // Artículos y «de» que quedaron sueltos al comienzo o al final («una amar azul» → «amar azul»),
+        // sin tocar los que son parte del nombre («Los Prisioneros», «La Bamba», «El Padrino»)
+        val lead = Regex("^((una?|unos|unas|alguna?s?|alg[uú]n|otr[oa]s?|de|del|sobre|y|ahora)(\\s+|$)|(el|la|los|las)\\s+(?=(de|del|una?|el|la|los|las)\\s))")
+        while (true) { val n = q.replace(lead, "").trim(); if (n == q) break; q = n }
+        q = q.replace(Regex("\\s+(de|del|el|la|una?|en|por|para)$"), "").trim()
+        // «ponme una canción», «dame un video» sin decir cuál ni de qué: que la IA pregunte
+        if (q.length < 2 || Regex("^(canci[oó]n(es)?|temas?|videos?|pel[ií]culas?|pelis?|series?|clips?|en videos?)$").matches(q)) return null
+        // «canciones nuevas», «estrenos», «lo último»: se agrega el año para que salga lo reciente
+        if (!Regex("\\b(19|20)\\d{2}\\b").containsMatchIn(q) && freshWordsYt.containsMatchIn(q))
+            q += " " + java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        return build(q, kind, if (singular) 3 else 5, iconHint(p))
+    }
+
+    private val freshWordsYt = rx("estrenos?", "\\bnuev[oa]s?\\b", "[uú]ltim[oa]s?", "recientes?", "lanzamientos?", "de este a[ñn]o")
+
+    /** «las que me diste», «los mismos», «las opciones»: no es un nombre. */
+    private val notAName = Regex("(?iu)^(las|los|el|la)\\s+(que|cuales|mism\\p{L}*|anterior\\p{L}*|otr\\p{L}*|primer\\p{L}*|[uú]ltim\\p{L}*|" +
+        "opci\\p{L}*|de\\s|del\\s)|^(las|los)$")
+
+    private fun isName(n: String) = n.length >= 2 && !notAName.containsMatchIn(n)
+
+    private fun cleanName(s: String): String = s.replace(Regex("[¿?¡!.,;:«»\"“”]"), " ")
+        .replace(Regex("(?iu)\\s+(en|por|de)\\s+(youtube|yt)\\b.*$"), "")
+        .replace(Regex("(?iu)\\s+(por favor|porfa|please)$"), "")
+        .replace(Regex("\\s+"), " ").trim()
+
+    /** Ícono por lo que dice el pedido («una película de…» → 🎬, «una serie de…» → 📺). */
+    private fun iconHint(p: String): String? = when {
+        Regex("pel[ií]cula|\\bpelis?\\b|\\bfilm").containsMatchIn(p) -> "🎬"
+        Regex("\\bseries?\\b|k-?drama|dorama|novela|anime|caricatura|dibujos animados|cap[ií]tulo|episodio").containsMatchIn(p) -> "📺"
+        Regex("documental").containsMatchIn(p) -> "🎥"
+        Regex("tutorial|\\bcursos?\\b|\\bclases?\\b").containsMatchIn(p) -> "🎓"
+        Regex("podcast|entrevista").containsMatchIn(p) -> "🎙️"
+        else -> null
+    }
+
+    private fun build(name: String, kind: YtKind, count: Int, hint: String? = null): YtRequest {
+        val q = name.lowercase()
+        val search = if (kind == YtKind.TRAILER && !q.contains("tráiler") && !q.contains("trailer")) "$q tráiler oficial" else q
+        val small = setOf("de", "del", "la", "el", "los", "las", "y", "en", "sin", "con", "a", "o", "un", "una", "por", "para")
+        val label = q.split(' ').mapIndexed { i, w -> if (i > 0 && w in small) w else w.replaceFirstChar { it.titlecase() } }.joinToString(" ")
+        // Ícono según el tema: 📰 noticias, 📺 series/kdramas, 🎬 películas, 📱 tecnología, 🎮 juegos…
+        val icon = when {
+            hint != null && kind != YtKind.MUSIC -> hint
+            kind == YtKind.MUSIC -> "🎵"
+            kind == YtKind.TRAILER -> "🎬"
+            Regex("noticia|titulares|en vivo|\\bnews\\b").containsMatchIn(q) -> "📰"
+            else -> detect(q).let { if (it == GENERAL || it == YOUTUBE || it == VIDEOS) "▶️" else it.emoji }
+        }
+        return YtRequest(search, kind, count, label, icon)
+    }
+
+    // ------------------------------------------------------------------------
+    // 📐 CÓMO ENTREGAR CADA CATEGORÍA: el formato exacto de la respuesta (una línea por opción, con sus datos)
+    //    Así la IA siempre entrega una lista detallada y ordenada, sea lo que sea que pidas.
+    // ------------------------------------------------------------------------
+    private val FORMATS: Map<Int, String> = mapOf(
+        1 to "Separa en 🆕 Estrenos de la semana · 🎞️ Siguen en cartelera · 🔁 Reestrenos. Cada una:\n" +
+            "1. Película — género — clasificación — cines y horarios — precio de la entrada",
+        2 to "1. Título — canal o creador — fecha — de qué trata (1 línea)",
+        3 to "1. Canción o álbum — Artista (fecha de lanzamiento) — género — puesto en el ranking si aparece",
+        4 to "Ordena por fecha (lo más próximo primero):\n1. 📅 Fecha y hora — Evento — Recinto (comuna) — precio desde — dónde comprar — disponibilidad",
+        5 to "Una línea por indicador: Nombre — valor actual — variación (↑/↓ %) — fecha y hora de actualización.\nAl final, 1 línea de resumen del día.",
+        6 to "Primero los descuentos más grandes:\n1. Producto o evento — tienda — precio normal → precio oferta (–%) — válido hasta",
+        7 to "1. Cargo — Empresa — comuna/ciudad — jornada y modalidad — sueldo — requisitos clave — dónde postular\nAl final, 2 consejos para postular.",
+        8 to "Agrupa por tipo (👕 Ropa · 👟 Calzado · 🧥 Abrigo · 👜 Accesorios):\n- Producto — marca — precio — tienda\nAl final, la tendencia de la temporada en 1 línea.",
+        9 to "Agrupa por tipo (base · labiales · ojos · skincare · perfumes):\n- Producto — marca — para qué sirve o tipo de piel — precio — tienda",
+        10 to "1. Tienda/sucursal — dirección — horario de hoy — teléfono o sitio — stock si aparece",
+        11 to "Compara por producto: Producto — precio en cada supermercado — ✅ el más barato.\nLuego 🏷️ ofertas de la semana por supermercado.",
+        12 to "Muestra VARIAS CATEGORÍAS con 2-3 opciones cada una (solo las que aparezcan en los resultados):\n" +
+            "🍔 Rápida · 🍣 Sushi/asiática · 🍕 Pizza/italiana · 🥗 Saludable · 🍲 Casera/típica · 🍰 Dulces · 🛵 Delivery\n" +
+            "- Lugar o plato — comuna/dirección — precio aprox — horario\nSi pide una receta: ingredientes con cantidades y pasos numerados.",
+        13 to "1. App o servicio — costo de envío — tiempo estimado — cobertura — promoción activa\nAl final, cuál conviene y por qué (1 línea).",
+        14 to "1. Destino — precio desde (vuelo, bus o paquete) — duración del viaje — qué incluye — requisitos (documentos, visa) — mejor época",
+        15 to "✈️ Origen → Destino (y la fecha, si la dio):\n1. Aerolínea — fecha — salida → llegada — directo o con escalas (dónde) — duración — " +
+            "precio (ida o ida y vuelta) — equipaje incluido — dónde comprar\nAl final: 💰 el más barato y ⚡ el más rápido.",
+        16 to "1. Línea/recorrido — desde → hasta — paraderos principales — horario y frecuencia — tarifa\n" +
+            "Si pregunta cómo llegar: pasos numerados (qué micro o metro tomar y dónde bajarse).",
+        17 to "1. Destino — por qué ir (1 línea) — qué hacer — mejor época — presupuesto aprox por persona\nSepara nacionales e internacionales.",
+        18 to "Del más económico al más caro:\n1. Hotel — zona/dirección — precio por noche — estrellas o valoración — incluye (desayuno, wifi, piscina…) — dónde reservar",
+        19 to "1. Casa o depto — comuna — dormitorios/baños/m² — precio mensual (o por noche) — gastos comunes — portal\nAl final, el precio promedio de la zona si aparece.",
+        20 to "1. Marca Modelo Año — nuevo o usado — km — precio — motor y consumo — vendedor o portal\nAl final, el rango de precios del modelo.",
+        21 to "Hoy: mínima/máxima, lluvia %, índice UV.\nPróximos días: Día — mín/máx — condición — lluvia %.",
+        22 to "1. Equipo — pantalla · procesador · RAM/almacenamiento · batería · cámara — precio — dónde comprar — fecha de lanzamiento\n" +
+            "Si compara, al final el ganador en cada aspecto.",
+        23 to "1. 📅 Fecha y hora — Evento — ¿visible desde {LUGAR}? — hacia dónde mirar — cómo verlo (a simple vista, binoculares o telescopio)",
+        24 to "Qué es (1-2 líneas) · síntomas o usos · tratamientos o medicamentos habituales (sin dosis) · 🚨 cuándo consultar de urgencia.",
+        25 to "1. Serie — plataforma — fecha de estreno o de los episodios — temporada — género — de qué trata (1 línea)",
+        26 to "1. Película (año) — director — reparto principal — género — puntuación o crítica — dónde verla (cine o plataforma) — sinopsis en 1 línea",
+        27 to "1. Juego — plataforma — novedad (evento, parche o temporada) — fecha — detalles clave (cambios, recompensas, configuración recomendada)",
+        28 to "1. App — desarrollador — valoración ★ — descargas — última versión y fecha — novedades — gratis o precio",
+        29 to "1. Video o canal — creador — vistas — fecha — de qué trata (1 línea)",
+        30 to "1. Canción — Artista — puesto en la lista — álbum",
+        31 to "Respuesta directa en 1-2 líneas y luego los detalles en viñetas (fechas, cifras, pasos o requisitos, según el tema)."
+    )
+
+    /** Palabras que se agregan a la búsqueda para que internet traiga los datos de ese formato (precios, horarios…). */
+    private val HINTS: Map<Int, String> = mapOf(
+        1 to "cartelera horarios", 4 to "entradas {MES} {AÑO}", 5 to "hoy", 6 to "ofertas {MES} {AÑO}", 7 to "ofertas de trabajo",
+        8 to "precio", 9 to "precio", 10 to "horario dirección", 11 to "precio supermercado", 12 to "restaurantes recomendados",
+        13 to "costo de envío", 14 to "precio {AÑO}", 15 to "precio pasajes aerolíneas {MES} {AÑO}", 16 to "recorrido horario tarifa",
+        17 to "mejores lugares {AÑO}", 18 to "precio por noche", 19 to "precio arriendo", 20 to "precio", 22 to "precio especificaciones",
+        23 to "{MES} {AÑO}", 25 to "estreno {AÑO}", 26 to "reparto crítica dónde ver", 27 to "{AÑO}", 28 to "Play Store"
+    )
+
+    private val MONTHS = listOf("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+
+    // ------------------------------------------------------------------------
     // 🔎 BÚSQUEDA: prioriza la ciudad/país del usuario y el año actual cuando pide novedades
     // ------------------------------------------------------------------------
     private val freshWords = rx("estrenos?", "\\bnuev[oa]s?\\b", "[uú]ltim[oa]s?", "recientes?", "lanzamientos?", "tendencias?",
@@ -240,9 +477,22 @@ object WebSearchRules {
 
     fun searchQuery(cat: Category, cleanedQuery: String, place: String, year: Int): String {
         var q = cleanedQuery.trim()
-        if (cat.local && place.isNotBlank() && !mentionsPlace(q, place)) q += " " + place.replace(",", "")
-        if (cat.fresh && !Regex("\\b(19|20)\\d{2}\\b").containsMatchIn(q) && freshWords.containsMatchIn(q.lowercase())) q += " $year"
-        return q.take(200)
+        val city = place.substringBefore(',').trim()
+        // ✈️ Vuelos: si no dijo desde dónde, desde su ciudad
+        if (cat == VUELOS && city.isNotBlank() && !Regex("(?iu)\\b(desde|de)\\s+\\p{Lu}").containsMatchIn(q) && !q.lowercase().contains(city.lowercase()))
+            q += " desde $city"
+        // 🍽️ Comida: una receta no depende de la ciudad; «dónde comer» sí
+        val recipe = cat == COMIDA && Regex("(?iu)receta|cocinar|preparar|c[oó]mo (se )?hace").containsMatchIn(q)
+        if (cat.local && !recipe && place.isNotBlank() && !mentionsPlace(q, place)) q += " " + place.replace(",", "")
+        val hint = if (recipe) "receta" else HINTS[cat.num].orEmpty()
+        val month = MONTHS[java.util.Calendar.getInstance().get(java.util.Calendar.MONTH)]
+        val hasYear = Regex("\\b(19|20)\\d{2}\\b").containsMatchIn(q)
+        val low = q.lowercase()
+        hint.replace("{MES}", month).replace("{AÑO}", if (hasYear) "" else year.toString())
+            .split(' ').filter { it.isNotBlank() && !low.contains(it.lowercase()) }
+            .let { if (it.isNotEmpty()) q += " " + it.joinToString(" ") }
+        if (cat.fresh && !Regex("\\b(19|20)\\d{2}\\b").containsMatchIn(q) && freshWords.containsMatchIn(low)) q += " $year"
+        return q.replace(Regex("\\s+"), " ").trim().take(200)
     }
 
     /** ¿El usuario ya nombró un lugar? («en Valparaíso», «de Lima», o su propia ciudad/país). */
@@ -272,15 +522,14 @@ object WebSearchRules {
         sb.append("Si pide algo local o actualizado (eventos, precios, ofertas), prioriza lo de ").append(lugar).append(".\n\n")
         sb.append("TIPO DE PEDIDO: ").append(cat.title).append('\n')
         sb.append("Qué entregar:\n").append(cat.rules.replace("{LUGAR}", lugar)).append("\n\n")
-        sb.append("FORMATO:\n")
-        sb.append("- Responde solo en ").append(language).append(", directo y ordenado: primero la respuesta y luego los detalles.\n")
-        if (cat.num in PRICE_CATS) sb.append("- Para comparar precios, especificaciones o catálogos usa una lista: una línea por opción (nombre — precio — tienda o fecha).\n")
-        if (cat.media != null) {
-            sb.append("- Escribe cada título en su propia línea numerada, así: «1. Título — ")
-                .append(if (cat.media == Media.MUSIC) "Artista" else "Director o plataforma").append(" (año)».\n")
-            sb.append("- La portada/afiche y el enlace de YouTube de cada uno los pone la app debajo de tu respuesta: no escribas enlaces ni imágenes.\n")
-        }
-        sb.append("- Usa SOLO los resultados de internet: fechas, cifras, precios y nombres tal cual aparecen. No inventes enlaces, precios ni fechas; si algo no aparece, dilo.")
+        sb.append("CÓMO ENTREGARLO (usa este formato, una línea por opción, con TODAS las opciones que traigan los resultados):\n")
+        sb.append(FORMATS[cat.num].orEmpty().replace("{LUGAR}", lugar)).append("\n\n")
+        sb.append("REGLAS:\n")
+        sb.append("- Responde solo en ").append(language).append(": primero la respuesta directa y luego la lista detallada.\n")
+        if (cat.media != null)
+            sb.append("- La portada/afiche y el enlace de YouTube de cada título los pone la app debajo: no escribas enlaces ni imágenes.\n")
+        sb.append("- Usa SOLO los resultados de internet: fechas, cifras, precios y nombres tal cual aparecen. " +
+            "Si un dato no aparece, escribe «sin dato» (no lo inventes). Nunca inventes enlaces.")
         return sb.toString()
     }
 
