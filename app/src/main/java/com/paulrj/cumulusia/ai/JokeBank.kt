@@ -219,14 +219,20 @@ object JokeBank {
     // ------------------------------------------------------------------------
     private val askRx = Regex("(?iu)chistes?|payas?|adivinanzas?|adivina|trabalenguas|toc[ -]?toc|knock|el colmo|colmos|qu[eé] le (dijo|dice)|piadas?|dajare|ajae")
     private val anotherRx = Regex("(?iu)^(?:(?:y|ya|ok|dale|bueno|jaja\\S*|jeje\\S*)[,!\\s]+)*(?:(?:cu[eé]ntame|dime|dame|tira(?:me)?|hazme|echa(?:te)?)\\s+)?" +
-        "(?:otro|otra|uno m[aá]s|una m[aá]s|otro m[aá]s|otra m[aá]s|m[aá]s|de nuevo|otra vez)(?:\\s+(?:m[aá]s|chiste|paya|adivinanza|por favor|po|porfa))*[!.?\\s]*$")
+        "(?:otro|otra|uno m[aá]s|una m[aá]s|otro m[aá]s|otra m[aá]s|m[aá]s|de nuevo|otra vez)" +
+        "(?:[,\\s]+(?:m[aá]s|chiste|paya|adivinanza|por favor|po|porfa|pero|diferente|distinto|nuevo|jaja\\S*|jeje\\S*|jiji\\S*|xd))*[!.?\\s]*$")
 
     /** ¿Pide chistes de la colección? Devuelve los tipos (vacío = no pide chistes). */
     fun requestedKinds(q: String): List<Kind> {
         val s = q.lowercase()
         if (!askRx.containsMatchIn(s)) return emptyList()
+        return kindsIn(s)
+    }
+
+    /** Tipos nombrados en el texto (sin exigir la palabra «chiste»). Si no nombra ninguno: chistes generales. */
+    private fun kindsIn(s: String): List<Kind> {
         val out = mutableListOf<Kind>()
-        if (Regex("chilen|de chile").containsMatchIn(s) && !s.contains("paya")) out += Kind.CHILE
+        if (Regex("chilen|(?<![\\p{L}])chile(?![\\p{L}])").containsMatchIn(s) && !s.contains("paya")) out += Kind.CHILE
         if (Regex("argentin|porteñ").containsMatchIn(s)) out += Kind.ARGENTINA
         if (Regex("mexican|de m[eé]xico|pepito").containsMatchIn(s)) out += Kind.MEXICO
         if (Regex("gringo|norteamerican|estadounidense|americano|estados unidos|en ingl[eé]s|dad joke").containsMatchIn(s)) out += Kind.USA
@@ -242,9 +248,39 @@ object JokeBank {
         if (Regex("colmo").containsMatchIn(s)) out += Kind.COLMO
         if (Regex("qu[eé] le (dijo|dice)").containsMatchIn(s)) out += Kind.QUE_LE_DIJO
         if (Regex("parejas?|matrimonio|casados|marido|esposa|suegra|p[ií]car|adultos|para grandes|de viejos|pololos").containsMatchIn(s)) out += Kind.PAREJAS
-        if (out.isEmpty()) out += listOf(Kind.GENERAL, Kind.QUE_LE_DIJO, Kind.COLMO, Kind.CHILE)
+        if (out.isEmpty()) out += DEFAULT_KINDS
         return out.distinct()
     }
+
+    /** «otro chileno», «uno de parejas», «otra paya», «uno mexicano pero diferente jaja», «uno de Pepito» (después de un chiste). */
+    private val anotherOfRx = Regex("(?iu)^(?:(?:y|ya|ok|dale|bueno|jaja\\S*|jeje\\S*|oye|ahora)[,!\\s]+)*(?:(?:cu[eé]ntame|dime|dame|tira(?:me)?|hazme|echa(?:te)?)\\s+)?" +
+        "(?:otro|otra|otros|otras|uno|una|unos|unas)(?:\\s+m[aá]s)?\\s+(.{2,60})$")
+
+    /**
+     * Después de un chiste: «otro chileno», «uno de parejas»… → los tipos que nombra. Null si no es eso.
+     * («otro pero diferente», «otro jaja» → null aquí; eso lo resuelve [asksAnother]).
+     */
+    fun anotherOfKinds(q: String): List<Kind>? {
+        val m = anotherOfRx.find(q.trim()) ?: return null
+        val rest = m.groupValues[1].lowercase()
+            .replace(Regex("(?iu)\\b(pero|m[aá]s|diferente|distinto|nuevo|por favor|porfa|po|jaja\\S*|jeje\\S*|jiji\\S*|xd|chiste|chistes)\\b"), " ")
+            .replace(Regex("[!?.,¡¿]"), " ").trim()
+        if (rest.isBlank()) return null
+        val kinds = kindsIn(rest)
+        // Si no nombró un país o tipo que conozcamos («otro de dinosaurios»), no es de la colección
+        return if (kinds == DEFAULT_KINDS) null else kinds
+    }
+
+    private val DEFAULT_KINDS = listOf(Kind.GENERAL, Kind.QUE_LE_DIJO, Kind.COLMO, Kind.CHILE)
+
+    /**
+     * 🌐 «Quiero un chiste de internet», «busca un chiste de internet», «dime una paya de internet»,
+     * «quiero que me cuentes un chiste argentino de internet»: se busca en internet (no en la colección).
+     */
+    private val internetRx = Regex("(?iu)(?:de|en|por|desde|con)\\s+(?:el\\s+)?internet|de la web|de google|en google|" +
+        "b[uú]sca(?:me|nos|r)?\\s+(?:en internet\\s+)?(?:un|una|unos|unas|alg[uú]n|alguna|otro|otra)?\\s*(?:chistes?|payas?|adivinanzas?|trabalenguas|piadas?)")
+
+    fun wantsInternet(q: String): Boolean = internetRx.containsMatchIn(q) && askRx.containsMatchIn(q)
 
     /** ¿Es «otro», «uno más», «cuéntame otro»…? */
     fun asksAnother(q: String): Boolean = anotherRx.matches(q.trim())
@@ -271,7 +307,9 @@ object JokeBank {
      * Elige [count] chistes de [kinds] que no estén en [used] (los que ya contó). Si se acabaron los de ese tipo,
      * devuelve null cuando [canSearch] (para buscar más en internet) o vuelve a empezar la ronda si no hay internet.
      */
-    fun pick(kinds: List<Kind>, count: Int, used: Set<String>, topic: String?, canSearch: Boolean, random: java.util.Random = java.util.Random()): List<Joke>? {
+    @Suppress("UNUSED_PARAMETER")
+    fun pick(kinds: List<Kind>, count: Int, used: Set<String>, topic: String?, canSearch: Boolean, random: java.util.Random = java.util.Random(),
+             usedOrder: List<String> = emptyList()): List<Joke>? {
         var pool = ALL.filter { it.kind in kinds }
         if (topic != null) {
             pool = ALL.filter { (it.text + " " + it.answer).lowercase().contains(topic) && (it.kind != Kind.PAREJAS || Kind.PAREJAS in kinds) }
@@ -279,8 +317,12 @@ object JokeBank {
         }
         var fresh = pool.filter { it.id !in used }
         if (fresh.isEmpty()) {
-            if (canSearch) return null        // ya contó todos los de ese tipo → busca más en internet
-            fresh = pool                      // sin internet: empieza otra ronda
+            // 🔁 Ya contó todos los de ese tipo: empieza otra ronda (con o sin internet), primero los que contó hace más
+            //    tiempo y nunca los últimos que acabas de ver. Antes, con internet, respondía la IA y copiaba el último chiste.
+            val order = usedOrder.ifEmpty { used.toList() }
+            val recent = order.takeLast(minOf(pool.size - count, maxOf(1, pool.size / 2)).coerceAtLeast(0)).toSet()
+            fresh = pool.filter { it.id !in recent }.sortedBy { order.indexOf(it.id) }.take(maxOf(count, 2))   // de los 2 más antiguos: todos vuelven a salir
+            if (fresh.isEmpty()) fresh = pool
         }
         // Se reparte entre los tipos pedidos (ej. «chistes chilenos y argentinos»)
         val out = mutableListOf<Joke>()
