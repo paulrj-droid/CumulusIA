@@ -343,13 +343,13 @@ object MarketFinder {
     // =====================================================================
     // 🧩 BLOQUES FINALES
     // =====================================================================
-    /** Avisos con foto: «🖼️ Foto 2 (abajo) — Título · 🔗 enlace» (photoNumbers = número de foto de cada aviso). */
+    /** Avisos con foto: «🖼️ Foto 2 (arriba) — Título · 🔗 enlace» (photoNumbers = número de foto de cada aviso). */
     fun listingsBlock(header: String, listings: List<Listing>, photoNumbers: List<Int?>): String {
         if (listings.isEmpty()) return ""
         val sb = StringBuilder(header).append('\n')
         listings.forEachIndexed { i, l ->
             sb.append("\n").append(i + 1).append(". ").append(shortTitle(l.title).ifBlank { l.site })
-            photoNumbers.getOrNull(i)?.let { sb.append(" · 🖼️ Foto ").append(it).append(" (abajo)") }
+            photoNumbers.getOrNull(i)?.let { sb.append(" · 🖼️ Foto ").append(it).append(" (arriba)") }
             sb.append("\n   🔗 ").append(l.pageUrl).append('\n')
         }
         sb.append("\n⚠️ Confirma en el aviso que siga disponible y el precio final antes de pagar o reservar.")
@@ -359,3 +359,4 @@ object MarketFinder {
     fun linksBlock(header: String, links: List<Pair<String, String>>): String =
         if (links.isEmpty()) "" else header + "\n" + links.joinToString("\n") { (n, u) -> "   • $n: $u" }
 }
+
