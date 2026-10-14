@@ -17,8 +17,11 @@ class CrashActivity : Activity() {
             textSize = 12f
         }
         val scrollView = ScrollView(this).apply {
+            // 📱 Android 15/16 dibujan de borde a borde: así el texto no queda debajo de la hora ni de la barra de gestos
+            fitsSystemWindows = true
             addView(textView)
         }
         setContentView(scrollView)
     }
 }
+
