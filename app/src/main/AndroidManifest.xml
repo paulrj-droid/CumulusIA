@@ -17,7 +17,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- 📍 Ubicación aproximada: locales para comer, cines, hoteles, atractivos y paraderos cerca de ti (se pide solo al usarlo) -->
+    <!-- 📍 Ubicación (exacta o aproximada, la eliges tú): búsquedas en internet con tu comuna (micros, vuelos, empleos, cines,
+         comida, hoteles, farmacias, arriendos, autos, el cielo…). Se pide solo al usarla, nunca en segundo plano -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <application
@@ -79,5 +81,4 @@
     </application>
 
 </manifest>
-
 
