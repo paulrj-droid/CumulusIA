@@ -312,4 +312,6 @@ target_link_libraries(
 # Las librerías que corren DENTRO de la NPU (libggml-htp-v79.so, etc.) las copia
 # el workflow de GitHub a jniLibs para que vayan en el APK.
 
-
+# 📏 Páginas de memoria de 16 KB: Google Play lo exige a las apps con código nativo que apuntan a Android 15 o más
+#    (sin esto, la librería del motor se arma para páginas de 4 KB y Play Console la marca como incompatible)
+target_link_options(cumulus_native PRIVATE "-Wl,-z,max-page-size=16384")
