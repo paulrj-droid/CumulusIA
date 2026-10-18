@@ -87,7 +87,9 @@ object FoodFinder {
         "almorzar|almuerzo|\\bcenar\\b|\\bcena\\b|desayunar|\\bmen[uú]\\b|\\bcarta\\b|picada|para llevar")
     /** Cocinar en casa, recetas, nutrición o datos sobre una comida: no es buscar un local. */
     private val notAPlace = rx("receta|cocin|prepar|c[oó]mo (se )?hace|ingrediente|calor[ií]a|nutri|dieta|prote[ií]na|historia|origen|" +
-        "qui[eé]n invent|significa|en ingl[eé]s|c[oó]mo se dice|youtube|\\bvideos?\\b|ideas? (de|para)|escr[ií]be|poema|chiste")
+        "qui[eé]n invent|significa|en ingl[eé]s|c[oó]mo se dice|youtube|\\bvideos?\\b|ideas? (de|para)|escr[ií]be|poema|chiste|" +
+        // 🍳 recetas en otros idiomas (van a las páginas de recetas del país, no a locales)
+        "recipe|how to (cook|make)|receita|recette|rezept|ricett|рецепт|食谱|菜谱|做法|레시피|만드는 법|レシピ|作り方")
     /** «¿Qué puedo comer?» (ideas por categoría, ya existía) salvo que diga pedir, delivery, local, dónde… */
     private val homeIdeas = rx("qu[eé] (puedo|podr[ií]a|deber[ií]a) (comer|almorzar|cenar|desayunar)|qu[eé] (como|almuerzo|ceno|desayuno)( hoy)?\\b|" +
         "recomi[eé]nda(me)? (algo de |qu[eé] )?(comer|comida)")
