@@ -47,12 +47,180 @@ object PreviewPanel {
         return out
     }
 
+    // ------------------------------------------------------------------ 🤖 LLEVAR MI PROYECTO A OTRA IA
+    /** Ruta del archivo dentro del proyecto según su tipo («activity_main.xml» → app/src/main/res/layout/activity_main.xml). */
+    private fun projectPath(b: CodeBlock, web: Boolean): String {
+        val f = b.fileName ?: return ""
+        val c = b.code
+        val ext = f.substringAfterLast('.', "").lowercase()
+        return when {
+            web && ext in setOf("html", "htm", "css", "js") -> f
+            f.equals("AndroidManifest.xml", true) -> "app/src/main/$f"
+            f.endsWith(".gradle") || f.endsWith(".gradle.kts") -> if (f.startsWith("settings")) f else "app/$f"
+            ext == "kt" || ext == "java" -> {
+                val pkg = Regex("(?m)^\\s*package\\s+([\\w.]+)").find(c)?.groupValues?.get(1)
+                "app/src/main/java/" + (pkg?.replace('.', '/')?.plus("/") ?: "") + f
+            }
+            ext in setOf("cpp", "cc", "c", "h", "hpp") || f == "CMakeLists.txt" -> "app/src/main/cpp/$f"
+            ext == "xml" -> when {
+                c.contains("<navigation") -> "app/src/main/res/navigation/$f"
+                Regex("<menu[\\s>]").containsMatchIn(c) && !viewRoots.containsMatchIn(c) -> "app/src/main/res/menu/$f"
+                c.contains("<resources") -> "app/src/main/res/values/$f"
+                Regex("<(shape|selector|vector|layer-list|ripple)[\\s>]").containsMatchIn(c) -> "app/src/main/res/drawable/$f"
+                else -> "app/src/main/res/layout/$f"
+            }
+            else -> f
+        }
+    }
+
+    /**
+     * 🤖 Todo el proyecto en un solo texto, listo para pegar en Claude, Gemini o ChatGPT: qué app es, lo que pidió el
+     * usuario, el resumen (pantallas, botones y lo que ya funciona) y CADA archivo (su versión más nueva) con su ruta.
+     * null si todavía no hay código en el chat.
+     */
+    /** Textos del mensaje para la otra IA, en el idioma del usuario (12 idiomas; el resto, inglés). */
+    private class HandoffText(val kindWeb: String, val kindCpp: String, val kindAndroid: String, val hello: String, val below: String,
+                              val asked: String, val summary: String, val files: String, val need: String,
+                              val n1: String, val n2: String, val n3: String, val reply: String)
+
+    private val HANDOFF = mapOf(
+        "es" to HandoffText("una app web (HTML, CSS y JavaScript)", "una app Android con IA local (Kotlin + XML + C++ con llama.cpp)",
+            "una app Android (Kotlin + diseños XML)", "Hola. Estoy desarrollando %s y necesito que me ayudes a seguir desarrollándola.",
+            "Abajo está TODO el proyecto como va ahora: cada archivo con su ruta y su contenido completo.",
+            "LO QUE HE PEDIDO HASTA AHORA", "RESUMEN DEL PROYECTO", "ARCHIVOS", "QUÉ NECESITO",
+            "1. Revisa el proyecto y corrige los errores que encuentres (que compile y funcione).",
+            "2. Ayúdame a seguir desarrollándolo: te iré diciendo qué agregar.",
+            "3. Cuando cambies algo, entrégame el archivo COMPLETO con su ruta (no solo un pedazo).", "Responde en español."),
+        "en" to HandoffText("a web app (HTML, CSS and JavaScript)", "an Android app with local AI (Kotlin + XML + C++ with llama.cpp)",
+            "an Android app (Kotlin + XML layouts)", "Hi. I'm developing %s and I need your help to keep building it.",
+            "Below is the WHOLE project as it is now: every file with its path and full content.",
+            "WHAT I HAVE ASKED FOR SO FAR", "PROJECT SUMMARY", "FILES", "WHAT I NEED",
+            "1. Review the project and fix any errors you find (it must compile and work).",
+            "2. Help me keep developing it: I'll tell you what to add.",
+            "3. When you change something, give me the COMPLETE file with its path (not just a fragment).", "Reply in English."),
+        "pt" to HandoffText("um app web (HTML, CSS e JavaScript)", "um app Android com IA local (Kotlin + XML + C++ com llama.cpp)",
+            "um app Android (Kotlin + layouts XML)", "Olá. Estou desenvolvendo %s e preciso da sua ajuda para continuar.",
+            "Abaixo está TODO o projeto como está agora: cada arquivo com seu caminho e conteúdo completo.",
+            "O QUE PEDI ATÉ AGORA", "RESUMO DO PROJETO", "ARQUIVOS", "O QUE EU PRECISO",
+            "1. Revise o projeto e corrija os erros que encontrar (precisa compilar e funcionar).",
+            "2. Me ajude a continuar desenvolvendo: vou dizendo o que adicionar.",
+            "3. Quando mudar algo, me entregue o arquivo COMPLETO com o caminho (não só um trecho).", "Responda em português."),
+        "fr" to HandoffText("une app web (HTML, CSS et JavaScript)", "une app Android avec IA locale (Kotlin + XML + C++ avec llama.cpp)",
+            "une app Android (Kotlin + layouts XML)", "Bonjour. Je développe %s et j'ai besoin de ton aide pour continuer.",
+            "Ci-dessous se trouve TOUT le projet actuel : chaque fichier avec son chemin et son contenu complet.",
+            "CE QUE J'AI DEMANDÉ JUSQU'ICI", "RÉSUMÉ DU PROJET", "FICHIERS", "CE DONT J'AI BESOIN",
+            "1. Relis le projet et corrige les erreurs (il doit compiler et fonctionner).",
+            "2. Aide-moi à continuer le développement : je te dirai quoi ajouter.",
+            "3. Quand tu modifies quelque chose, donne-moi le fichier COMPLET avec son chemin (pas seulement un extrait).", "Réponds en français."),
+        "de" to HandoffText("eine Web-App (HTML, CSS und JavaScript)", "eine Android-App mit lokaler KI (Kotlin + XML + C++ mit llama.cpp)",
+            "eine Android-App (Kotlin + XML-Layouts)", "Hallo. Ich entwickle %s und brauche deine Hilfe, um weiterzumachen.",
+            "Unten ist das GANZE aktuelle Projekt: jede Datei mit Pfad und vollständigem Inhalt.",
+            "WAS ICH BISHER ANGEFRAGT HABE", "PROJEKTÜBERSICHT", "DATEIEN", "WAS ICH BRAUCHE",
+            "1. Prüfe das Projekt und behebe gefundene Fehler (es muss kompilieren und funktionieren).",
+            "2. Hilf mir, es weiterzuentwickeln: ich sage dir, was hinzukommen soll.",
+            "3. Wenn du etwas änderst, gib mir die VOLLSTÄNDIGE Datei mit Pfad (nicht nur einen Ausschnitt).", "Antworte auf Deutsch."),
+        "it" to HandoffText("un'app web (HTML, CSS e JavaScript)", "un'app Android con IA locale (Kotlin + XML + C++ con llama.cpp)",
+            "un'app Android (Kotlin + layout XML)", "Ciao. Sto sviluppando %s e ho bisogno del tuo aiuto per continuare.",
+            "Qui sotto c'è TUTTO il progetto attuale: ogni file con il suo percorso e il contenuto completo.",
+            "COSA HO CHIESTO FINORA", "RIEPILOGO DEL PROGETTO", "FILE", "COSA MI SERVE",
+            "1. Controlla il progetto e correggi gli errori (deve compilare e funzionare).",
+            "2. Aiutami a continuare lo sviluppo: ti dirò cosa aggiungere.",
+            "3. Quando cambi qualcosa, dammi il file COMPLETO con il percorso (non solo un pezzo).", "Rispondi in italiano."),
+        "nl" to HandoffText("een web-app (HTML, CSS en JavaScript)", "een Android-app met lokale AI (Kotlin + XML + C++ met llama.cpp)",
+            "een Android-app (Kotlin + XML-layouts)", "Hallo. Ik ontwikkel %s en ik heb je hulp nodig om verder te gaan.",
+            "Hieronder staat het HELE huidige project: elk bestand met pad en volledige inhoud.",
+            "WAT IK TOT NU TOE HEB GEVRAAGD", "PROJECTOVERZICHT", "BESTANDEN", "WAT IK NODIG HEB",
+            "1. Controleer het project en los fouten op (het moet compileren en werken).",
+            "2. Help me verder te ontwikkelen: ik zeg wat er bij moet.",
+            "3. Als je iets wijzigt, geef me het VOLLEDIGE bestand met pad (niet alleen een stukje).", "Antwoord in het Nederlands."),
+        "pl" to HandoffText("aplikację webową (HTML, CSS i JavaScript)", "aplikację Android z lokalną AI (Kotlin + XML + C++ z llama.cpp)",
+            "aplikację Android (Kotlin + layouty XML)", "Cześć. Tworzę %s i potrzebuję pomocy, żeby ją dalej rozwijać.",
+            "Poniżej jest CAŁY obecny projekt: każdy plik ze ścieżką i pełną treścią.",
+            "O CO PROSIŁEM DO TEJ PORY", "PODSUMOWANIE PROJEKTU", "PLIKI", "CZEGO POTRZEBUJĘ",
+            "1. Przejrzyj projekt i popraw błędy (musi się kompilować i działać).",
+            "2. Pomóż mi rozwijać go dalej: powiem, co dodać.",
+            "3. Gdy coś zmienisz, daj mi CAŁY plik ze ścieżką (nie tylko fragment).", "Odpowiadaj po polsku."),
+        "ru" to HandoffText("веб-приложение (HTML, CSS и JavaScript)", "Android-приложение с локальным ИИ (Kotlin + XML + C++ с llama.cpp)",
+            "Android-приложение (Kotlin + XML-разметка)", "Привет. Я разрабатываю %s, и мне нужна твоя помощь, чтобы продолжить.",
+            "Ниже ВЕСЬ текущий проект: каждый файл с путём и полным содержимым.",
+            "ЧТО Я УЖЕ ПРОСИЛ", "ОПИСАНИЕ ПРОЕКТА", "ФАЙЛЫ", "ЧТО МНЕ НУЖНО",
+            "1. Проверь проект и исправь ошибки (он должен компилироваться и работать).",
+            "2. Помоги мне развивать его дальше: я буду говорить, что добавить.",
+            "3. Когда что-то меняешь, давай ПОЛНЫЙ файл с путём (а не кусок).", "Отвечай на русском."),
+        "zh" to HandoffText("一个网页应用（HTML、CSS 和 JavaScript）", "一个带本地 AI 的安卓应用（Kotlin + XML + C++ 与 llama.cpp）",
+            "一个安卓应用（Kotlin + XML 布局）", "你好。我正在开发%s，需要你帮我继续开发。",
+            "下面是目前的整个项目：每个文件都附有路径和完整内容。",
+            "我目前提出的需求", "项目概要", "文件", "我需要的帮助",
+            "1. 检查项目并修复发现的错误（必须能编译并正常运行）。",
+            "2. 帮我继续开发：我会告诉你要添加什么。",
+            "3. 修改时请给我带路径的完整文件（不要只给片段）。", "请用中文回答。"),
+        "ko" to HandoffText("웹 앱(HTML, CSS, JavaScript)", "로컬 AI가 있는 안드로이드 앱(Kotlin + XML + llama.cpp를 사용하는 C++)",
+            "안드로이드 앱(Kotlin + XML 레이아웃)", "안녕하세요. %s을(를) 개발 중이며 계속 개발하려면 도움이 필요합니다.",
+            "아래는 현재 프로젝트 전체입니다: 각 파일의 경로와 전체 내용.",
+            "지금까지 요청한 내용", "프로젝트 요약", "파일", "필요한 것",
+            "1. 프로젝트를 검토하고 오류를 수정해 주세요(컴파일되고 작동해야 합니다).",
+            "2. 계속 개발할 수 있게 도와주세요: 추가할 내용을 말씀드릴게요.",
+            "3. 무언가를 바꾸면 경로와 함께 파일 전체를 주세요(일부만 말고).", "한국어로 답해 주세요."),
+        "ja" to HandoffText("Webアプリ（HTML・CSS・JavaScript）", "ローカルAI付きのAndroidアプリ（Kotlin + XML + llama.cppを使うC++）",
+            "Androidアプリ（Kotlin + XMLレイアウト）", "こんにちは。%sを開発していて、続きの開発を手伝ってほしいです。",
+            "以下が現在のプロジェクト全体です：各ファイルのパスと全内容。",
+            "これまでに依頼したこと", "プロジェクトの概要", "ファイル", "お願いしたいこと",
+            "1. プロジェクトを確認してエラーを直してください（コンパイルして動くように）。",
+            "2. 開発の続きを手伝ってください：追加したいことを伝えます。",
+            "3. 変更するときは、パス付きのファイル全体をください（一部だけでなく）。", "日本語で答えてください。")
+    )
+
+    /**
+     * 🤖 Todo el proyecto en un solo texto, listo para pegar en Claude, Gemini o ChatGPT: qué app es, lo que pidió el
+     * usuario, el resumen (pantallas, botones y lo que ya funciona) y CADA archivo (su versión más nueva) con su ruta.
+     * [lang]: idioma del usuario («es», «en», «pt», «zh»…): el mensaje y la instrucción «responde en…» van en ese idioma.
+     * null si todavía no hay código en el chat.
+     */
+    fun buildHandoff(messagesNewestFirst: List<String>, requestsOldestFirst: List<String>, lang: String = "es"): String? {
+        val t = HANDOFF[lang] ?: HANDOFF.getValue("en")
+        val all = messagesNewestFirst.asReversed().flatMap { codeBlocks(it) }
+        if (all.isEmpty()) return null
+        val web = all.any { isHtml(it) }
+        val cpp = all.any { it.fileName?.matches(Regex("(?i).*\\.(cpp|cc|hpp)$|CMakeLists\\.txt")) == true }
+        // La versión más nueva de cada archivo (sin el maqueta.js, que es solo para la maqueta)
+        val files = LinkedHashMap<String, CodeBlock>()
+        var n = 1
+        for (b in all) {
+            if (b.fileName?.equals("maqueta.js", true) == true || b.code.isBlank()) continue
+            val key = b.fileName?.let { projectPath(b, web) } ?: "sin_nombre_${n++}.${b.lang.ifBlank { "txt" }}"
+            files.remove(key); files[key] = b
+        }
+        if (files.isEmpty()) return null
+        val kind = when { web -> t.kindWeb; cpp -> t.kindCpp; else -> t.kindAndroid }
+        val sb = StringBuilder()
+        sb.append(t.hello.format(kind)).append('\n').append(t.below).append("\n\n")
+        if (requestsOldestFirst.isNotEmpty()) {
+            sb.append("=== ${t.asked} ===\n")
+            requestsOldestFirst.takeLast(12).forEach { sb.append("- ").append(it.replace(Regex("\\s+"), " ").take(220)).append('\n') }
+            sb.append('\n')
+        }
+        projectOutline(messagesNewestFirst, maxChars = 1500)?.let {
+            val body = it.substringAfter("]\n", it).let { o -> if (lang == "es") o else o.replace("Archivos:", "Files:")
+                .replace("Pantallas y elementos:", "Screens and elements:").replace("Botones que ya funcionan:", "Buttons that already work:") }
+            sb.append("=== ${t.summary} ===\n").append(body).append("\n\n")
+        }
+        sb.append("=== ${t.files} (${files.size}) ===\n")
+        for ((path, b) in files) {
+            sb.append("\n📁 ").append(path).append('\n')
+            sb.append("```").append(b.lang.ifBlank { path.substringAfterLast('.', "") }).append('\n')
+            sb.append(b.code.trimEnd()).append("\n```\n")
+        }
+        sb.append("\n=== ${t.need} ===\n").append(t.n1).append('\n').append(t.n2).append('\n').append(t.n3).append('\n').append(t.reply)
+        return sb.toString()
+    }
+
     // ------------------------------------------------------------------ VISTA PREVIA WEB
     private fun isHtml(b: CodeBlock) = b.lang in setOf("html", "htm", "xhtml") ||
         b.fileName?.matches(Regex("(?i).*\\.html?$")) == true ||
         Regex("(?i)<!doctype html|<html[\\s>]|<body[\\s>]").containsMatchIn(b.code)
     private fun isCss(b: CodeBlock) = b.lang == "css" || b.fileName?.endsWith(".css", true) == true
-    private fun isJs(b: CodeBlock) = b.lang in setOf("js", "javascript", "jsx") || b.fileName?.endsWith(".js", true) == true
+    private fun isJs(b: CodeBlock) = b.fileName?.equals("maqueta.js", true) != true &&   // 🧪 la lógica de la maqueta no es una app web
+        (b.lang in setOf("js", "javascript", "jsx") || b.fileName?.endsWith(".js", true) == true)
 
     /** messagesNewestFirst: textos de las respuestas de la IA, de la más nueva a la más vieja. */
     fun buildWebPage(messagesNewestFirst: List<String>): Pair<String, String>? {
@@ -100,11 +268,115 @@ object PreviewPanel {
     private val viewRoots = Regex("(?i)<(LinearLayout|androidx\\.[\\w.]*Layout|[\\w.]*ConstraintLayout|RelativeLayout|FrameLayout|ScrollView|" +
         "[\\w.]*NestedScrollView|[\\w.]*CoordinatorLayout|[\\w.]*CardView|[\\w.]*DrawerLayout|TableLayout|GridLayout|merge)[\\s>]")
 
+    /**
+     * 🧪 TODOS los maqueta.js del chat, del más viejo al más nuevo: la lógica se va SUMANDO (enviar, después el micrófono…).
+     * Si dos tocan el mismo botón, gana el más nuevo. Cada uno va aparte, para que un error en uno no apague a los otros.
+     */
+    private fun mockupLogic(messagesNewestFirst: List<String>): List<String> =
+        messagesNewestFirst.asReversed().flatMap { msg -> codeBlocks(msg).filter { it.fileName?.equals("maqueta.js", true) == true && it.code.isNotBlank() } }
+            .map { it.code }.distinct()
+
+    /**
+     * 🧱 Resumen del proyecto para la IA (modo código): archivos, pantallas con sus elementos y qué botones ya tienen lógica.
+     * Así sigue la MISMA app aunque el chat sea largo y el modelo tenga poca memoria. null si todavía no hay código.
+     */
+    fun projectOutline(messagesNewestFirst: List<String>, maxChars: Int = 650): String? {
+        val files = LinkedHashSet<String>()
+        for (msg in messagesNewestFirst.asReversed()) for (b in codeBlocks(msg)) {
+            val f = b.fileName ?: continue
+            if (f.equals("maqueta.js", true)) continue
+            files.remove(f); files.add(f)
+        }
+        if (files.isEmpty()) return null
+        val sb = StringBuilder("[PROYECTO ACTUAL: sigue desarrollando ESTA MISMA app; conserva los nombres e id que ya existen]\n")
+        sb.append("Archivos: ").append(files.toList().takeLast(14).joinToString(", ")).append('\n')
+        mockupIds(messagesNewestFirst, maxChars = 380)?.let { sb.append("Pantallas y elementos:\n").append(it).append('\n') }
+        val done = mockupLogic(messagesNewestFirst).flatMap { js -> Regex("alClick\\(\\s*['\"]([\\w]+)['\"]").findAll(js).map { it.groupValues[1] }.toList() }.distinct()
+        if (done.isNotEmpty()) sb.append("Botones que ya funcionan: ").append(done.joinToString(", ")).append('\n')
+        return sb.toString().take(maxChars).trim()
+    }
+
+    /**
+     * 🧪 Resumen corto de las pantallas para que la IA escriba maqueta.js: cada pantalla con sus elementos
+     * («activity_main: EditText etPost, Button btnPublicar, RecyclerView rvPosts»). null si no hay diseños.
+     */
+    fun mockupIds(messagesNewestFirst: List<String>, maxChars: Int = 700): String? {
+        val layouts = LinkedHashMap<String, String>()
+        var n = 1
+        for (msg in messagesNewestFirst.asReversed()) for (b in codeBlocks(msg)) {
+            val c = b.code
+            if ((b.lang == "xml" || c.trimStart().startsWith("<")) && viewRoots.containsMatchIn(c) && !c.contains("<manifest")) {
+                val name = b.fileName?.substringBeforeLast('.') ?: "pantalla_${n++}"
+                layouts.remove(name); layouts[name] = c
+            }
+        }
+        if (layouts.isEmpty()) return null
+        val sb = StringBuilder()
+        // Las pantallas más nuevas primero (si no cabe todo, se dejan fuera las más viejas)
+        for ((name, xml) in layouts.entries.reversed()) {
+            val ids = Regex("<([\\w.]+)\\b[^>]*?android:id=\"@\\+id/([\\w]+)\"", RegexOption.DOT_MATCHES_ALL).findAll(xml)
+                .map { "${it.groupValues[1].substringAfterLast('.')} ${it.groupValues[2]}" }.toList()
+            if (ids.isEmpty()) continue
+            val line = "$name: " + ids.joinToString(", ") + "\n"
+            if (sb.length + line.length > maxChars) break
+            sb.append(line)
+        }
+        return sb.toString().trim().ifEmpty { null }
+    }
+
+    /**
+     * 🎮 Interactividad básica de la maqueta (siempre): el menú lateral y la barra de abajo abren la pantalla,
+     * ＋ agrega a la lista, ➤ manda lo escrito a la lista, ♥ se marca, los botones y los interruptores avisan.
+     * Funciones para maqueta.js: alClick(id,fn) · texto(id[,valor]) · valor(id) · limpiar(id) · agregar(listaId,texto)
+     * · aviso(msg) · abrir(pantalla) · mostrar(id,true/false) · burbuja(texto[, deLaApp]) (mensaje de chat en la pantalla)
+     */
+    private val INTERACTIVE_JS = """
+function el(id){return document.querySelector('.screen[style*="flex"] [data-id="'+id+'"]')||document.querySelector('[data-id="'+id+'"]');}
+function aviso(m){var t=document.getElementById('toast');t.textContent=m;t.style.opacity=1;clearTimeout(t._h);t._h=setTimeout(function(){t.style.opacity=0},1900);}
+function texto(id,v){var e=el(id);if(!e)return '';if(v===undefined)return e.value!==undefined?e.value:e.textContent;if(e.value!==undefined)e.value=v;else e.textContent=v;}
+function valor(id){var e=el(id);return e?(e.value!==undefined?e.value:e.textContent):'';}
+function limpiar(id){var e=el(id);if(e&&e.value!==undefined)e.value='';}
+function mostrar(id,on){var e=el(id);if(e)e.style.display=on?'':'none';}
+var H={};
+function alClick(id,fn){H[id]=fn;document.querySelectorAll('[data-id="'+id+'"]').forEach(function(e){e.dataset.h='1';if(e._hb)return;e._hb=1;
+ e.addEventListener('click',function(ev){ev.stopPropagation();var f=H[id];if(f)try{f(e)}catch(x){aviso('⚠️ '+x.message)}});});}
+function burbuja(txt,deApp){var a=document.activeElement&&document.activeElement.matches&&document.activeElement.matches('input.inp')?document.activeElement:null;
+ var s=document.querySelector('.screen[style*="flex"]');if(!s)return;var i=a||s.querySelector('input.inp');var log=s.querySelector('.chatlog');
+ if(!log){log=document.createElement('div');log.className='chatlog';var bar=i?(i.closest('.v[style*="row"]')||i):null;
+  if(bar&&bar.parentNode)bar.parentNode.insertBefore(log,bar);else s.appendChild(log);}
+ var b=document.createElement('div');b.className='bub'+(deApp?' app':'');b.textContent=txt;log.appendChild(b);log.scrollTop=log.scrollHeight;}
+function agregar(lista,txt){var l=typeof lista==='string'?el(lista):lista;if(!l){burbuja(txt);return;}
+ var f=l.firstElementChild,n;if(f){n=f.cloneNode(true);var t=n.querySelector('.txt')||n.querySelector('div:last-child');if(t)t.textContent=txt;}
+ else{n=document.createElement('div');n.className='row';n.textContent=txt;}
+ l.insertBefore(n,l.firstChild);n.scrollIntoView({behavior:'smooth',block:'nearest'});}
+function nrm(s){return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');}
+var SYN={inicio:'home feed main inicio principal',perfil:'profile perfil account cuenta',ajustes:'settings ajustes config',
+ mensajes:'chat message mensaje inbox',notificaciones:'notif alerta',buscar:'search buscar explore explorar',amigos:'friend amigo follow seguidor',
+ publicar:'post publicar crear create new nueva',fotos:'photo foto gallery galeria'};
+function abrir(n){var k=nrm(n);if(!k)return false;var keys=[k];for(var s in SYN){if(k.indexOf(s)>=0||SYN[s].split(' ').some(function(w){return k.indexOf(w)>=0}))keys=keys.concat(SYN[s].split(' '));}
+ for(var i=0;i<NAMES.length;i++){var y=nrm(NAMES[i]);if(keys.some(function(w){return w.length>2&&y.indexOf(w)>=0})){show(i);return true;}}return false;}
+function scr(e){return e.closest('.screen');}
+document.addEventListener('click',function(ev){var e=ev.target.closest('.nv,.bn,.fab,.ibtn,.btn,input[type=checkbox]');if(!e||e.dataset.h)return;
+ if(e.matches('.nv,.bn')){var t=e.textContent.replace(/^[^\w\u00C0-\u024F]+/,'').trim();var d=e.closest('.dl');if(d)d.classList.remove('ol','or');
+  if(!abrir(t))aviso('📂 Abriste: '+t);return;}
+ if(e.matches('input[type=checkbox]')){aviso(e.checked?'✅ Activado':'⬜ Desactivado');return;}
+ var s=scr(e),l=s&&s.querySelector('.lst'),inp=s&&Array.prototype.find.call(s.querySelectorAll('input.inp'),function(i){return i.value.trim()});
+ var tx=e.textContent.trim();
+ if(e.matches('.fab')||tx==='＋'){if(l){agregar(l,inp?inp.value.trim():'✨ Nuevo elemento');if(inp)inp.value='';}else aviso('＋ Agregar');return;}
+ if(tx==='➤'){if(inp){if(l)agregar(l,inp.value.trim());else burbuja(inp.value.trim());inp.value='';}else aviso('✍️ Escribe algo primero');return;}
+ if(tx==='♥'){e.classList.toggle('liked');return;}
+ if(e.matches('.ibtn')&&(tx==='☰'||tx==='⚙'))return;
+ if(e.matches('.btn')&&inp){if(l)agregar(l,inp.value.trim());else burbuja(inp.value.trim());inp.value='';return;}
+ aviso('👆 '+(tx||'Botón'));});
+"""
+
     fun buildAppMockup(messagesNewestFirst: List<String>): Pair<String, String>? {
         val layouts = LinkedHashMap<String, String>()
         val strings = HashMap<String, String>()
         val colors = HashMap<String, String>()
         val shapes = HashMap<String, String>()   // fondos redondeados (res/drawable/*.xml con <shape>)
+        val navs = LinkedHashMap<String, String>()   // 🧭 res/navigation/*.xml (qué fragmento se ve primero)
+        val menus = HashMap<String, String>()        // ☰ res/menu/*.xml (opciones del menú lateral y de la barra de abajo)
         var n = 1
         // Del más viejo al más nuevo, para que la versión nueva de un archivo reemplace a la vieja
         for (msg in messagesNewestFirst.asReversed()) for (b in codeBlocks(msg)) {
@@ -112,6 +384,9 @@ object PreviewPanel {
             if (!(b.lang == "xml" || c.trimStart().startsWith("<"))) continue
             when {
                 c.contains("<shape") && b.fileName != null -> shapes[b.fileName.substringBeforeLast('.')] = c
+                c.contains("<navigation") -> navs[b.fileName?.substringBeforeLast('.') ?: "nav_${n++}"] = c
+                Regex("<menu[\\s>]").containsMatchIn(c) && !viewRoots.containsMatchIn(c) ->
+                    menus[b.fileName?.substringBeforeLast('.') ?: "menu_${n++}"] = c
                 c.contains("<resources") -> {
                     Regex("<string\\s+name=\"([^\"]+)\"[^>]*>(.*?)</string>", RegexOption.DOT_MATCHES_ALL).findAll(c)
                         .forEach { strings[it.groupValues[1]] = it.groupValues[2].replace("\\'", "'").replace("\\n", " ").trim() }
@@ -130,10 +405,17 @@ object PreviewPanel {
         val tabs = StringBuilder(); val screens = StringBuilder()
         ordered.forEachIndexed { i, (name, xml) ->
             tabs.append("<button class='tab${if (i == 0) " on" else ""}' onclick='show($i)'>${esc(name)}</button>")
-            val body = runCatching { XmlToHtml(strings, colors, layouts, shapes).convert(xml, 0) }
+            val body = runCatching { XmlToHtml(strings, colors, layouts, shapes, navs, menus).convert(xml, 0) }
                 .getOrElse { "<div class='err'>No pude dibujar este diseño (el XML tiene un error):<br>${esc(it.message ?: "")}</div>" }
             screens.append("<div class='screen' id='s$i' style='display:${if (i == 0) "flex" else "none"}'>$body</div>")
         }
+        val namesJs = ordered.joinToString(",", "[", "]") { "'" + it.key.replace("'", "") + "'" }
+        // 🧪 Lógica de la maqueta escrita por la IA (maqueta.js): se ejecuta encima de la interactividad básica
+        val logic = mockupLogic(messagesNewestFirst)
+        val userJs = logic.joinToString("\n") { js ->
+            "try{\n" + js.replace("</script", "<\\/script") + "\n}catch(e){aviso('⚠️ La lógica de la maqueta tuvo un error: '+e.message)}" }
+        val noteText = if (logic.isNotEmpty()) "📱 Maqueta con la lógica de tu app (simulada en JavaScript). La app real usa el Kotlin al compilarla."
+            else "📱 Maqueta interactiva: menús, botones y listas responden como ejemplo. La lógica Kotlin real funciona al compilar la app."
         val page = """
 <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
@@ -160,14 +442,24 @@ object PreviewPanel {
  .dl.ol>.dl-left,.dl.or>.dl-right{transform:none}
  .scrim{position:absolute;inset:0;background:#0008;z-index:5;display:none} .dl.ol>.scrim,.dl.or>.scrim{display:block}
  .note{font-size:12px;color:#8e8e93;text-align:center;padding:4px 12px 16px}
+ .bar .hamb{display:none;color:#fff;width:32px;height:32px;min-width:32px} .dl .bar .hamb{display:flex}
+ #toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#2c2c32;color:#fff;padding:10px 16px;border-radius:18px;
+  font-size:13px;opacity:0;transition:opacity .25s;z-index:20;max-width:80vw;text-align:center;box-shadow:0 4px 14px #000a;pointer-events:none}
+ .liked{color:#ff4d6d!important}
+ .chatlog{display:flex;flex-direction:column;gap:6px;padding:8px;overflow:auto;flex:1;min-height:60px}
+ .bub{align-self:flex-end;background:#3D5AFE;color:#fff;border-radius:16px 16px 4px 16px;padding:8px 12px;max-width:75%;font-size:14px;word-wrap:break-word}
+ .bub.app{align-self:flex-start;background:#2a2a30;border-radius:16px 16px 16px 4px} .nv,.bn,.btn,.ibtn,.fab{cursor:pointer}
 </style></head><body>
 <div class="tabs">$tabs</div>
 <div class="phone">$screens</div>
-<div class="note">📱 Maqueta del diseño (XML). Los botones se ven pero la lógica Kotlin solo funciona al compilar la app.</div>
+<div class="note">$noteText</div><div id="toast"></div>
 <script>
 function dr(e,s){var d=e.closest('.dl');if(!d)return;d.classList.remove('ol','or');if(s)d.classList.add(s);}
 function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.style.display=k==i?'flex':'none'});
  document.querySelectorAll('.tab').forEach(function(t,k){t.classList.toggle('on',k==i)});}
+$INTERACTIVE_JS
+var NAMES=$namesJs;
+$userJs
 </script></body></html>"""
         val code = ordered.joinToString("\n\n") { "<!-- ${it.key}.xml -->\n${it.value}" }
         return page to code
@@ -201,7 +493,38 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
 
     /** Convierte un diseño XML de Android en HTML aproximado. */
     private class XmlToHtml(val strings: Map<String, String>, val colors: Map<String, String>, val layouts: Map<String, String>,
-                            val shapes: Map<String, String> = emptyMap()) {
+                            val shapes: Map<String, String> = emptyMap(), val navs: Map<String, String> = emptyMap(),
+                            val menus: Map<String, String> = emptyMap()) {
+
+        /**
+         * 🧭 Pantalla que muestra un contenedor de fragmentos (FragmentContainerView / NavHostFragment):
+         * la de inicio del gráfico de navegación; si no, la que indica tools:layout; si no, el fragmento «home/feed/inicio».
+         * Antes el contenedor quedaba vacío y la app se veía en blanco al agregarle la lógica con fragmentos.
+         */
+        fun fragmentLayout(a: Map<String, String>): String? {
+            a["layout"]?.substringAfter("/")?.let { layouts[it] }?.let { return it }
+            val graph = a["navGraph"]?.substringAfter("/")?.let { navs[it] } ?: navs.values.firstOrNull()
+            if (graph != null) {
+                val start = Regex("startDestination=\"@\\+?id/([\\w.]+)\"").find(graph)?.groupValues?.get(1)
+                val frags = Regex("<(?:fragment|dialog)\\b[^>]*?>", RegexOption.DOT_MATCHES_ALL).findAll(graph).map { it.value }.toList()
+                val tag = frags.firstOrNull { start != null && Regex("android:id=\"@\\+?id/$start\"").containsMatchIn(it) } ?: frags.firstOrNull()
+                tag?.let { Regex("tools:layout=\"@layout/([\\w.]+)\"").find(it)?.groupValues?.get(1) }?.let { layouts[it] }?.let { return it }
+            }
+            val frag = layouts.keys.filter { it.startsWith("fragment") }
+            return (frag.firstOrNull { Regex("home|feed|inicio|main|principal|timeline|muro").containsMatchIn(it) } ?: frag.firstOrNull())
+                ?.let { layouts[it] }
+        }
+
+        /** ☰ Opciones de un menú (res/menu): título e ícono de cada <item>. */
+        fun menuItems(ref: String?): List<Pair<String, String>> {
+            val xml = ref?.substringAfter("/")?.let { menus[it] } ?: return emptyList()
+            return Regex("<item\\b[^>]*?>", RegexOption.DOT_MATCHES_ALL).findAll(xml).mapNotNull { m ->
+                val title = Regex("android:title=\"([^\"]+)\"").find(m.value)?.groupValues?.get(1)?.let { res(it) } ?: return@mapNotNull null
+                val icon = iconFor(mapOf("src" to (Regex("android:icon=\"([^\"]+)\"").find(m.value)?.groupValues?.get(1) ?: ""), "id" to title))
+                    .let { if (it == "●") "•" else it }
+                title to icon
+            }.toList()
+        }
 
         fun convert(xml: String, depth: Int): String = try { convertRaw(xml, depth) } catch (e: Exception) {
             // Diseño cortado: se completa y se dibuja lo que alcanzó a escribir la IA
@@ -375,6 +698,13 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
                 Regex("share|compartir").containsMatchIn(k) -> "↗"
                 Regex("delete|borrar|eliminar|trash").containsMatchIn(k) -> "🗑"
                 Regex("play").containsMatchIn(k) -> "▶"
+                // 🏠 Íconos típicos de menús de apps (inicio, perfil, notificaciones, mensajes, me gusta)
+                Regex("home|inicio|casa|feed").containsMatchIn(k) -> "🏠"
+                Regex("person|perfil|profile|account|cuenta|user|usuario").containsMatchIn(k) -> "👤"
+                Regex("notif|bell|campana|alert").containsMatchIn(k) -> "🔔"
+                Regex("message|chat|mensaje|mail|correo|inbox").containsMatchIn(k) -> "💬"
+                Regex("favorite|like|heart|coraz|me gusta").containsMatchIn(k) -> "♥"
+                Regex("logout|salir|exit|cerrar sesi").containsMatchIn(k) -> "⎋"
                 else -> "●"
             }
         }
@@ -383,13 +713,21 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
             val st = style(tag, a)
             val text = esc(res(a["text"]) ?: "")
             val hint = esc(res(a["hint"]) ?: "")
-            val id = a["id"]?.substringAfter('/')?.let { " title='${esc(it)}'" } ?: ""
+            val id = a["id"]?.substringAfter('/')?.let { " title='${esc(it)}' data-id='${esc(it)}'" } ?: ""
             val lg = a["layout_gravity"].orEmpty()
             return when {
                 // ☰ Paneles laterales (DrawerLayout): ocultos; se abren con los botones de menú y ajustes
                 tag == "DrawerLayout" ->
                     "<div class='v dl'$id style='display:flex;flex-direction:column;position:relative;overflow:hidden;$st'>" to
                         "<div class='scrim' onclick=\"dr(this,0)\"></div></div>"
+                // ☰ Menú lateral (NavigationView): su cabecera y sus opciones
+                tag == "NavigationView" -> {
+                    val header = a["headerLayout"]?.substringAfter("/")?.let { layouts[it] }
+                        ?.let { runCatching { convert(it, depth + 1) }.getOrDefault("") }.orEmpty()
+                    val items = menuItems(a["menu"]).joinToString("") { (t, i) -> "<div class='row nv'><span>$i</span><span>${esc(t)}</span></div>" }
+                    val cls = if (parent == "DrawerLayout") (if (lg.contains("end") || lg.contains("right")) "v drawer dl-right" else "v drawer dl-left") else "v"
+                    "<div class='$cls'$id style='background:#1b1b20;min-width:240px;$st'>$header$items" to "</div>"
+                }
                 parent == "DrawerLayout" && (lg.contains("start") || lg.contains("left")) ->
                     "<div class='v drawer dl-left'$id style='$st'>" to "</div>"
                 parent == "DrawerLayout" && (lg.contains("end") || lg.contains("right")) ->
@@ -400,13 +738,27 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
                     val tint = color(a["tint"])?.let { "color:$it;" } ?: ""
                     "<button class='ibtn v'$id$click style='$tint$st'>$icon</button>" to ""
                 }
+                // 🧭 Contenedor de fragmentos: se dibuja la pantalla de inicio (antes quedaba en blanco)
+                tag == "FragmentContainerView" || tag == "NavHostFragment" || (tag == "fragment" && parent != null) -> {
+                    val frag = fragmentLayout(a)
+                    val inner = if (frag != null) runCatching { convert(frag, depth + 1) }.getOrDefault("") else ""
+                    "<div class='v'$id style='display:flex;flex-direction:column;$st'>$inner" to "</div>"
+                }
+                // ▭ Barra de abajo (BottomNavigationView): sus opciones con ícono
+                tag == "BottomNavigationView" || tag == "NavigationBarView" -> {
+                    val items = menuItems(a["menu"]).ifEmpty { listOf("Inicio" to "🏠", "Buscar" to "🔍", "Perfil" to "👤") }
+                    "<div class='v'$id style='display:flex;flex-direction:row;justify-content:space-around;background:#18181c;padding:8px 0;$st'>" +
+                        items.joinToString("") { (t, i) -> "<div class='bn' style='display:flex;flex-direction:column;align-items:center;font-size:11px'><span style='font-size:18px'>$i</span>${esc(t)}</div>" } to "</div>"
+                }
                 tag == "HorizontalScrollView" -> "<div class='v'$id style='display:flex;flex-direction:row;overflow-x:auto;$st'>" to "</div>"
                 tag == "LinearLayout" -> {
                     val dir = if (a["orientation"] == "horizontal") "row" else "column"
                     "<div class='v'$id style='display:flex;flex-direction:$dir;${if (dir == "row") "align-items:center;gap:6px;" else ""}$st'>" to "</div>"
                 }
                 tag.endsWith("Toolbar") || tag == "ActionBar" ->
-                    "<div class='v bar'$id style='$st'>${esc(res(a["title"]) ?: "Mi app")}" to "</div>"
+                    // ☰ Si la pantalla tiene menú lateral, la barra trae el botón para abrirlo (como en la app real)
+                    "<div class='v bar'$id style='display:flex;align-items:center;gap:10px;$st'><button class='ibtn hamb' onclick=\"dr(this,'ol')\">☰</button>" +
+                        "${esc(res(a["title"]) ?: strings["app_name"] ?: "Mi app")}" to "</div>"
                 tag.endsWith("CardView") -> "<div class='v card'$id style='display:flex;flex-direction:column;$st'>" to "</div>"
                 tag.endsWith("ScrollView") -> "<div class='v'$id style='display:flex;flex-direction:column;overflow:auto;$st'>" to "</div>"
                 tag.endsWith("Layout") || tag == "merge" || tag == "RadioGroup" ->
@@ -429,7 +781,7 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
                         if (item != null) runCatching { convert(item, depth + 1) }.getOrDefault("")
                         else "<div class='row'><div class='img' style='width:36px;height:36px;min-height:36px'>📄</div><div>Elemento $i</div></div>"
                     }
-                    "<div class='v'$id style='display:flex;flex-direction:column;$st'>$rows" to "</div>"
+                    "<div class='v lst'$id style='display:flex;flex-direction:column;$st'>$rows" to "</div>"
                 }
                 tag.endsWith("CheckBox") || tag.contains("Switch") || tag == "ToggleButton" ->
                     "<label class='v txt'$id style='display:flex;align-items:center;gap:8px;$st'><input type='checkbox'${if (a["checked"] == "true") " checked" else ""}>$text</label>" to ""
@@ -455,7 +807,8 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
      * cada pocos segundos para ver cómo se va armando la app.
      */
     @SuppressLint("SetJavaScriptEnabled")
-    fun open(activity: Activity, title: String, emptyMessage: String, live: (() -> Boolean)? = null, build: () -> Pair<String, String>?) {
+    fun open(activity: Activity, title: String, emptyMessage: String, live: (() -> Boolean)? = null,
+             handoff: (() -> Unit)? = null, build: () -> Pair<String, String>?) {
         val d = activity.resources.displayMetrics.density
         fun px(v: Int) = (v * d).toInt()
         val dialog = Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
@@ -528,6 +881,8 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
         val lp = LinearLayout.LayoutParams(-2, -2).apply { marginStart = px(6) }
         bar.addView(tabView, lp); bar.addView(tabCode, LinearLayout.LayoutParams(-2, -2).apply { marginStart = px(6) })
         bar.addView(pill("🔄") { reload() }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = px(6) })
+        // 🤖 Llevar el proyecto a otra IA (Claude, Gemini, ChatGPT…): todo el código en un solo texto para pegar
+        if (handoff != null) bar.addView(pill("🤖 Otra IA") { handoff() }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = px(6) })
         bar.addView(pill("✕") { dialog.dismiss() }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = px(6) })
 
         root.addView(bar, LinearLayout.LayoutParams(-1, -2))
@@ -561,3 +916,4 @@ function show(i){document.querySelectorAll('.screen').forEach(function(s,k){s.st
         dialog.show()
     }
 }
+
