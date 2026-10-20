@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 🤖→✨ Ícono del botón «Otra IA»: círculo con degradado turquesa → morado y tres estrellas blancas -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="550"
+    android:viewportHeight="550">
+    <path android:pathData="M275,0a275,275 0,1 1,0 550a275,275 0,1 1,0 -550z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="60"
+                android:startY="40"
+                android:endX="490"
+                android:endY="510">
+                <item android:offset="0" android:color="#FF00C9C8" />
+                <item android:offset="0.5" android:color="#FF3A7BDB" />
+                <item android:offset="1" android:color="#FF7B22E8" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M198,152 Q225.1,247.9 321,275 Q225.1,302.1 198,398 Q170.9,302.1 75,275 Q170.9,247.9 198,152 Z M356,86 Q374.3,150.7 439,169 Q374.3,187.3 356,252 Q337.7,187.3 273,169 Q337.7,150.7 356,86 Z M322,341 Q332.3,377.7 369,388 Q332.3,398.3 322,435 Q311.7,398.3 275,388 Q311.7,377.7 322,341 Z" />
+</vector>
