@@ -59,16 +59,16 @@ object StarText {
     private fun applyText(v: TextView): Boolean {
         if (skipText(v)) return false
         val st = textStates.getOrPut(v) { TextState() }
-        val layout = v.layout
-        val wantOn = isWhite(v.currentTextColor) && !v.text.isNullOrEmpty() && layout != null
+        val layout = v.layout ?: return false          // todavía no se acomoda en la pantalla: se revisa en la próxima pasada
+        val wantOn = isWhite(v.currentTextColor) && !v.text.isNullOrEmpty()
         if (!wantOn) {
             // Ya no es blanco (o está vacío y se ve el texto de ayuda gris): se quita el degradado
-            if (st.on) { v.paint.shader = null; st.on = false; st.key = ""; v.invalidate(); return true }
+            if (st.on) { v.paint.shader = null; st.on = false; st.key = ""; redraw(v); return true }
             return false
         }
         // Ancho real del texto (de la línea que empieza más a la izquierda a la que termina más a la derecha)
         var left = Float.MAX_VALUE; var right = 0f
-        for (i in 0 until layout!!.lineCount) {
+        for (i in 0 until layout.lineCount) {
             left = minOf(left, layout.getLineLeft(i)); right = maxOf(right, layout.getLineRight(i))
         }
         if (left == Float.MAX_VALUE || right <= left) { left = 0f; right = maxOf(1f, layout.width.toFloat()) }
@@ -77,8 +77,21 @@ object StarText {
         if (st.on && st.key == key && v.paint.shader != null) return false
         v.paint.shader = LinearGradient(left, 0f, right, h * 0.35f, C1, C2, Shader.TileMode.CLAMP)
         st.on = true; st.key = key
-        v.invalidate()
+        redraw(v)
         return true
+    }
+
+    /**
+     * Vuelve a dibujar el texto con el color nuevo. Los mensajes del chat (texto que se puede seleccionar)
+     * guardan su dibujo en memoria y no se enteran del cambio de color: a esos se les vuelve a poner
+     * su mismo texto para que se dibujen de nuevo con el degradado.
+     */
+    private fun redraw(v: TextView) {
+        if (v.isTextSelectable && v !is android.widget.EditText) {
+            val t = v.text
+            runCatching { v.setText(t, TextView.BufferType.SPANNABLE) }
+        }
+        v.invalidate()
     }
 
     // ========================= ÍCONOS =========================
@@ -161,4 +174,5 @@ object StarText {
         visible >= 8 && whiteCount >= visible * 0.7
     }.getOrDefault(false)
 }
+
 
