@@ -200,7 +200,7 @@ class DownloadService : Service() {
                 runCatching {
                     nm.notify(DONE_NOTIF_ID, NotificationCompat.Builder(app, CHANNEL_ID)
                         .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                        .setContentTitle("Descarga completada")
+                        .setContentTitle(runCatching { LanguageManager.text(app, "Descarga completada") }.getOrDefault("Descarga completada"))
                         .setContentText(finishedTitle)
                         .setAutoCancel(true)
                         .setContentIntent(openAppIntent(app))
