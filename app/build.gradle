@@ -111,9 +111,10 @@ dependencies {
     implementation 'com.google.ai.edge.litert:litert:1.4.0'
     implementation 'com.google.ai.edge.litert:litert-gpu:1.4.0'
     implementation 'com.google.ai.edge.litert:litert-gpu-api:1.4.0'
-    //  NPU para esas IA: delegado QNN con la MISMA version de QNN que trae GenieX 0.8.0 (2.45).
+    //  NPU para esas IA: delegado QNN con la MISMA version de QNN que trae GenieX 0.9.1 (QAIRT 2.50).
     //    (va escrito asi a proposito: el workflow comenta las lineas 'com.qualcomm.qti:...' de arriba)
-    implementation group: 'com.qualcomm.qti', name: 'qnn-litert-delegate', version: '2.45.0'
+    //    Si se vuelve a GenieX 0.8.0, esta linea vuelve a '2.45.0'.
+    implementation group: 'com.qualcomm.qti', name: 'qnn-litert-delegate', version: '2.50.0'
     //  Separar a la persona u objeto del fondo (Google ML Kit, la IA se descarga sola con Google Play)
     implementation 'com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1'
 
