@@ -6991,7 +6991,7 @@
    "لا يوجد بعد كود في هذه المحادثة لنقله إلى ذكاء اصطناعي آخر."
   ],
   "Elige la IA o pégalo en Claude, Gemini o ChatGPT.": [
-   "Choose the AI or paste it into Claude, Gemini or ChatGPT.",
+      "Choose the AI or paste it into Claude, Gemini or ChatGPT.",
    "Escolha a IA ou cole no Claude, Gemini ou ChatGPT.",
    "Выбери ИИ или вставь в Claude, Gemini или ChatGPT.",
    "选择一个 AI，或粘贴到 Claude、Gemini 或 ChatGPT。",
@@ -9029,6 +9029,36 @@
    "Đã lưu vào thư mục bạn chọn",
    "บันทึกไว้ในโฟลเดอร์ที่คุณเลือก",
    "تم الحفظ في المجلد الذي اخترته"
+  ],
+  "Abrir vista previa": [
+   "Open preview",
+   "Abrir pré-visualização",
+   "Открыть предпросмотр",
+   "打开预览",
+   "미리보기 열기",
+   "プレビューを開く",
+   "Vorschau öffnen",
+   "Ouvrir l'aperçu",
+   "Apri anteprima",
+   "Buka pratinjau",
+   "Mở bản xem trước",
+   "เปิดตัวอย่าง",
+   "فتح المعاينة"
+  ],
+  "Ver maqueta": [
+   "See mockup",
+   "Ver protótipo",
+   "Открыть макет",
+   "查看原型",
+   "목업 보기",
+   "モックアップを見る",
+   "Entwurf ansehen",
+   "Voir la maquette",
+   "Vedi bozza",
+   "Lihat rancangan",
+   "Xem bản phác thảo",
+   "ดูแบบจำลอง",
+   "عرض النموذج"
   ]
  }
- }
+}
