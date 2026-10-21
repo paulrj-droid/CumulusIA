@@ -37,11 +37,28 @@ object StarText {
         return Color.alpha(c) > 120 && r >= 225 && g >= 225 && b >= 225
     }
 
+    /** ☀️ ¿Modo claro? Ahí todo queda en negro (sin degradado). Se lee de la configuración de la app. */
+    @Volatile var light = false
+        private set
+    private var lightReadAt = 0L
+
+    private fun refreshMode(v: View) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lightReadAt < 200) return
+        lightReadAt = now
+        light = runCatching {
+            v.context.getSharedPreferences("CumulusAppPermissions", android.content.Context.MODE_PRIVATE).getBoolean("light_mode", false)
+        }.getOrDefault(false)
+    }
+
     /** Llamar con cada vista de cada ventana. Devuelve true si cambió algo. */
-    fun apply(v: View): Boolean = when (v) {
-        is TextView -> applyText(v)
-        is ImageView -> applyIcon(v)
-        else -> false
+    fun apply(v: View): Boolean {
+        refreshMode(v)
+        return when (v) {
+            is TextView -> applyText(v)
+            is ImageView -> applyIcon(v)
+            else -> false
+        }
     }
 
     // ========================= TEXTOS =========================
@@ -60,7 +77,7 @@ object StarText {
         if (skipText(v)) return false
         val st = textStates.getOrPut(v) { TextState() }
         val layout = v.layout ?: return false          // todavía no se acomoda en la pantalla: se revisa en la próxima pasada
-        val wantOn = isWhite(v.currentTextColor) && !v.text.isNullOrEmpty()
+        val wantOn = !light && isWhite(v.currentTextColor) && !v.text.isNullOrEmpty()
         if (!wantOn) {
             // Ya no es blanco (o está vacío y se ve el texto de ayuda gris): se quita el degradado
             if (st.on) { v.paint.shader = null; st.on = false; st.key = ""; redraw(v); return true }
@@ -96,17 +113,40 @@ object StarText {
 
     // ========================= ÍCONOS =========================
 
-    /** Ícono envuelto: dibuja la forma del ícono original rellena con el degradado. */
-    class GradientIcon(val inner: Drawable) : Drawable(), Drawable.Callback {
+    /**
+     * Ícono envuelto: dibuja la forma del ícono original rellena con el degradado.
+     * Si la app le pone otro color (ej. negro en el modo claro), se dibuja con ese color, sin degradado.
+     */
+    class GradientIcon(val inner: Drawable, private val ignoreTint: Boolean = false) : Drawable(), Drawable.Callback {
         private val layerPaint = Paint()
         private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN) }
         private var shaderFor = Rect()
+        // Color que pidió la app (null o blanco = degradado)
+        private var tintColor: Int? = null
+        private var filterColor: Int? = null
 
         init { inner.callback = this }
+
+        private fun plainColor(): Int? {
+            val c = if (ignoreTint) null else filterColor ?: tintColor   // ignoreTint: siempre degradado (ej. ⏸️)
+            return when {
+                c != null && !isWhite(c) -> c
+                light -> Color.parseColor("#1C1C1E")      // ☀️ modo claro: negro
+                else -> null
+            }
+        }
 
         override fun draw(canvas: Canvas) {
             val b = bounds
             if (b.isEmpty) return
+            val plain = plainColor()
+            if (plain != null) {
+                inner.colorFilter = android.graphics.PorterDuffColorFilter(plain, PorterDuff.Mode.SRC_IN)
+                inner.alpha = layerPaint.alpha
+                inner.draw(canvas)
+                inner.colorFilter = null
+                return
+            }
             if (shaderFor != b) {
                 shaderFor = Rect(b)
                 fill.shader = LinearGradient(b.left.toFloat(), b.top.toFloat(), b.right.toFloat(), b.bottom.toFloat(), C1, C2, Shader.TileMode.CLAMP)
@@ -124,8 +164,14 @@ object StarText {
         override fun getIntrinsicWidth(): Int = inner.intrinsicWidth
         override fun getIntrinsicHeight(): Int = inner.intrinsicHeight
         override fun setAlpha(alpha: Int) { layerPaint.alpha = alpha; invalidateSelf() }
-        override fun setColorFilter(colorFilter: ColorFilter?) { /* el color lo pone el degradado */ }
-        override fun setTintList(tint: android.content.res.ColorStateList?) { /* el color lo pone el degradado */ }
+        override fun setColorFilter(colorFilter: ColorFilter?) {
+            filterColor = colorFilter?.let { filterResult(it) }
+            invalidateSelf()
+        }
+        override fun setTintList(tint: android.content.res.ColorStateList?) {
+            tintColor = tint?.getColorForState(state, tint.defaultColor)
+            invalidateSelf()
+        }
         @Deprecated("Deprecated in Java")
         override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
@@ -133,6 +179,13 @@ object StarText {
         override fun scheduleDrawable(who: Drawable, what: Runnable, `when`: Long) { scheduleSelf(what, `when`) }
         override fun unscheduleDrawable(who: Drawable, what: Runnable) { unscheduleSelf(what) }
     }
+
+    /** ¿Qué color deja un filtro de color? (se prueba pintando un punto blanco) */
+    private fun filterResult(cf: ColorFilter): Int? = runCatching {
+        val bmp = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+        Canvas(bmp).drawPaint(Paint().apply { color = Color.WHITE; colorFilter = cf })
+        bmp.getPixel(0, 0).also { bmp.recycle() }
+    }.getOrNull()
 
     /** Ícono ya revisado → si era blanco o no (así no se vuelve a revisar cada vez). */
     private val checked = WeakHashMap<Drawable, Boolean>()
@@ -143,9 +196,8 @@ object StarText {
         checked[d]?.let { if (!it) return false }
         if (v.width <= 0 || v.height <= 0) return false
         val white = checked[d] ?: isWhiteIcon(v).also { checked[d] = it }
-        if (!white) return false
-        v.colorFilter = null
-        v.imageTintList = null
+        if (!white || light) return false
+        // El color que tenía (tinte) se mantiene: así la app lo puede cambiar a negro en el modo claro
         v.setImageDrawable(GradientIcon(d))
         return true
     }
@@ -174,5 +226,4 @@ object StarText {
         visible >= 8 && whiteCount >= visible * 0.7
     }.getOrDefault(false)
 }
-
 
