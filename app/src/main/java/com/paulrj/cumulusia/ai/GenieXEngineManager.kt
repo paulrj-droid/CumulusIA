@@ -412,9 +412,10 @@ object GenieXEngineManager {
     private suspend fun runLlmOnce(w: LlmWrapper, prompt: String, config: GenerationConfig): String {
         val sb = StringBuilder()
         var err: Throwable? = null
-        // GenieX 0.9: generateStreamFlow(prompt, tokens, config). El 2.º valor (IntArray?) es nuevo y aquí va vacío (null):
-        //   la app le pasa el texto, como siempre. (En 0.8 era generateStreamFlow(prompt, config).)
-        w.generateStreamFlow(prompt, null, config).collect { r ->
+        // GenieX 0.9: generateStreamFlow(prompt, tokens, embeddings, n, config): los 3 del medio son nuevos y opcionales.
+        //   La app sigue pasando solo el texto, así que la configuración va con su nombre («config =»).
+        //   (En 0.8 era generateStreamFlow(prompt, config).)
+        w.generateStreamFlow(prompt, config = config).collect { r ->
             when (r) {
                 is LlmStreamResult.Token -> { sb.append(r.text); emitPartial(sb) }
                 is LlmStreamResult.Completed -> {
