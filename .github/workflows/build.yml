@@ -122,7 +122,7 @@ jobs:
           set +e
           # GenieX: se usa SOLO la version mas reciente, bajada del GitHub oficial de Qualcomm.
           # Si algun dia esta version falla, se cambia aqui por una anterior (ej. GX="0.7.0").
-          GX="0.8.0"
+          GX="0.9.1"   # 21 oct 2026: la mas nueva (trae QAIRT 2.50). Si falla, volver a GX="0.8.0".
           mkdir -p app/libs
           if ! curl -sfL -o "app/libs/geniex-android-aar-v$GX.aar" \
                "https://github.com/qualcomm/GenieX/releases/download/v$GX/geniex-android-aar-v$GX.aar"; then
