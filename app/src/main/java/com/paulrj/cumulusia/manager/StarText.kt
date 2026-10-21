@@ -40,15 +40,27 @@ object StarText {
     /** ☀️ ¿Modo claro? Ahí todo queda en negro (sin degradado). Se lee de la configuración de la app. */
     @Volatile var light = false
         private set
-    private var lightReadAt = 0L
+    /** Sube cada vez que cambias entre modo claro y oscuro (así cada texto sabe que debe redibujarse). */
+    @Volatile private var modeVersion = 0
+    private var prefs: android.content.SharedPreferences? = null
+    // Se guarda aquí para que Android no lo borre (si no, deja de avisar)
+    private val prefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
+        if (key == "light_mode") setLight(sp.getBoolean("light_mode", false))
+    }
 
+    private fun setLight(value: Boolean) {
+        if (value != light) { light = value; modeVersion++ }
+    }
+
+    /** La primera vez lee el modo y queda escuchando: al tocar el interruptor cambia al instante. */
     private fun refreshMode(v: View) {
-        val now = android.os.SystemClock.uptimeMillis()
-        if (now - lightReadAt < 200) return
-        lightReadAt = now
-        light = runCatching {
-            v.context.getSharedPreferences("CumulusAppPermissions", android.content.Context.MODE_PRIVATE).getBoolean("light_mode", false)
-        }.getOrDefault(false)
+        if (prefs != null) return
+        runCatching {
+            val sp = v.context.applicationContext.getSharedPreferences("CumulusAppPermissions", android.content.Context.MODE_PRIVATE)
+            prefs = sp
+            setLight(sp.getBoolean("light_mode", false))
+            sp.registerOnSharedPreferenceChangeListener(prefsListener)
+        }
     }
 
     /** Llamar con cada vista de cada ventana. Devuelve true si cambió algo. */
@@ -63,7 +75,7 @@ object StarText {
 
     // ========================= TEXTOS =========================
 
-    private class TextState(var key: String = "", var on: Boolean = false)
+    private class TextState(var key: String = "", var on: Boolean = false, var mode: Int = -1)
     private val textStates = WeakHashMap<TextView, TextState>()
 
     private fun skipText(v: TextView): Boolean {
@@ -76,12 +88,15 @@ object StarText {
     private fun applyText(v: TextView): Boolean {
         if (skipText(v)) return false
         val st = textStates.getOrPut(v) { TextState() }
-        val layout = v.layout ?: return false          // todavía no se acomoda en la pantalla: se revisa en la próxima pasada
+        // ☀️🌙 Cambió el modo: se redibuja (el nombre «Cumulus» pasa a negro o vuelve a sus colores)
+        var modeChanged = false
+        if (st.mode != modeVersion) { modeChanged = st.mode != -1; st.mode = modeVersion; if (modeChanged) v.invalidate() }
+        val layout = v.layout ?: return modeChanged    // todavía no se acomoda en la pantalla: se revisa en la próxima pasada
         val wantOn = !light && isWhite(v.currentTextColor) && !v.text.isNullOrEmpty()
         if (!wantOn) {
             // Ya no es blanco (o está vacío y se ve el texto de ayuda gris): se quita el degradado
             if (st.on) { v.paint.shader = null; st.on = false; st.key = ""; redraw(v); return true }
-            return false
+            return modeChanged
         }
         // Ancho real del texto (de la línea que empieza más a la izquierda a la que termina más a la derecha)
         var left = Float.MAX_VALUE; var right = 0f
