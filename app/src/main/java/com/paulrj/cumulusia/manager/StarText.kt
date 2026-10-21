@@ -67,8 +67,9 @@ object StarText {
     fun apply(v: View): Boolean {
         refreshMode(v)
         return when (v) {
-            is TextView -> applyText(v)
+            is TextView -> { val c = applyCompound(v); applyText(v) || c }
             is ImageView -> applyIcon(v)
+            is android.widget.SeekBar -> applySeek(v)
             else -> false
         }
     }
@@ -214,6 +215,61 @@ object StarText {
         if (!white || light) return false
         // El color que tenía (tinte) se mantiene: así la app lo puede cambiar a negro en el modo claro
         v.setImageDrawable(GradientIcon(d))
+        return true
+    }
+
+    // ===================== ÍCONOS DENTRO DE BOTONES (✕ ✓ y números de «Nombre del modelo», «mmproj»…) =====================
+
+    private fun isWhiteDrawable(d: Drawable): Boolean = checked[d] ?: runCatching {
+        val bw = d.bounds.width().takeIf { it > 0 } ?: d.intrinsicWidth
+        val bh = d.bounds.height().takeIf { it > 0 } ?: d.intrinsicHeight
+        if (bw <= 0 || bh <= 0) return@runCatching false
+        val w = minOf(bw, 64); val h = minOf(bh, 64)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.scale(w / bw.toFloat(), h / bh.toFloat())
+        c.translate(-d.bounds.left.toFloat(), -d.bounds.top.toFloat())
+        val hadBounds = !d.bounds.isEmpty
+        if (!hadBounds) d.setBounds(0, 0, bw, bh)
+        d.draw(c)
+        val px = IntArray(w * h); bmp.getPixels(px, 0, w, 0, 0, w, h); bmp.recycle()
+        var visible = 0; var white = 0
+        for (p in px) { if (Color.alpha(p) < 100) continue; visible++; if (isWhite(p)) white++ }
+        visible >= 4 && white >= visible * 0.7
+    }.getOrDefault(false).also { checked[d] = it }
+
+    private fun applyCompound(v: TextView): Boolean {
+        if (light) return false
+        val ds = v.compoundDrawablesRelative
+        if (ds.all { it == null || it is GradientIcon }) return false
+        var changed = false
+        val out = Array(4) { i ->
+            val d = ds[i]
+            if (d != null && d !is GradientIcon && isWhiteDrawable(d)) {
+                changed = true
+                GradientIcon(d).also { it.bounds = android.graphics.Rect(d.bounds) }
+            } else d
+        }
+        if (changed) v.setCompoundDrawablesRelative(out[0], out[1], out[2], out[3])
+        return changed
+    }
+
+    // ===================== BARRAS (Contexto, Temperatura, Top K, Top P, Min-P) =====================
+
+    private fun applySeek(sb: android.widget.SeekBar): Boolean {
+        val ld = sb.progressDrawable as? android.graphics.drawable.LayerDrawable ?: return false
+        val prog = ld.findDrawableByLayerId(android.R.id.progress) ?: return false
+        if (prog is GradientIcon) return false
+        if (light) return false
+        // Solo si la barra es blanca (en el modo claro es oscura y queda igual)
+        val tint = sb.progressTintList?.defaultColor
+        if (tint == null || !isWhite(tint)) return false
+        val wrapped = GradientIcon(prog)
+        wrapped.bounds = android.graphics.Rect(prog.bounds)
+        wrapped.level = prog.level
+        if (!ld.setDrawableByLayerId(android.R.id.progress, wrapped)) return false
+        sb.progressTintList = sb.progressTintList      // vuelve a aplicar el color (el degradado lo recibe)
+        sb.invalidate()
         return true
     }
 
