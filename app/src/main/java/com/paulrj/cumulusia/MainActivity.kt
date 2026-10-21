@@ -1,0 +1,15549 @@
+package com.paulrj.cumulusia
+
+import android.Manifest
+import android.provider.MediaStore
+import android.app.AlertDialog
+import android.app.ProgressDialog
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.SharedPreferences
+import android.content.res.ColorStateList
+import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.Drawable
+import android.media.MediaPlayer
+import android.media.MediaRecorder
+import android.net.Uri
+import android.os.Bundle
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.text.Editable
+import android.text.TextWatcher
+import android.util.Log
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.EditText
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.SeekBar
+import android.widget.Spinner
+import android.widget.TextView
+import android.widget.Toast
+import android.widget.ViewFlipper
+import androidx.activity.OnBackPressedCallback
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
+import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.constraintlayout.widget.ConstraintSet
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.core.view.GravityCompat
+import androidx.drawerlayout.widget.DrawerLayout
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.button.MaterialButton
+import com.paulrj.cumulusia.adapter.ChatAdapter
+import com.paulrj.cumulusia.ai.LiteRtLmEngineManager
+import com.paulrj.cumulusia.ai.GenieXEngineManager
+import com.paulrj.cumulusia.ai.ImageAiModels
+import com.paulrj.cumulusia.ai.CreateMedia
+import com.paulrj.cumulusia.ai.ImageEditCommand
+import com.paulrj.cumulusia.ai.ImageEditor
+import com.paulrj.cumulusia.ai.ImageEngine
+import com.paulrj.cumulusia.ai.ImageGenNative
+import com.paulrj.cumulusia.ai.SamplingSettings
+import com.paulrj.cumulusia.ai.ChatTemplateFormatter
+import com.paulrj.cumulusia.ai.WebSearchRules
+import com.paulrj.cumulusia.ai.FoodFinder
+import com.paulrj.cumulusia.ai.CinemaFinder
+import com.paulrj.cumulusia.ai.NearbyFinder
+import com.paulrj.cumulusia.ai.MarketFinder
+import com.paulrj.cumulusia.ai.StoreFinder
+import com.paulrj.cumulusia.ai.JokeBank
+import com.paulrj.cumulusia.ai.SkyCalc
+import com.paulrj.cumulusia.ai.HealthFinder
+import com.paulrj.cumulusia.ai.GeneralFinder
+import com.paulrj.cumulusia.ai.ContentReport
+import com.paulrj.cumulusia.model.ModelConfig
+import com.paulrj.cumulusia.model.ModelConfigStore
+import com.paulrj.cumulusia.model.SizeClass
+import com.paulrj.cumulusia.model.ChatMessage
+import com.paulrj.cumulusia.manager.ResumableDownloader
+import com.paulrj.cumulusia.manager.DownloadService
+import com.paulrj.cumulusia.manager.ActiveDownloads
+import com.paulrj.cumulusia.manager.VoiceManager
+import com.paulrj.cumulusia.manager.LanguageManager
+import com.paulrj.cumulusia.tts.TtsEngineManager
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.BufferedOutputStream
+import java.io.BufferedReader
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Locale
+import kotlin.concurrent.thread
+import kotlinx.coroutines.runBlocking
+
+// ============================================================================
+// 1. ACTIVIDAD PRINCIPAL (PANTALLA CON PANELES LATERALES ☰ Y ️)
+// ============================================================================
+class MainActivity : AppCompatActivity() {
+
+    // 🌐 Al tocar: si se abre un menú o una ventana, se traduce antes de que se vea
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        val handled = super.dispatchTouchEvent(ev)
+        if (ev.actionMasked == android.view.MotionEvent.ACTION_UP) LanguageManager.scanWindowsSoon()
+        return handled
+    }
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LanguageManager.loadLocale(newBase))
+    }
+
+    private var drawerLayout: DrawerLayout? = null
+    private var settingsPageFlipper: ViewFlipper? = null
+    private var btnOpenGgufDownloads: MaterialButton? = null
+    private var btnOpenTtsDownloads: MaterialButton? = null
+    // 📂 Subir un GGUF o una voz TTS que ya está en la memoria del teléfono
+    private var btnUploadGguf: MaterialButton? = null
+    private var btnUploadTts: MaterialButton? = null
+    private var btnUploadMmproj: MaterialButton? = null
+    private var btnBackFromGgufDownload: ImageButton? = null
+    private var btnBackFromTtsDownload: ImageButton? = null
+    
+    private var spinnerBackend: Spinner? = null
+    private var btnLoadModel: MaterialButton? = null
+    private var switchAutoLoad: com.google.android.material.switchmaterial.SwitchMaterial? = null
+    private var btnModelName: MaterialButton? = null
+    private var btnMmproj: MaterialButton? = null
+    private var btnBackend: MaterialButton? = null
+    
+    private var rvChatMessages: RecyclerView? = null
+    private var etChatInput: EditText? = null
+    private var chatComposer: ConstraintLayout? = null
+    private var btnSend: ImageButton? = null
+    private var btnMic: ImageButton? = null
+    private var btnAttach: ImageButton? = null
+    private var btnChatMode: MaterialButton? = null
+    // 📎 Adjuntos pendientes: hasta 10 imágenes, 10 archivos y 5 videos
+    private val pendingAttachments = mutableListOf<File>()
+    private val pendingAttachment: File? get() = pendingAttachments.firstOrNull()
+    private var attachmentsScroll: View? = null
+    private var attachmentsStrip: LinearLayout? = null
+    private var cameraPhotoUri: Uri? = null
+    private var btnVoicePlayPause: ImageButton? = null
+    private var tvAiName: TextView? = null
+    private var isVocalResponseActive: Boolean = false
+    // 🎙️ Conversación voz a voz (botón dentro del +)
+    @Volatile private var isVoiceConversationActive: Boolean = false
+    @Volatile private var isAiBusy: Boolean = false
+    @Volatile private var isTtsSpeaking: Boolean = false
+    // ⏹️ Botón detener
+    @Volatile private var stopRequested: Boolean = false
+    @Volatile private var replyTtsActive: Boolean = false
+    private var sendIconDrawable: android.graphics.drawable.Drawable? = null
+    private var sendBgDrawable: android.graphics.drawable.Drawable? = null
+    private var showingStopIcon = false
+    private val stopIconHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var currentSpokenReply: String = ""
+    private var previousSpokenReply: String = ""
+    @Volatile private var ttsFinishedAt: Long = 0L
+    private var queuedVoiceText: String? = null
+    private var isChatInputExpanded: Boolean = false
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var isListeningForChat: Boolean = false
+    private var chatTtsEngine: TtsEngineManager? = null
+    
+    private var chatAdapter: ChatAdapter? = null
+    private val chatMessages = mutableListOf<ChatMessage>()
+
+    private var etGgufUrl: EditText? = null
+    private var btnAddGgufUrl: MaterialButton? = null
+    private var ggufDownloadsContainer: LinearLayout? = null
+    private var tvEmptyGgufDownloads: TextView? = null
+    private var etTtsUrl: EditText? = null
+    private var btnAddTtsUrl: MaterialButton? = null
+    private var ttsDownloadsContainer: LinearLayout? = null
+    private var tvEmptyTtsDownloads: TextView? = null
+    private var tvModelLoadedName: TextView? = null
+    private var isModelLoadedInMemory: Boolean = false
+
+    private class DownloadUi(
+        val panel: View, val title: TextView, val status: TextView, val progress: ProgressBar,
+        val btnPause: Button, val btnResume: Button, val btnDelete: Button,
+        // 📥 Tarjeta nueva: «1. Modelo GGUF», «Nombre del modelo» y el % a la derecha de la barra
+        val kind: TextView? = null, val label: TextView? = null, val percent: TextView? = null
+    )
+    private enum class DownloadType {
+        GGUF,
+        TTS
+    }
+    private class DownloadSlot(val type: DownloadType, val ui: DownloadUi) {
+        var id: String = "${type.name.lowercase()}_${System.currentTimeMillis()}_${hashCode()}"
+        var downloader: ResumableDownloader? = null
+        var file: File? = null
+        var url: String = ""
+        var title: String = ""
+    }
+
+    private data class ElevenLabsVoice(
+        val id: String,
+        val name: String,
+        val category: String,
+        val labels: String
+    )
+
+    private enum class VoiceSource {
+        SYSTEM,
+        DOWNLOADED,
+        ELEVEN_LABS
+    }
+
+    private data class SelectableTtsVoice(
+        val id: String,
+        val displayName: String,
+        val source: VoiceSource,
+        val localPath: String? = null
+    )
+    private val ggufSlots = mutableListOf<DownloadSlot>()
+    private val ttsSlots = mutableListOf<DownloadSlot>()
+
+    private var btnChooseBubbleImage: MaterialButton? = null
+    private var btnRestoreChatImage: MaterialButton? = null
+    private var btnChooseVoices: MaterialButton? = null
+    private var bubbleImageUri: Uri? = null
+
+    private var etElevenApiKey: EditText? = null
+    private var btnSaveElevenKey: MaterialButton? = null
+    private var btnElevenRecord: MaterialButton? = null
+    private var btnElevenTest: MaterialButton? = null
+    private var btnElevenUse: MaterialButton? = null
+    private var btnElevenDelete: MaterialButton? = null
+    private var btnElevenSave: MaterialButton? = null
+
+    private var mediaRecorder: MediaRecorder? = null
+    private var mediaPlayer: MediaPlayer? = null
+    private var recordedAudioFile: File? = null
+    private var isRecordingVoice: Boolean = false
+    @Volatile private var lastElevenError: String? = null
+    private var voiceBrowserTts: TextToSpeech? = null
+
+    private var etAiNameCustom: EditText? = null
+    private var btnSaveAiName: MaterialButton? = null
+    private var etUserName: EditText? = null
+    private var btnSaveUserName: MaterialButton? = null
+
+    private var seekContext: SeekBar? = null
+    private var tvContextValue: TextView? = null
+    private var seekTemperature: SeekBar? = null
+    private var tvTemperatureValue: TextView? = null
+    private var seekTopK: SeekBar? = null
+    private var seekTopP: SeekBar? = null
+    // 🎛️ Valores a la vista + Min-P, stop tokens y plantilla de chat
+    private var tvTopKValue: TextView? = null
+    private var tvTopPValue: TextView? = null
+    private var seekMinP: SeekBar? = null
+    private var tvMinPValue: TextView? = null
+    private var etStopTokens: EditText? = null
+    private var tvStopTokensValue: TextView? = null
+    private var btnChatTemplate: MaterialButton? = null
+    private var tvChatTemplateValue: TextView? = null
+    // 🧩 Configuración por modelo (plantilla, stop tokens, temperatura y system prompt de cada GGUF)
+    private var tvModelProfile: TextView? = null
+    private var etModelSystemPrompt: EditText? = null
+    private var tvModelSystemPromptValue: TextView? = null
+    @Volatile private var activeModelCfg: ModelConfig? = null
+    @Volatile private var activeModelCfgKey: String? = null
+    private var applyingModelCfg = false
+    /** El system prompt que tiene ahora el motor CPU (para armar la plantilla en la app). */
+    @Volatile private var cpuSystemPrompt: String = ""
+    /** Qué plantilla está usando de verdad el motor CPU con el modelo cargado (lo informa native-lib). */
+    @Volatile private var cpuTemplateStatus: String? = null
+    
+    private var etPersonalityCustom: EditText? = null
+    private var btnSaveCustomPersonality: MaterialButton? = null
+    private var btnDeleteCustomPersonality: MaterialButton? = null
+
+    private var isAppInForeground: Boolean = false
+    private var modelLoadedInBackground: Boolean = false
+    @Volatile private var isModelLoading: Boolean = false
+    private var restoringSwitchState: Boolean = false
+
+    companion object {
+        private const val TAG = "CumulusMainActivity"
+        private const val ENGINE_FAIL_MARK = "⚠️ El motor no pudo responder"
+        /** 🩺 El registrador de cierres se instala una sola vez por proceso. */
+        @Volatile private var crashRecorderInstalled = false
+        @Volatile private var mainLoopGuardInstalled = false
+        /** La app ya terminó de abrir: desde aquí los errores se atrapan en vez de cerrarla. */
+        @Volatile private var appReady = false
+        /** La pantalla abierta ahora (si Android la rehace al girar, se actualiza). */
+        @Volatile private var current: java.lang.ref.WeakReference<MainActivity>? = null
+        private const val PERMISSION_REQUEST_CODE = 1001
+        private const val PREFS_NAME = "CumulusAppPermissions"
+        private const val PICK_IMAGE_REQUEST = 1002
+        private const val PICK_ATTACHMENT_REQUEST = 1003
+        private const val TAKE_PHOTO_REQUEST = 1004
+        private const val PICK_LOCAL_GGUF_REQUEST = 1005
+        private const val PICK_LOCAL_TTS_REQUEST = 1006
+        private const val PICK_LOCAL_MMPROJ_REQUEST = 1007
+        private const val LOCATION_REQUEST = 1008
+        /** OpenStreetMap pide que cada app se identifique al usar sus mapas */
+        private const val OSM_UA = "CumulusIA/1.0 (Android)"
+        private const val KEY_DOWNLOADS = "persisted_downloads"
+        private const val PAGE_SETTINGS = 0
+        private const val PAGE_GGUF_DOWNLOAD = 1
+        private const val PAGE_TTS_DOWNLOAD = 2
+
+        init {
+            try {
+                System.loadLibrary("cumulus_native")
+                Log.d(TAG, "✅ Librería nativa cumulus_native cargada exitosamente")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "❌ Error cargando librería nativa: ${e.message}")
+                e.printStackTrace()
+            }
+        }
+    }
+
+    external fun stringFromJNI(): String
+    private external fun nativeLoadModel(modelPath: String): Boolean
+    private external fun nativeConfigureAndLoadModel(
+        modelPath: String,
+        backend: String,
+        contextSize: Int,
+        temperature: Float
+    ): Boolean
+    private external fun nativeRunInference(prompt: String): String
+    private external fun nativeSetMmproj(path: String)
+    private external fun nativeHasVision(): Boolean
+    private external fun nativeRunInferenceWithImage(prompt: String, imagePath: String): String
+    private external fun nativeGetMediaCaps(): String
+    private external fun nativeRunChat(roles: Array<String>, contents: Array<String>): String
+    private external fun nativeRunChatFormatted(prompt: ByteArray): String
+    private external fun nativeLastStats(): String
+    private external fun nativeSetStop(stop: Boolean)
+    // 🩺 Carpeta donde el motor anota en qué paso iba (si la app se cierra, sale en el informe)
+    private external fun nativeSetCrashDir(dir: String)
+    private external fun nativeSetLibDir(dir: String, useNpu: Boolean)
+    // La NPU se enciende al abrir la app según el backend guardado
+    private var npuEnabledAtStart = false
+    private external fun nativeResetChatMemory()
+    private external fun nativeSetChatMode(systemPrompt: String, maxTokens: Int)
+    private external fun nativeRunInferenceWithMedia(prompt: String, mediaPath: String): String
+    private external fun nativeRunInferenceWithMediaList(prompt: String, mediaPaths: Array<String>): String
+
+    // Texto que indica qué entiende el modelo cargado: imágenes y/o audio
+    private fun mediaCapsLabel(): String {
+        val caps = runCatching { nativeGetMediaCaps() }.getOrDefault("")
+        if (caps.isBlank()) return ""
+        val parts = mutableListOf<String>()
+        if (caps.contains("vision")) parts.add("👁️ Imágenes")
+        if (caps.contains("audio")) parts.add("🎧 Audio")
+        return "\nMultimodal: " + parts.joinToString(" + ")
+    }
+    private external fun nativeIsModelLoaded(): Boolean
+    private external fun nativeReleaseModel()
+    private external fun nativeSetBackend(backend: String)
+    private external fun nativeSetParams(ctx: Int, temp: Float)
+    private external fun nativeSetSampling(temp: Float, topK: Int, topP: Float, minP: Float, stops: String, chatTemplate: String, noThink: Boolean)
+    /** 💬 Qué plantilla usa el modelo cargado en la CPU (la propia del GGUF en Jinja, o la de respaldo). */
+    private external fun nativeChatTemplateInfo(): String
+    private external fun nativeEngineInfo(): String
+    private external fun nativeGetDeviceCapabilities(): String  // ✅ NUEVO: Detecta CPU/GPU/NPU disponibles
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // 🩺 Si la app se cierra sola, se guarda el motivo real (para poder arreglarlo)
+        current = java.lang.ref.WeakReference(this)
+        runCatching { installCrashRecorder() }
+        runCatching { recordLastExitReason() }
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        setContentView(R.layout.activity_main)
+        // ↔️ Árabe: toda la app de DERECHA A IZQUIERDA (menús, paneles, textos, botones y chat se reflejan solos).
+        //    Los demás idiomas quedan de izquierda a derecha, como siempre.
+        runCatching {
+            window.decorView.layoutDirection =
+                android.text.TextUtils.getLayoutDirectionFromLocale(Locale(LanguageManager.getSelectedLanguage(this)))
+        }
+        // 📱 Al girar el teléfono, la app usa también la franja de la cámara (sin banda negra al costado)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+        // 🛡️ Si la app se cerró usando la GPU, se vuelve a CPU para que no se caiga de nuevo
+        run {
+            val p = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            // Solo si la app de verdad se cerró. Al girar la pantalla Android rehace la ventana
+            // (savedInstanceState != null): eso NO es un cierre y no debe mostrar el aviso.
+            // 📋 Lee el registro del sistema para ver POR QUÉ se cerró
+            // ✅ Android anota POR QUÉ se cerró la app la última vez: solo cuenta si fue un error de verdad.
+            //    Si la cerraste tú (aunque estuviera cargando o respondiendo), si se actualizó o si Android
+            //    la sacó de memoria en segundo plano, no se culpa al modelo ni se cambia a la CPU.
+            val realCrash = savedInstanceState == null && lastExitWasCrash()
+            val crashLog = if (realCrash && p.getBoolean("gpu_run_pending", false)) readCrashLog() else ""
+            // Si la marca quedó puesta pero NO hubo un cierre real (cerraste la app a mano,
+            // o Android la sacó de memoria), se borra en silencio y se mantiene tu GPU/NPU
+            if (savedInstanceState == null && crashLog.isBlank()) p.edit().putBoolean("gpu_run_pending", false).commit()
+            // 🛡️ GenieX recuerda QUÉ modelo cerró la app y en qué unidad (NPU/GPU/visión): solo esa combinación
+            //    se evita y la NPU/GPU siguen activas para los demás modelos (antes todo pasaba a la CPU, lenta y caliente)
+            val gxCrash = if (savedInstanceState == null)
+                runCatching { GenieXEngineManager.checkPreviousCrash(this, realCrash) }.getOrNull() else null
+            if (gxCrash != null) {
+                p.edit().putBoolean("gpu_run_pending", false).putString("last_crash_log", crashLog).commit()
+                window.decorView.post { showGenieXCrashNotice(gxCrash) }
+            } else if (crashLog.isNotBlank()) {
+                // 🎛️ El motor lo eliges TÚ: ya no se cambia solo a la CPU después de un cierre.
+                //    Para que no se cierre en bucle, esta vez el modelo no se carga solo y se avisa.
+                p.edit().putBoolean("gpu_run_pending", false).putString("last_crash_log", crashLog).commit()
+                skipAutoLoadOnce = true
+                window.decorView.post { showEngineCrashNotice() }
+            }
+        }
+        // ⚡ Le indica a la NPU dónde están sus librerías (el motor elegido nunca se cambia solo)
+        npuEnabledAtStart = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString("selected_ai_backend", "")?.contains("NPU", true) == true
+        // La NPU de llama.cpp queda apagada (la NPU se usa vía LiteRT con modelos .litertlm)
+        runCatching { nativeSetLibDir(applicationInfo.nativeLibraryDir, false) }
+        runCatching { nativeSetCrashDir(filesDir.absolutePath) }
+        // ⚡ GenieX (Qualcomm): GGUF en NPU/GPU
+        runCatching { GenieXEngineManager.init(this) }
+        chatTtsEngine = TtsEngineManager(this)
+        setupChatSpeechRecognizer()
+
+        initViews()
+        setupDrawerControls()
+        setupRightDrawerActions()
+        restoreSavedDownloads()
+        setupChatActions()
+        setupNameConfig()
+        setupImageAndVoiceConfig()
+        setupElevenLabsActions()
+        setupAdvancedConfig()
+        setupLanguageSelection()
+        setupBackPressedHandler()
+        verifyAndRequestPermissions()
+        
+        // ✅ NUEVO: Mostrar capacidades del dispositivo al iniciar
+        showDeviceCapabilities()
+        
+        checkStoredModelStatus()
+        // 🧠 Al abrir la app siempre empieza un chat NUEVO y limpio.
+        //    Los chats guardados solo se leen si el usuario los abre desde "Chats anteriores".
+        //    (Al girar la pantalla se mantiene el chat que estaba abierto.)
+        loadChat(
+            if (savedInstanceState != null)
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("current_chat_id", null)
+            else null
+        )
+        findViewById<View>(R.id.btn_new_chat)?.setOnClickListener {
+            startNewChat()
+            drawerLayout?.closeDrawers()
+        }
+        findViewById<View>(R.id.btn_chat_history)?.setOnClickListener { showChatHistoryDialog() }
+        // 📐 Botones de a pares con la misma altura (el más alto manda)
+        matchHeights(findViewById(R.id.btn_new_chat), findViewById(R.id.btn_chat_history))
+        matchHeights(btnRestoreChatImage, btnChooseBubbleImage)
+        matchHeights(btnElevenRecord, btnElevenTest)
+        matchHeights(btnElevenUse, btnElevenDelete)
+        // Personalidad y nombres: los rojos del mismo tamaño que los azules GUARDAR
+        followHeight(btnDeleteCustomPersonality, btnSaveCustomPersonality)
+        followHeight(findViewById(R.id.btn_delete_ai_name), btnSaveAiName)
+        followHeight(findViewById(R.id.btn_delete_user_name), btnSaveUserName)
+        // 📏 Guardar / Eliminar de personalidad y nombres, y Grabar / Probar / Usar / Eliminar de ElevenLabs:
+        //    siempre del tamaño grande (alto de 2 líneas), tengan o no el ✔, así no se achican
+        listOf<TextView?>(
+            btnSaveCustomPersonality, btnSaveAiName, btnSaveUserName, btnDeleteCustomPersonality,
+            findViewById(R.id.btn_delete_ai_name), findViewById(R.id.btn_delete_user_name),
+            btnElevenRecord, btnElevenTest, btnElevenUse, btnElevenDelete
+        ).forEach { it?.minLines = 2 }
+        matchHeights(btnOpenGgufDownloads, btnOpenTtsDownloads)
+        // ⬛ Recuadro de las pestañas MODELOS GGUF / VOCES TTS (sin línea: mismo fondo que el panel)
+        (btnOpenGgufDownloads?.parent as? LinearLayout)?.let { row ->
+            val d = resources.displayMetrics.density
+            row.setPadding(0, (6 * d).toInt(), 0, (6 * d).toInt())
+            row.background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 16 * d
+                setStroke(0, Color.TRANSPARENT)
+                setColor(if (isLightMode()) Color.WHITE else Color.BLACK)
+                sectionBoxes.add(this)   // cambia de color junto con los demás recuadros
+            }
+        }
+        findViewById<View>(R.id.btn_think_level)?.setOnClickListener { showThinkLevelMenu(it) }
+        LanguageManager.applyToViewTree(findViewById(android.R.id.content))
+    }
+
+    // Iguala la altura de dos botones que están lado a lado
+    /** El botón rojo copia siempre el alto del azul (también cuando el azul crece con el ✔). */
+    private fun followHeight(red: View?, blue: View?) {
+        if (red == null || blue == null) return
+        (red.parent as? LinearLayout)?.isBaselineAligned = false
+        blue.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
+            val h = bottom - top
+            if (h > 0 && red.layoutParams.height != h) {
+                red.post { red.layoutParams = red.layoutParams.apply { height = h } }
+            }
+        }
+    }
+
+    /** ¿Alguna palabra quedó cortada entre dos líneas? («GUARDADO» arriba y «S» abajo) */
+    private fun hasBrokenWord(tv: TextView): Boolean {
+        val lay = tv.layout ?: return false
+        val text = lay.text
+        for (i in 0 until lay.lineCount - 1) {
+            val end = lay.getLineEnd(i)
+            if (end in 1 until text.length && text[end - 1].isLetterOrDigit() && text[end].isLetterOrDigit()) return true
+        }
+        return false
+    }
+
+    private fun matchHeights(a: View?, b: View?) {
+        if (a == null || b == null) return
+        val parent = a.parent as? View ?: return
+        (parent as? LinearLayout)?.isBaselineAligned = false   // así no se desalinean hacia abajo
+        parent.viewTreeObserver.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                if (a.height == 0 || b.height == 0) return
+                // ✂️ Si una palabra no cabe y se parte («GUARDADO / S»), se achica un poco la letra de los dos
+                //    botones (quedan iguales) y se vuelve a medir. Sirve también para los otros idiomas.
+                val ta = a as? TextView
+                val tb = b as? TextView
+                if (ta != null && tb != null && (hasBrokenWord(ta) || hasBrokenWord(tb))) {
+                    val dm = resources.displayMetrics
+                    val min = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 9f, dm)
+                    val next = minOf(ta.textSize, tb.textSize) - 0.5f * dm.density
+                    if (next >= min) {
+                        ta.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, next)
+                        tb.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, next)
+                        return
+                    }
+                }
+                parent.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                val h = maxOf(a.height, b.height)
+                listOf(a, b).forEach { v -> v.layoutParams = v.layoutParams.apply { height = h } }
+            }
+        })
+    }
+
+    // ✅ NUEVO: Muestra qué hardware está disponible
+    private fun showDeviceCapabilities() {
+        try {
+            val caps = nativeGetDeviceCapabilities()
+            val hybridCaps = "$caps\n⚡ ${LiteRtLmEngineManager.deviceNpuInfo(this)}"
+            Log.d(TAG, "═══════════════════════════════════════════════════")
+            Log.d(TAG, "🔍 Capacidades del dispositivo:")
+            Log.d(TAG, hybridCaps)
+            Log.d(TAG, "═══════════════════════════════════════════════════")
+            // (Antes se mostraba un aviso con CPU/GPU/NPU al abrir la app; ahora solo queda en el registro)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Error obteniendo capacidades: ${t.message}")
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        isAppInForeground = true
+        updateLoadModelButton()
+        // Automático: se activa al abrir la app.
+        // Manual: si lo dejaste activo, se vuelve a activar solo.
+        // 🛡️ Si la app se cerró cargando o usando el modelo, esta vez no se carga solo (tú decides)
+        if (skipAutoLoadOnce) { skipAutoLoadOnce = false; return }
+        if (!isModelLoadedInMemory && !isModelLoading &&
+            (isAutoLoadEnabled() || isManualModelPinned())
+        ) {
+            autoLoadModel()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (cameraLiveActive) closeCameraLive()   // libera la cámara al salir de la app
+        isAppInForeground = false
+        if (isVoiceConversationActive) setVoiceConversation(false)
+
+        // Solo en modo automático se desactiva al salir de la app.
+        // En manual el modelo sigue activo hasta que pulses el botón.
+        if (isAutoLoadEnabled() && isModelLoadedInMemory && !modelLoadedInBackground) {
+            Log.d(TAG, "Auto-desactivación: App en segundo plano, liberando motor IA...")
+            releaseModelFromMemory()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 📍 Volviste de la pantalla de Ubicación: sigue la búsqueda que estaba esperando
+        locationSettingsLatch?.countDown()
+        // 🛟 La app ya está abierta y lista: desde ahora un error se atrapa y se avisa, en vez de cerrarla
+        appReady = true
+        // 🔒 Copia no descargada de Google Play: no se puede usar
+        runCatching { checkGenuineInstall() }
+        // 📥 Al abrir la app, Android renueva las 6 horas de descarga en segundo plano: las descargas siguen solas
+        runCatching { DownloadService.onAppForeground(applicationContext) }
+    }
+
+    // ========================================================================
+    // 🔒 PROTECCIÓN DE LA APP DE PAGO: solo funciona si se instaló desde Google Play.
+    //    Si alguien la saca de su teléfono y se la pasa a otro, esa copia muestra un aviso y no se puede usar.
+    //    Las versiones de prueba (debug, las que bajas de GitHub) no se revisan, para que puedas seguir probando.
+    // ========================================================================
+    private var genuineDialog: AlertDialog? = null
+
+    /** ¿Se instaló desde Google Play? (o es una versión de prueba) */
+    private fun isGenuineInstall(): Boolean {
+        // 🧪 Versión de prueba (debug): siempre se puede usar
+        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) return true
+        val installer = runCatching { packageManager.getInstallSourceInfo(packageName).installingPackageName }.getOrNull()
+        // Google Play (y su servicio de pruebas internas)
+        return installer in setOf("com.android.vending", "com.google.android.feedback")
+    }
+
+    private fun checkGenuineInstall() {
+        if (isGenuineInstall() || genuineDialog?.isShowing == true) return
+        val storeUri = Uri.parse("market://details?id=$packageName")
+        val webUri = Uri.parse("https://play.google.com/store/apps/details?id=$packageName")
+        genuineDialog = AlertDialog.Builder(this)
+            .setTitle("🔒 Copia no descargada de Google Play")
+            .setMessage("Cumulus solo funciona si lo instalas desde Google Play.\n\n" +
+                "Esta copia fue instalada desde otro lugar (por ejemplo, compartida por otra persona o pasada desde otro teléfono).\n\n" +
+                "Si ya compraste Cumulus, descárgalo de nuevo gratis desde Google Play con la misma cuenta: tu compra queda guardada.")
+            .setCancelable(false)
+            .setPositiveButton("ABRIR GOOGLE PLAY") { _, _ ->
+                runCatching { startActivity(Intent(Intent.ACTION_VIEW, storeUri).setPackage("com.android.vending")) }
+                    .onFailure { runCatching { startActivity(Intent(Intent.ACTION_VIEW, webUri)) } }
+                finishAffinity()
+            }
+            .setNegativeButton("SALIR") { _, _ -> finishAffinity() }
+            .create()
+        genuineDialog?.show()
+        genuineDialog?.let { runCatching { styleDarkRoundDialog(it) } }
+    }
+
+    private fun initViews() {
+        drawerLayout = findViewById(R.id.drawer_layout)
+        // Al abrir un panel lateral, el teclado y la barra del chat bajan
+        drawerLayout?.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
+            override fun onDrawerStateChanged(newState: Int) {
+                val anyOpen = drawerLayout?.let {
+                    it.isDrawerOpen(GravityCompat.START) || it.isDrawerOpen(GravityCompat.END)
+                } == true
+                // Empieza a abrirse (arrastrando o con el botón) desde cerrado
+                if (newState != DrawerLayout.STATE_IDLE && !anyOpen) closeChatKeyboard()
+            }
+            override fun onDrawerOpened(drawerView: View) = closeChatKeyboard()
+
+            // Las barras de arriba y abajo toman el color del panel mientras se abre
+            override fun onDrawerSlide(drawerView: View, slideOffset: Float) {
+                val panelColor = (drawerView.background as? android.graphics.drawable.ColorDrawable)?.color
+                    ?: Color.parseColor(if (isLightMode()) "#FFFFFF" else "#000000")
+                topBarOverlay?.setBackgroundColor(panelColor)
+                bottomBarOverlay?.setBackgroundColor(panelColor)
+                topBarOverlay?.alpha = slideOffset
+                bottomBarOverlay?.alpha = slideOffset
+            }
+
+            override fun onDrawerClosed(drawerView: View) {
+                topBarOverlay?.alpha = 0f
+                bottomBarOverlay?.alpha = 0f
+            }
+        })
+        settingsPageFlipper = findViewById(R.id.settings_page_flipper)
+        btnOpenGgufDownloads = findViewById(R.id.btn_open_gguf_downloads)
+        btnOpenTtsDownloads = findViewById(R.id.btn_open_tts_downloads)
+        btnUploadGguf = findViewById(R.id.btn_upload_gguf)
+        btnUploadTts = findViewById(R.id.btn_upload_tts)
+        btnUploadMmproj = findViewById(R.id.btn_upload_mmproj)
+        btnBackFromGgufDownload = findViewById(R.id.btn_back_from_gguf_download)
+        btnBackFromTtsDownload = findViewById(R.id.btn_back_from_tts_download)
+
+        btnChooseBubbleImage = findViewById(R.id.btn_choose_bubble_image)
+        btnRestoreChatImage = findViewById(R.id.btn_restore_chat_image)
+        btnChooseVoices = findViewById(R.id.btn_choose_voices)
+
+        spinnerBackend = findViewById(R.id.spinner_backend)
+        btnLoadModel = findViewById(R.id.btn_load_model)
+        switchAutoLoad = findViewById(R.id.switch_auto_load)
+        switchAutoLoad?.isChecked = isAutoLoadEnabled()
+        updateAutoLoadSwitchText()
+        switchAutoLoad?.setOnCheckedChangeListener { _, checked ->
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean("auto_load_model", checked).apply()
+            updateAutoLoadSwitchText()
+            setManualModelPinned(!checked && isModelLoadedInMemory)
+            updateLoadModelButton()
+            if (checked) {
+                cumulusToast(this, "Carga automática activada", Toast.LENGTH_SHORT).show()
+                if (!isModelLoadedInMemory) autoLoadModel()
+            } else {
+                cumulusToast(this, "Carga manual: usa el botón Cargar modelo", Toast.LENGTH_SHORT).show()
+            }
+        }
+        btnModelName = findViewById(R.id.btn_model_name)
+        btnMmproj = findViewById(R.id.btn_mmproj)
+        btnMmproj?.setOnClickListener { showSelectMmprojDialog() }
+        updateMmprojButton()
+        btnBackend = findViewById(R.id.btn_backend)
+        tvModelLoadedName = findViewById(R.id.tv_model_loaded_name)
+        
+        etGgufUrl = findViewById(R.id.et_gguf_url)
+        btnAddGgufUrl = findViewById(R.id.btn_add_gguf_url)
+        ggufDownloadsContainer = findViewById(R.id.downloads_container_gguf)
+        tvEmptyGgufDownloads = findViewById(R.id.tv_empty_gguf_downloads)
+        runCatching { setupSavedGgufUrlButton() }   // 🔖 botón «GUARDAR URL GGUF»
+        etTtsUrl = findViewById(R.id.et_tts_url)
+        btnAddTtsUrl = findViewById(R.id.btn_add_tts_url)
+        ttsDownloadsContainer = findViewById(R.id.downloads_container_tts)
+        tvEmptyTtsDownloads = findViewById(R.id.tv_empty_tts_downloads)
+        updateEmptyDownloadState(DownloadType.GGUF)
+        updateEmptyDownloadState(DownloadType.TTS)
+
+        etElevenApiKey = findViewById(R.id.et_eleven_api_key)
+        btnSaveElevenKey = findViewById(R.id.btn_save_eleven_key)
+        btnElevenRecord = findViewById(R.id.btn_eleven_record)
+        btnElevenTest = findViewById(R.id.btn_eleven_test)
+        btnElevenUse = findViewById(R.id.btn_eleven_use)
+        btnElevenDelete = findViewById(R.id.btn_eleven_delete)
+        btnElevenSave = findViewById(R.id.btn_eleven_save)
+
+        rvChatMessages = findViewById(R.id.rv_chat_messages)
+        etChatInput = findViewById(R.id.et_chat_input)
+        chatComposer = findViewById(R.id.chat_composer)
+        btnSend = findViewById(R.id.btn_send)
+        btnMic = findViewById(R.id.btn_mic)
+        btnAttach = findViewById(R.id.btn_attach)
+        btnChatMode = findViewById(R.id.btn_chat_mode)
+        btnChatMode?.strokeWidth = 0   // «Solo chat» sin la línea que lo rodeaba (se mantiene el destello azul al tocar)
+        attachmentsScroll = findViewById(R.id.attachments_scroll)
+        attachmentsStrip = findViewById(R.id.attachments_strip)
+        setupChatModeAndAttach()
+        btnVoicePlayPause = findViewById(R.id.btn_voice_play_pause)
+        tvAiName = findViewById(R.id.tv_ai_name)
+        StarName.attach(tvAiName)   // ✨ nombre de arriba: mitad blanco, mitad colores de las estrellas
+        etAiNameCustom = findViewById(R.id.et_ai_name_custom)
+        btnSaveAiName = findViewById(R.id.btn_save_ai_name)
+        etUserName = findViewById(R.id.et_user_name)
+        btnSaveUserName = findViewById(R.id.btn_save_user_name)
+
+        seekContext = findViewById(R.id.seek_context)
+        tvContextValue = findViewById(R.id.tv_context_value)
+        seekTemperature = findViewById(R.id.seek_temperature)
+        tvTemperatureValue = findViewById(R.id.tv_temperature_value)
+        seekTopK = findViewById(R.id.seek_top_k)
+        seekTopP = findViewById(R.id.seek_top_p)
+        tvTopKValue = findViewById(R.id.tv_top_k_value)
+        tvTopPValue = findViewById(R.id.tv_top_p_value)
+        seekMinP = findViewById(R.id.seek_min_p)
+        tvMinPValue = findViewById(R.id.tv_min_p_value)
+        etStopTokens = findViewById(R.id.et_stop_tokens)
+        tvStopTokensValue = findViewById(R.id.tv_stop_tokens_value)
+        btnChatTemplate = findViewById(R.id.btn_chat_template)
+        tvChatTemplateValue = findViewById(R.id.tv_chat_template_value)
+        tvModelProfile = findViewById(R.id.tv_model_profile)
+        etModelSystemPrompt = findViewById(R.id.et_model_system_prompt)
+        tvModelSystemPromptValue = findViewById(R.id.tv_model_system_prompt_value)
+        
+        etPersonalityCustom = findViewById(R.id.et_personality_custom)
+        btnSaveCustomPersonality = findViewById(R.id.btn_save_custom_personality)
+        btnDeleteCustomPersonality = findViewById(R.id.btn_delete_custom_personality)
+
+        chatAdapter = ChatAdapter(
+            chatMessages,
+            { bubbleImageUri },
+            {
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getString("ai_name", null)?.trim().orEmpty().ifEmpty { "Cumulus" }
+            },
+            {
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getString("user_name", null)?.trim().orEmpty().ifEmpty { "Tú" }
+            }
+        )
+        rvChatMessages?.layoutManager = LinearLayoutManager(this)
+        rvChatMessages?.adapter = chatAdapter
+        runCatching { setupScrollToBottomButton() }   // ⬇️ botón redondo para bajar al último mensaje
+        // 🚩 Banderita debajo de cada respuesta de la IA: reportar contenido ofensivo (Google Play)
+        chatAdapter?.onReport = { msg, question, pos -> showReportDialog(msg, question, pos) }
+        // 📄 Modo Ingeniero de código: el código llega como tarjetas de archivo que se abren en su propia ventana
+        chatAdapter?.isCodeMode = { runCatching { currentChatMode().key == "codigo" }.getOrDefault(false) }
+        // ✦ Cuando la IA cambia de paso (Pensando → Analizando, buscando, leyendo...) se redibuja su burbuja
+        AiActivity.onBubbleChange = { idx ->
+            runOnUiThread { if (idx in chatMessages.indices) chatAdapter?.notifyItemChanged(idx, "ai_working") }
+        }
+        // 🖥️/📱 Botones «Abrir vista previa» / «Abrir maqueta» del chat
+        AiActivity.onOpenPreview = { kind -> runOnUiThread { if (kind == "app") openAppMockup() else openWebPreview() } }
+        // ✍️ NPU/GPU: el código que va escribiendo la IA se ve en la vista previa mientras se arma
+        GenieXEngineManager.onPartial = { t: String ->
+            AiActivity.reportGeneratedChars(t.length)   // 🏃 el monito corre según la velocidad de escritura
+            AiActivity.live(t)   // 👁️ lo que escribe la IA se ve en vivo en la ventana «Analizando...»
+            checkRepetitionLoop(t)   // 🔁 si se queda repitiendo lo mismo, se corta
+            if (liveCodeActive) updateLiveDraft(liveDraftPrefix + t)
+        }
+        setupThemeSwitch()
+
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val savedKey = prefs.getString("eleven_api_key", "")
+        if (!savedKey.isNullOrEmpty()) {
+            etElevenApiKey?.setText(savedKey)
+        }
+        
+        // El nombre por defecto ahora es «Cumulus» (sin «IA»): si quedó guardado el antiguo, se borra
+        if (prefs.getString("ai_name", null) == "Cumulus IA") prefs.edit().remove("ai_name").apply()
+        val savedAiName = prefs.getString("ai_name", "Cumulus")
+        tvAiName?.text = savedAiName?.take(10)
+        // Muestra el nombre personalizado en su campo para poder editarlo o borrarlo
+        if (savedAiName != null && savedAiName != "Cumulus") etAiNameCustom?.setText(savedAiName.take(10))
+        
+        val savedUserName = prefs.getString("user_name", "")
+        etUserName?.setText(savedUserName)
+        
+        val savedCustomPersonality = prefs.getString("custom_personality", "")
+        etPersonalityCustom?.setText(savedCustomPersonality)
+        
+        val savedBubbleImage = prefs.getString("bubble_image_uri", null)
+        if (savedBubbleImage != null) {
+            bubbleImageUri = Uri.parse(savedBubbleImage)
+        }
+        updateBubbleImageButton()
+        installTopAvatar()
+        
+        etChatInput?.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                etChatInput?.post {
+                    (etChatInput?.parent as? View)?.requestLayout()
+                }
+            }
+        })
+    }
+
+    private fun addMessageToChat(sender: String, text: String, tokens: String = "", isUser: Boolean = false) {
+        val message = ChatMessage(
+            text = text,
+            isUser = isUser,
+            sender = if (isUser) "Tú" else "Cumulus",
+            tokens = tokens
+        )
+        chatMessages.add(message)
+        chatAdapter?.notifyItemInserted(chatMessages.size - 1)
+        rvChatMessages?.scrollToPosition(chatMessages.size - 1)
+    }
+
+    private fun updateChatAvatars() {
+        chatAdapter?.notifyDataSetChanged()
+        refreshTopAvatar()
+    }
+
+    // 🖼️ Imagen de la IA arriba, al lado de las tres rayas (misma que la del chat, esquinas curvas)
+    private var topAvatar: ImageView? = null
+
+    private fun installTopAvatar() {
+        val menuBtn = findViewById<View>(R.id.btn_open_left_drawer) ?: return
+        val row = menuBtn.parent as? LinearLayout ?: return
+        val d = resources.displayMetrics.density
+        val idx = row.indexOfChild(menuBtn) + 1
+        // Reemplaza el espacio de 40dp que había al lado (así el nombre sigue centrado)
+        (row.getChildAt(idx) as? android.widget.Space)?.let { row.removeView(it) }
+        // 📐 Mismo tamaño y esquinas que la imagen de la IA en el chat (48dp, esquinas de 14dp)
+        val img = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams((48 * d).toInt(), (48 * d).toInt()).apply {
+                marginStart = (4 * d).toInt()
+            }
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            clipToOutline = true
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(v: View, o: android.graphics.Outline) {
+                    o.setRoundRect(0, 0, v.width, v.height, 14 * d)
+                }
+            }
+            contentDescription = "Imagen de la IA"
+        }
+        row.addView(img, idx)
+        topAvatar = img
+        // El nombre sigue centrado: el lado derecho (⋮ + tuerca) crece lo mismo que creció la imagen
+        findViewById<View>(R.id.btn_think_level)?.let { t ->
+            t.layoutParams = t.layoutParams.apply { width = (52 * d).toInt() }
+        }
+        refreshTopAvatar()
+    }
+
+    private fun refreshTopAvatar() {
+        val img = topAvatar ?: return
+        val uri = bubbleImageUri
+        if (uri != null) {
+            runCatching { img.setImageURI(uri) }
+            if (img.drawable == null) img.setImageResource(R.drawable.cumulus_icon)
+        } else img.setImageResource(R.drawable.cumulus_icon)
+    }
+
+    private fun setupChatActions() {
+        etChatInput?.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+
+            override fun afterTextChanged(s: Editable?) {
+                val input = etChatInput ?: return
+                if (s.isNullOrEmpty()) {
+                    updateChatComposerExpansion(false)
+                    return
+                }
+
+                if (!isChatInputExpanded) {
+                    input.post {
+                        if (!isChatInputExpanded && input.lineCount > 1) {
+                            updateChatComposerExpansion(true)
+                        }
+                    }
+                }
+            }
+        })
+
+        etChatInput?.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                btnSend?.performClick()
+                true
+            } else {
+                false
+            }
+        }
+
+        startStopIconWatcher()
+        btnSend?.setOnClickListener {
+            // ⏹️ Si la IA está escribiendo o hablando, el botón la interrumpe
+            if (isAiBusy || isTtsSpeaking || replyTtsActive) {
+                // 🔊 Solo estaba LEYENDO la respuesta en voz alta y escribiste algo nuevo (el botón ya
+                //    se ve como «Enviar»): se calla y se manda tu mensaje al tiro (no hace falta tocar dos veces)
+                if (typedWhileSpeaking()) {
+                    markAiCutForMic()
+                    runCatching { chatTtsEngine?.stop() }
+                    isTtsSpeaking = false
+                    replyTtsActive = false
+                    updateSendButtonIcon()
+                } else {
+                    stopAiNow()
+                    return@setOnClickListener
+                }
+            }
+            var message = etChatInput?.text?.toString()?.trim() ?: ""
+            // 📷 Cámara en vivo: cada pregunta va con una foto de lo que se ve ahora
+            if (cameraLiveActive && message.isNotEmpty()) {
+                if (skipNextCameraCapture) {
+                    skipNextCameraCapture = false
+                } else if (pendingAttachments.none { attachmentKind(it) == AttachKind.IMAGE }) {
+                    captureCameraFrame()?.let { shotFile ->
+                        pendingAttachments.add(shotFile)
+                        // 🖼️ Se muestra la foto que tomó, junto a tu pregunta
+                        runCatching {
+                            android.graphics.BitmapFactory.decodeFile(shotFile.absolutePath)?.let { bmp ->
+                                cameraShotView?.apply { setImageBitmap(bmp); visibility = View.VISIBLE }
+                            }
+                        }
+                    }
+                    cameraLastShownIdx = chatMessages.size
+                    cameraAnswerView?.text = "👀 Mirando..."
+                    if (isInternetEnabled() && wantsCameraWebSearch(message)) {
+                        // Paso 1: reconocer qué es · Paso 2 (al terminar): buscarlo en internet
+                        pendingCameraSearch = message
+                        message = "Identifica con precisión qué es lo principal que aparece en esta imagen (objeto, producto con su marca y modelo si se ve, lugar, planta, animal o texto). Responde SOLO con el nombre, en una línea corta."
+                    }
+                }
+            }
+            val attachments = pendingAttachments.toList()
+            if (message.isEmpty() && attachments.isEmpty()) {
+                cumulusToast(this, "Escribe un mensaje", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            // 📄 "Guárdalo en Word / PDF / txt": se guarda la última respuesta, sin preguntarle a la IA
+            val fileFormat = if (attachments.isEmpty()) requestedFileFormat(message) else null
+            if (fileFormat != null && isOnlySaveCommand(message)) {
+                val lastReply = chatMessages.lastOrNull { !it.isUser && it.text.isNotBlank() && !it.text.startsWith("Pensando") && it.text != greetingText }
+                if (lastReply != null) {
+                    etChatInput?.text?.clear()
+                    offerSaveAsFile(lastReply.text, fileFormat)
+                    return@setOnClickListener
+                }
+            }
+            // 🧠 Lo conversado antes de este mensaje (para que la IA lo recuerde)
+            val history = buildHistoryForModel()
+
+            // El mensaje del chat muestra las miniaturas de lo que enviaste
+            chatMessages.add(
+                ChatMessage(
+                    text = message,
+                    isUser = true,
+                    sender = "Tú",
+                    tokens = "",
+                    attachments = attachments.map { it.absolutePath }
+                )
+            )
+            val userMessageIndex = chatMessages.size - 1
+            chatAdapter?.notifyItemInserted(chatMessages.size - 1)
+            rvChatMessages?.scrollToPosition(chatMessages.size - 1)
+            etChatInput?.text?.clear()
+            saveCurrentChat()
+            // Se quitan de la barra, pero los archivos se conservan para el chat
+            clearAttachments(deleteFiles = false)
+
+            val thinkingIndex = chatMessages.size
+            chatMessages.add(ChatMessage(
+                text = "Pensando",
+                isUser = false,
+                sender = "Cumulus",
+                tokens = ""
+            ))
+            chatAdapter?.notifyItemInserted(thinkingIndex)
+            rvChatMessages?.scrollToPosition(thinkingIndex)
+            hideKeyboardAndRestoreChat()
+
+            // 🧰 Si respondes a «¿con qué tecnología?», tu respuesta se junta con lo que pediste
+            //    («1» o «Kotlin» → «créame una app de… Hazla con Kotlin y XML»)
+            if (attachments.isEmpty()) message = runCatching { mergeTechAnswer(message) }.getOrDefault(message)
+            // 🌐 Modo General: todo menos programar (se disculpa y explica cómo cambiar a Ingeniero de código)
+            runCatching { generalModeGate(message, history.lastOrNull { it.first == "assistant" }?.second, attachments) }.getOrNull()?.let { notHere ->
+                chatMessages[thinkingIndex] = ChatMessage(text = notHere, isUser = false, sender = "Cumulus",
+                    tokens = "🌐 Modo General")
+                chatAdapter?.notifyItemChanged(thinkingIndex)
+                rvChatMessages?.scrollToPosition(thinkingIndex)
+                saveCurrentChat()
+                return@setOnClickListener
+            }
+            // 🧰 Pedido de crear una app o página web sin decir con qué: primero se pregunta la tecnología
+            if (attachments.isEmpty()) runCatching { techChoiceQuestion(message) }.getOrNull()?.let { question ->
+                chatMessages[thinkingIndex] = ChatMessage(text = question, isUser = false, sender = "Cumulus",
+                    tokens = "🧰 Elige la tecnología")
+                chatAdapter?.notifyItemChanged(thinkingIndex)
+                rvChatMessages?.scrollToPosition(thinkingIndex)
+                saveCurrentChat()
+                return@setOnClickListener
+            }
+
+            // 📱🖥️ «Muéstrame la parte visual», «ábreme la maqueta», «quiero ver cómo se ve la app»:
+            //    la app abre la maqueta o la vista previa al instante (sin buscar en internet ni llamar al modelo)
+            if (attachments.isEmpty()) runCatching { showPreviewKind(message) }.getOrNull()?.let { kind ->
+                chatMessages[thinkingIndex] = ChatMessage(text = kind.second, isUser = false, sender = "Cumulus",
+                    tokens = when (kind.first) { "app" -> "📱 Maqueta de la app"; "web" -> "🖥️ Vista previa web"; else -> "" })
+                chatAdapter?.notifyItemChanged(thinkingIndex)
+                rvChatMessages?.scrollToPosition(thinkingIndex)
+                saveCurrentChat()
+                if (kind.first == "app") openAppMockup() else if (kind.first == "web") openWebPreview()
+                return@setOnClickListener
+            }
+
+            // 💻 Modo Ingeniero de código: solo programación. Noticias, imágenes, videos, poemas… no se hacen aquí
+            runCatching { codeModeGate(message, history, attachments.isNotEmpty()) }.getOrNull()?.let { notCode ->
+                chatMessages[thinkingIndex] = ChatMessage(text = notCode, isUser = false, sender = "Cumulus",
+                    tokens = "💻 Modo Ingeniero de código")
+                chatAdapter?.notifyItemChanged(thinkingIndex)
+                rvChatMessages?.scrollToPosition(thinkingIndex)
+                saveCurrentChat()
+                return@setOnClickListener
+            }
+
+            // 🎬 Varios videos + "júntalos / únelos": la app los une en uno solo (no necesita la IA)
+            val videoClips = attachments.filter { attachmentKind(it) == AttachKind.VIDEO }
+            if (videoClips.size >= 2 && (wantsJoinVideos(message) || message.isBlank())) {
+                isAiBusy = true
+                updateSendButtonIcon()
+                runJoinVideos(videoClips, thinkingIndex)
+                return@setOnClickListener
+            }
+
+            // ✂️🎨🪄 Editor de imágenes con IA: recortar, agrandar o achicar, subir o bajar la resolución con IA,
+            //    cambiar el fondo, quitar o cambiar personas y crear una versión nueva de la misma imagen
+            //    (con la foto adjunta, o con la última imagen del chat si hablas de ella)
+            if (runCatching { startImageEditor(message, attachments, thinkingIndex, userMessageIndex) }.getOrDefault(false)) return@setOnClickListener
+
+            // 🖼️ Imagen adjunta + "cambia el tamaño / mejórala / bórrale... / cámbiale...": editor de imágenes
+            val imageFiles = attachments.filter { attachmentKind(it) == AttachKind.IMAGE }
+            val imgOp = if (imageFiles.size == 1) imageOperation(message) else null
+            if (imgOp == ImgOp.RESIZE || imgOp == ImgOp.ENHANCE) {
+                isAiBusy = true
+                updateSendButtonIcon()
+                runImageTool(imgOp, imageFiles[0], message, thinkingIndex)
+                return@setOnClickListener
+            }
+            if (imgOp == ImgOp.EDIT || imgOp == ImgOp.ERASE) {
+                chatMessages[thinkingIndex] = ChatMessage(
+                    text = (if (imgOp == ImgOp.ERASE) "🧽 Borrar partes de una imagen" else "🪄 Cambiar cosas dentro de una imagen") +
+                        " necesita una IA de edición de imágenes en internet, y los servicios que lo hacen bien piden una API Key " +
+                        "(como ElevenLabs para la voz). Todavía no está activado en la app.\n\n" +
+                        "Lo que sí puedo hacer ahora con tu imagen, dentro del teléfono: recortarla, agrandarla o achicarla, subir o bajar su " +
+                        "resolución con IA, cambiarle el fondo, quitar o cambiar a una persona, crear una versión nueva (otro estilo, de noche, " +
+                        "con nieve…), mejorarla, o describirla si tienes un modelo con mmproj.",
+                    isUser = false, sender = "Cumulus", tokens = "")
+                chatAdapter?.notifyItemChanged(thinkingIndex)
+                saveCurrentChat()
+                return@setOnClickListener
+            }
+            // 🎨 "Crea una imagen de ...": imagen gratis por internet
+            // 🛠️ Pedido de crear una app / página (o con código pegado): nunca es una imagen ni un video
+            val creationRequest = runCatching { isCreationRequest(message) }.getOrDefault(false)
+            if (attachments.isEmpty() && !creationRequest && wantsCreateImage(message)) {
+                if (!isInternetEnabled()) {
+                    chatMessages[thinkingIndex] = ChatMessage(text = mediaLang(message)?.let { CreateMedia.text(it, 3) }
+                        ?: "🌐 Para crear imágenes necesito internet. Actívalo en ➕ → Internet y vuelve a pedírmelo.",
+                        isUser = false, sender = "Cumulus", tokens = "")
+                    chatAdapter?.notifyItemChanged(thinkingIndex)
+                    saveCurrentChat()
+                    return@setOnClickListener
+                }
+                isAiBusy = true
+                updateSendButtonIcon()
+                runCreateImage(message, thinkingIndex)
+                return@setOnClickListener
+            }
+
+            // 🎞️ "Crea un video de ...": imágenes gratis por internet + animación en el teléfono
+            if (attachments.isEmpty() && !creationRequest && wantsCreateVideo(message)) {
+                if (!isInternetEnabled()) {
+                    chatMessages[thinkingIndex] = ChatMessage(text = mediaLang(message)?.let { CreateMedia.text(it, 4) }
+                        ?: "🌐 Para crear un video necesito internet. Actívalo en ➕ → Internet y vuelve a pedírmelo.",
+                        isUser = false, sender = "Cumulus", tokens = "")
+                    chatAdapter?.notifyItemChanged(thinkingIndex)
+                    saveCurrentChat()
+                    return@setOnClickListener
+                }
+                isAiBusy = true
+                updateSendButtonIcon()
+                runCreateVideo(message, thinkingIndex)
+                return@setOnClickListener
+            }
+
+            replyImages.clear()
+            val selectedBackend = spinnerBackend?.selectedItem?.toString() ?: getSavedBackend()
+            stopRequested = false
+            runCatching { nativeSetStop(false) }
+            isAiBusy = true
+            updateSendButtonIcon()   // ⏹️ aparece junto con "Pensando"
+            // ✦ Estrella girando + «Pensando...» (o «Analizando...» si mandaste archivos, fotos, audio o video)
+            AiActivity.start(thinkingIndex, if (attachments.isNotEmpty()) AiActivity.ANALYZING else AiActivity.THINKING)
+            AiActivity.liveIsCode = runCatching { currentChatMode().key == "codigo" }.getOrDefault(false)   // 👁️ código o texto en vivo
+            AiActivity.log("💭 Leyendo tu mensaje", message.take(300) +
+                (if (attachments.isNotEmpty()) "\n📎 " + attachments.joinToString(", ") { it.name.substringAfter('_') } else ""))
+            // 🖥️/📱 Pedido de una app o página. La invitación a mirarla llega en el momento justo:
+            //    web → cuando la app está terminada · Kotlin → apenas está creada la parte visual (diseño XML)
+            val previewKind = if (attachments.isEmpty()) runCatching {
+                codePreviewKind(message, history.lastOrNull { it.first == "assistant" }?.second)
+            }.getOrNull() else null
+            startLiveCode(previewKind, attachments.isEmpty() && (previewKind != null || creationRequest || looksLikeCodeRequest(message)))
+            when (previewKind) {
+                "web" -> AiActivity.analyzing("🖥️ Es una app web: cuando esté terminada te invito a abrir la vista previa")
+                "app" -> AiActivity.analyzing("📱 Es una app Android: apenas esté la parte visual te invito a ver la maqueta")
+            }
+            chatAdapter?.notifyItemChanged(thinkingIndex)
+            thread {
+                val start = System.currentTimeMillis()
+                try {
+                    val usingGpuNow = selectedBackend.contains("GPU", ignoreCase = true) ||
+                        selectedBackend.contains("NPU", ignoreCase = true)
+                    if (usingGpuNow) getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit().putBoolean("gpu_run_pending", true).commit()
+                    streamingIndex = if (isVoiceConversationActive) -1 else thinkingIndex
+                    val reply = try {
+                        generateAiResponse(message, selectedBackend, attachments, history)
+                            // 🧪 Modo código: la maqueta también funciona con la lógica de la app (maqueta.js)
+                            .let { r -> runCatching { withMockupLogic(r, history, selectedBackend) }.getOrDefault(r) }
+                    } finally {
+                        streamingIndex = -1
+                        if (usingGpuNow) getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                            .edit().putBoolean("gpu_run_pending", false).apply()
+                    }
+                    // Guarda los adjuntos con el chat (imágenes y archivos hasta 2 MB; videos se borran)
+                    val keptPaths = persistAttachments(attachments)
+                    runOnUiThread {
+                        if (userMessageIndex in chatMessages.indices && chatMessages[userMessageIndex].isUser) {
+                            chatMessages[userMessageIndex] = chatMessages[userMessageIndex].copy(attachments = keptPaths)
+                            chatAdapter?.notifyItemChanged(userMessageIndex)
+                        }
+                    }
+                    val secs = (System.currentTimeMillis() - start) / 1000f
+                    val wasStopped = stopRequested
+                    val finalText = if (wasStopped) {
+                        val t = reply.text.trim()
+                        if (t.isEmpty() || t.startsWith("Pensando")) "⏹️ Respuesta detenida" else "$t\n\n⏹️ (detenida)"
+                    } else reply.text
+                    runOnUiThread {
+                      // 🛡️ Si algo falla al mostrar la respuesta, la app NO se cierra: se avisa y sigue
+                      try {
+                        stopLiveCode()
+                        AiActivity.finish(if (wasStopped) "Respuesta detenida" else "Respuesta lista")
+                        putAiBubble(thinkingIndex, ChatMessage(
+                            text = finalText,
+                            isUser = false,
+                            sender = "Cumulus",
+                            tokens = if (reply.tokens.isNotEmpty())
+                                "${reply.tokens} · ${String.format(Locale.US, "%.1f", secs)} s"
+                            else String.format(Locale.US, "%.1f s", secs),
+                            // 🖼️ Fotos de las noticias / tarjeta del clima
+                            attachments = if (wasStopped) emptyList() else replyImages.toList()
+                        ))
+                        replyImages.clear()
+                        if (thinkingIndex in chatMessages.indices) rvChatMessages?.scrollToPosition(thinkingIndex)
+                        isAiBusy = false
+                        saveCurrentChat()
+                        if (wasStopped) {
+                            // Detenida: no se lee en voz alta
+                        } else if (isVoiceConversationActive) {
+                            // Voz a voz: habla la respuesta y luego vuelve a escuchar
+                            speakThenListen(reply.text)
+                        } else if (isVocalResponseActive && reply.text.isNotBlank()) {
+                            replyTtsActive = true
+                            chatTtsEngine?.speak(textForSpeech(reply.text)) { replyTtsActive = false }
+                        }
+                        // 📚 Guarda lo aprendido de internet
+                        pendingLearnTopic?.let { topic ->
+                            pendingLearnTopic = null
+                            if (!wasStopped && reply.text.length > 80) {
+                                saveKnowledge(topic, reply.text)
+                                cumulusToast(this, "📚 Aprendido y guardado: $topic", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                        // 📷 Cámara en vivo: ya reconoció el objeto → ahora lo busca en internet
+                        if (!wasStopped && cameraLiveActive && pendingCameraSearch != null) continueCameraSearch(reply.text)
+                        // 📄 Si pediste el resultado como archivo (Word / PDF / txt), se ofrece guardarlo
+                        val wantFile = requestedFileFormat(message)
+                        if (!wasStopped && wantFile != null && reply.text.isNotBlank()) offerSaveAsFile(reply.text, wantFile)
+                      } catch (t: Throwable) {
+                        Log.e(TAG, "🛟 Error al mostrar la respuesta (la app sigue abierta)", t)
+                        isAiBusy = false
+                        runCatching { updateSendButtonIcon() }
+                      }
+                    }
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Error generando respuesta: ${t.message}")
+                    runOnUiThread {
+                        runCatching {
+                            AiActivity.log("⚠️ Error", t.message.orEmpty().take(300))
+                            stopLiveCode()
+                            AiActivity.finish("Terminó con error")
+                            // 😅 Nunca se cierra la app: se pide disculpas y se puede volver a intentar
+                            putAiBubble(thinkingIndex, ChatMessage(
+                                text = friendlyErrorText(t),
+                                isUser = false,
+                                sender = "Cumulus",
+                                tokens = ""
+                            ))
+                            saveCurrentChat()
+                        }
+                        isAiBusy = false
+                        runCatching { updateSendButtonIcon() }
+                        runCatching { sendQueuedVoiceIfAny() }
+                    }
+                }
+            }
+        }
+
+        btnVoicePlayPause?.setOnClickListener {
+            if (isVocalResponseActive) {
+                isVocalResponseActive = false
+                markAiCutForMic()
+                chatTtsEngine?.stop()
+                // Detenida a mano no avisa «terminé»: se limpia aquí (si no, Enviar quedaba como «detener»)
+                isTtsSpeaking = false
+                replyTtsActive = false
+                btnVoicePlayPause?.setImageResource(android.R.drawable.ic_media_play)
+            } else {
+                isVocalResponseActive = true
+                // ⏸️ Pausa con el color de las estrellas (celeste → magenta) mientras la respuesta por voz está activa
+                val pause = ContextCompat.getDrawable(this, android.R.drawable.ic_media_pause)?.mutate()
+                if (pause != null) btnVoicePlayPause?.setImageDrawable(com.paulrj.cumulusia.manager.StarText.GradientIcon(pause, ignoreTint = true))
+                else btnVoicePlayPause?.setImageResource(android.R.drawable.ic_media_pause)
+                cumulusToast(this, "Respuesta por voz activada", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        btnMic?.setOnClickListener {
+            if (isVoiceConversationActive) {
+                setVoiceConversation(false)
+                cumulusToast(this, "Conversación por voz desactivada", Toast.LENGTH_SHORT).show()
+            } else {
+                toggleChatVoiceRecognition()
+            }
+        }
+    }
+
+    private fun setupChatSpeechRecognizer() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            Log.w(TAG, "El reconocimiento de voz de Android no está disponible")
+            return
+        }
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
+            setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    isListeningForChat = true
+                    micWatchdog.removeCallbacksAndMessages(null)   // ✅ el micrófono sí abrió
+                    micFailStreak = 0
+                    lastMicSignalAt = android.os.SystemClock.elapsedRealtime()
+                    if (isVoiceConversationActive) {
+                        // 🔊 Si la IA está hablando, esta escucha también oye su voz (eco): se analiza aparte
+                        if (isTtsSpeaking) sessionHeardTts = true
+                        etChatInput?.hint = if (isTtsSpeaking) micHint("Respondiendo... (micrófono encendido)", leading = "🔊 ")
+                            else micHint("Te escucho...")
+                    } else {
+                        cumulusToast(this@MainActivity, "Escuchando...", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                override fun onBeginningOfSpeech() {
+                    lastMicSignalAt = android.os.SystemClock.elapsedRealtime()
+                }
+                // 🎚️ Con el micrófono abierto, el volumen llega varias veces por segundo:
+                //    si deja de llegar, el micrófono se cortó (el punto verde se apaga) y se vuelve a abrir
+                override fun onRmsChanged(rmsdB: Float) {
+                    lastMicSignalAt = android.os.SystemClock.elapsedRealtime()
+                    micRmsSeen = true
+                    if (isTtsSpeaking) sessionHeardTts = true
+                }
+                override fun onBufferReceived(buffer: ByteArray?) = Unit
+                override fun onEndOfSpeech() {
+                    isListeningForChat = false
+                    lastMicSignalAt = android.os.SystemClock.elapsedRealtime()
+                }
+
+                override fun onError(error: Int) {
+                    // Aviso tardío de una escucha que se cerró a propósito: no es una falla de la nueva
+                    if (error == SpeechRecognizer.ERROR_CLIENT &&
+                        android.os.SystemClock.elapsedRealtime() - micCancelledAt < 500L) {
+                        Log.d(TAG, "🎙️ Aviso de la escucha anterior ignorado")
+                        return
+                    }
+                    isListeningForChat = false
+                    micSessionOpen = false
+                    lastMicSignalAt = android.os.SystemClock.elapsedRealtime()
+                    if (!isVoiceConversationActive) setDictationMic(false)
+                    micWatchdog.removeCallbacksAndMessages(null)
+                    partialCut.removeCallbacksAndMessages(null)
+                    Log.w(TAG, "Error de reconocimiento de voz: $error")
+                    // El servicio de voz se desconectó o quedó trabado: se crea uno nuevo (antes había que apagar y prender)
+                    if (isVoiceConversationActive && (error == SpeechRecognizer.ERROR_CLIENT ||
+                            error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY)) {
+                        micFailStreak++
+                        if (micFailStreak >= 2) { rebuildRecognizerAndListen(); return }
+                    }
+                    if (error == 12 || error == 13) { preferOfflineSpeech = false; offlineSpeechUnavailable = true } // idioma sin paquete offline
+                    // Escuchó bien y solo no oyó palabras: el micrófono está sano
+                    val healthy = error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                    if (healthy) { micDeadStreak = 0; micRebuilds = 0; micErrorStreak = 0 } else micErrorStreak++
+                    if (isVoiceConversationActive) {
+                        // El micrófono se mantiene encendido: ante cualquier corte, vuelve a escuchar
+                        if (error != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                            // Si quedó «ocupado», se libera antes de volver a abrirlo
+                            if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) cancelMicSession()
+                            // Si falla seguido, espera un poco más cada vez (así no se queda prendiendo y apagando)
+                            val wait = if (healthy) 250L
+                                else maxOf(if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 500L else 250L,
+                                    minOf(4000L, 250L shl minOf(micErrorStreak - 1, 4)))
+                            scheduleConversationListening(wait)
+                        } else {
+                            setVoiceConversation(false)
+                            cumulusToast(
+                                this@MainActivity,
+                                "Conversación por voz detenida (error $error)",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        return
+                    }
+                    cumulusToast(
+                        this@MainActivity,
+                        "No pude reconocer la voz. Inténtalo nuevamente.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+
+                override fun onResults(results: Bundle?) {
+                    isListeningForChat = false
+                    micSessionOpen = false
+                    lastMicSignalAt = android.os.SystemClock.elapsedRealtime()
+                    if (!isVoiceConversationActive) setDictationMic(false)
+                    micWatchdog.removeCallbacksAndMessages(null)
+                    partialCut.removeCallbacksAndMessages(null)
+                    micFailStreak = 0
+                    micDeadStreak = 0; micRebuilds = 0; micErrorStreak = 0   // ✅ el micrófono funciona
+                    val spokenText = results
+                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()
+                        ?.trim()
+                        .orEmpty()
+                    if (isVoiceConversationActive) {
+                        handleConversationSpeech(spokenText)
+                        return
+                    }
+                    if (spokenText.isNotEmpty()) {
+                        etChatInput?.setText(spokenText)
+                        etChatInput?.setSelection(spokenText.length)
+                        btnSend?.performClick()
+                    }
+                }
+
+                override fun onPartialResults(partialResults: Bundle?) {
+                    lastMicSignalAt = android.os.SystemClock.elapsedRealtime()
+                    val partialText = partialResults
+                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()
+                        .orEmpty()
+                    if (partialText.isNotEmpty() && !isVoiceConversationActive) {
+                        etChatInput?.setText(partialText)
+                        etChatInput?.setSelection(partialText.length)
+                    }
+                    // ⚡ Voz a voz: si dejaste de hablar ~0.9 s, se cierra la frase al tiro
+                    //    (algunos teléfonos ignoran el silencio pedido y esperaban muchos segundos)
+                    // ✋ Interrupción automática: apenas dices algo que NO es el eco de la propia IA
+                    //    (2 palabras tuyas, o «espera», «para», «basta», «oye», su nombre…), la IA se calla
+                    //    al instante y te escucha; al terminar tu frase responde a lo último que dijiste.
+                    //    Antes se exigía que la mitad de TODO lo oído fuera tuyo; como el micrófono también
+                    //    oye a la IA hablando, eso casi nunca se cumplía (de 5 veces resultaba 1).
+                    if (isVoiceConversationActive && partialText.isNotBlank()) {
+                        micDeadStreak = 0; micErrorStreak = 0   // ✅ el micrófono funciona
+                        if (sessionFirstPartialAt == 0L) sessionFirstPartialAt = System.currentTimeMillis()
+                        if (isTtsSpeaking) sessionHeardTts = true
+                        // El eco solo puede llegar mientras la IA habla (o justo después, lo que tarda en entenderlo)
+                        val echoWindow = isTtsSpeaking || System.currentTimeMillis() <= ttsFinishedAt + 1200L
+                        if (isTtsSpeaking && !bargedInThisSession && userSpokeOverAi(partialText, aiStillTalking = true)) {
+                            Log.d(TAG, "✋ Interrumpida por el usuario: $partialText")
+                            runCatching { chatTtsEngine?.stop() }
+                            isTtsSpeaking = false
+                            replyTtsActive = false
+                            ttsFinishedAt = 0L   // lo que sigue ya no se trata como eco
+                            bargedInThisSession = true
+                            // Lo de antes de tu primera palabra era su voz (aunque el micrófono haya entendido mal alguna)
+                            userStartIndex(partialText).let { if (it > 0) echoOnlyWords = it }
+                            etChatInput?.hint = micHint("Te escucho...")
+                        } else if (sessionHeardTts && echoWindow && !bargedInThisSession && echoLike(partialText)) {
+                            // Hasta aquí el micrófono solo oyó la voz de la IA: esa parte no se toma como tuya
+                            // (un «sí» o «el segundo» tuyo al final no cuenta como de ella)
+                            echoOnlyWords = echoPrefixLength(partialText)
+                        }
+                    }
+                    if (partialText.isNotBlank() && isVoiceConversationActive) {
+                        partialCut.removeCallbacksAndMessages(null)
+                        partialCut.postDelayed({
+                            if (isListeningForChat && isVoiceConversationActive) {
+                                runCatching { speechRecognizer?.stopListening() }
+                                // Ya no graba: ahora está entregando lo que dijiste
+                                isListeningForChat = false
+                                lastMicSignalAt = android.os.SystemClock.elapsedRealtime()
+                            }
+                        }, 900L)
+                    }
+                }
+
+                override fun onEvent(eventType: Int, params: Bundle?) = Unit
+            })
+        }
+    }
+    // ========================================================================
+    // 🎙️ CONVERSACIÓN VOZ A VOZ: escuchar → la IA responde hablando → escuchar
+    // ========================================================================
+    private fun setVoiceConversation(active: Boolean) {
+        if (active) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                ActivityCompat.requestPermissions(
+                    this, arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_CODE
+                )
+                cumulusToast(this, "Da permiso de micrófono y vuelve a activarlo", Toast.LENGTH_LONG).show()
+                return
+            }
+            if (speechRecognizer == null) setupChatSpeechRecognizer()   // por si un intento anterior lo dejó sin crear
+            if (speechRecognizer == null) {
+                cumulusToast(this, "Reconocimiento de voz no disponible", Toast.LENGTH_SHORT).show()
+                return
+            }
+            if (chatTtsEngine == null) chatTtsEngine = TtsEngineManager(this)
+            isVoiceConversationActive = true
+            micRebuilds = 0; micFailStreak = 0; micDeadStreak = 0; micErrorStreak = 0
+            // Cada vez que se activa vuelve a probar el reconocimiento dentro del teléfono (más rápido),
+            // salvo que el teléfono ya haya dicho que ese idioma no está descargado
+            preferOfflineSpeech = !offlineSpeechUnavailable
+            etChatInput?.hint = "⏳ Activando micrófono..."   // «Te escucho» solo cuando abre de verdad
+            voiceHistory.clear()
+            // 🎙️ Si quedó una escucha a medias (un dictado o un intento anterior), se cierra antes de empezar
+            val hadOpenMic = isListeningForChat || micSessionOpen
+            if (hadOpenMic) {
+                cancelMicSession()
+                if (isListeningForChat) setDictationMic(false)
+                isListeningForChat = false
+                micSessionOpen = false
+            }
+            // El micrófono de al lado de Enviar NO se pinta: el voz a voz se ve con el micrófono azul de la barra
+            cumulusToast(this, "🎙️ Conversación por voz activada. ¡Habla!", Toast.LENGTH_SHORT).show()
+            if (hadOpenMic) scheduleConversationListening(250L) else startConversationListening()
+            // 🐕 Vigila todo el rato que el micrófono siga encendido (desde la PRIMERA vez que se activa)
+            startMicKeepAlive()
+        } else {
+            isVoiceConversationActive = false
+            isTtsSpeaking = false
+            replyTtsActive = false
+            queuedVoiceText = null
+            // Se apagan los reintentos y la vigilancia del micrófono
+            micRestart.removeCallbacksAndMessages(null)
+            micRestartDueAt = 0L
+            micKeepAlive.removeCallbacksAndMessages(null)
+            micWatchdog.removeCallbacksAndMessages(null)
+            partialCut.removeCallbacksAndMessages(null)
+            btnMic?.setColorFilter(Color.parseColor("#808080"))
+            etChatInput?.hint = "Pregúntame..."
+            // También si estaba abriéndose o entregando lo que dijiste (antes ese resultado tardío
+            // podía llegar después de apagarla y mandarse solo al chat)
+            if (isListeningForChat || micSessionOpen) {
+                cancelMicSession()
+                isListeningForChat = false
+                micSessionOpen = false
+            }
+            chatTtsEngine?.stop()
+        }
+    }
+
+    // Lo que dices mientras el micrófono está siempre encendido
+    private fun handleConversationSpeech(spokenText: String) {
+        if (spokenText.isNotEmpty()) {
+            // ¿Esta escucha pudo oír la voz de la IA? (sonaba mientras el micrófono estaba abierto).
+            // Si el micrófono se abrió cuando la IA ya se había callado, o lo primero que oyó llegó
+            // bastante después de que se calló, todo lo oído es tuyo.
+            val heardAfterAi = !isTtsSpeaking && ttsFinishedAt > 0L && sessionFirstPartialAt > ttsFinishedAt + 1200L
+            val echoPossible = !heardAfterAi && (sessionHeardTts || isTtsSpeaking || ttsFinishedAt > sessionStartedAt)
+            // Lo tuyo = lo oído sin la voz de la IA (vacío = solo era su eco)
+            val heard = when {
+                !echoPossible -> spokenText
+                // Ya la habías interrumpido: lo tuyo es lo que viene después de su voz
+                bargedInThisSession -> if (looksLikeEcho(spokenText)) "" else dropEchoPrefix(spokenText)
+                // Sigue hablando (o la detuviste a mano a medio decir): solo cuenta si se nota que hablaste tú
+                isTtsSpeaking || aiCutByHand ->
+                    if (userSpokeOverAi(spokenText, aiStillTalking = true)) dropEchoPrefix(spokenText) else ""
+                // Ya terminó (o la detuviste): se quita su voz (lo del comienzo y sus últimas palabras);
+                // lo que queda es tuyo aunque sea cortito («sí», «no», «el segundo»)… salvo que casi todo
+                // siga siendo lo que ella dijo (una palabra mal entendida no lo convierte en tuyo)
+                else -> dropEchoTail(dropEchoPrefix(spokenText, allowEmpty = true)).let { if (mostlyEcho(it)) "" else it }
+            }.trim()
+            if (heard.isEmpty()) {
+                // Es la propia voz de la IA que entró por el micrófono: se ignora
+                Log.d(TAG, "🎙️ Eco ignorado: $spokenText")
+                etChatInput?.text?.clear()
+            } else {
+                if (isTtsSpeaking || replyTtsActive) {
+                    // Interrumpes a la IA: deja de hablar y te escucha
+                    runCatching { chatTtsEngine?.stop() }
+                    isTtsSpeaking = false
+                    replyTtsActive = false   // así el botón Enviar no queda como «detener»
+                }
+                etChatInput?.text?.clear()
+                if (cameraLiveActive && !isAiBusy) {
+                    // 📷 Con la cámara en vivo, lo que dices va con la foto de lo que estás viendo
+                    etChatInput?.setText(heard)
+                    btnSend?.performClick()
+                } else if (isAiBusy) {
+                    // Interrupción mientras la IA piensa: esa respuesta se descarta
+                    // y se responde a lo último que dijiste
+                    voiceTurnId++
+                    queuedVoiceText = listOfNotNull(queuedVoiceText, heard).joinToString(" ")
+                } else {
+                    runVoiceTurn(heard)
+                }
+            }
+        }
+        // El micrófono sigue encendido
+        scheduleConversationListening(150)
+    }
+
+    // ========================================================================
+    // ✋ INTERRUPCIÓN: distinguir TU voz del eco de la propia IA
+    //    El micrófono sigue abierto mientras la IA habla, así que también oye su voz.
+    //    Se compara cada palabra oída con lo que la IA está diciendo (aunque el micrófono
+    //    la entienda un poco distinta: «yevar» = «llevar», «sielo» = «cielo»…).
+    //    Las palabras que la IA NO está diciendo son tuyas.
+    // ========================================================================
+    private var echoRefKey = ""
+    private var echoRefWords: Set<String> = emptySet()
+    private var echoRefSounds: Set<String> = emptySet()
+    private var echoRefSquashed = ""
+    private var echoStopWords: Set<String> = emptySet()
+    private val echoMarksRx = Regex("\\p{M}+")
+    private val echoSymbolsRx = Regex("[^\\p{L}\\p{N} ]")
+    private val echoSpacesRx = Regex("\\s+")
+    private val echoSoftCRx = Regex("c(?=[ei])")
+    private val echoHardCRx = Regex("c(?!h)")
+    private val echoSoftGRx = Regex("g(?=[ei])")
+    private val echoGuRx = Regex("gu(?=[ei])")
+    private val echoDoubleRx = Regex("(.)\\1+")
+    private val echoNumberRx = Regex(
+        "(cero|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|" +
+            "dieci\\p{L}*|veint\\p{L}*|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|ciento|" +
+            "\\p{L}*cientos|\\p{L}*cientas|mil|miles|millon\\p{L}*|billon\\p{L}*|coma|punto|medio|media|" +
+            "primer[oa]?|segund[oa]s?|tercer[oa]?|cuart[oa]s?|quint[oa]s?|sext[oa]s?|septim[oa]s?|octav[oa]s?|noven[oa]s?|decim[oa]s?)")
+    // 🔤 La IA escribe «200 g», «EE. UU.», «aprox.», pero la voz dice «gramos», «Estados Unidos», «aproximadamente»:
+    //    esas palabras también son de la IA (si no, parecían tuyas y la IA se cortaba sola)
+    private val echoSpokenForms: Map<String, String> = mapOf(
+        "g" to "gramos gramo", "gr" to "gramos gramo", "grs" to "gramos", "kg" to "kilogramos kilogramo kilos kilo",
+        "mg" to "miligramos miligramo", "ml" to "mililitros mililitro", "l" to "litros litro", "lt" to "litros litro",
+        "lts" to "litros", "cl" to "centilitros", "dl" to "decilitros", "km" to "kilometros kilometro",
+        "m" to "metros metro minutos", "cm" to "centimetros centimetro", "mm" to "milimetros milimetro",
+        "h" to "horas hora", "hr" to "horas hora", "hrs" to "horas", "min" to "minutos minuto minimo",
+        "mins" to "minutos", "seg" to "segundos segundo", "s" to "segundos segundo", "ms" to "milisegundos",
+        "kb" to "kilobytes kilobyte", "mb" to "megabytes megabyte megas", "gb" to "gigabytes gigabyte gigas",
+        "tb" to "terabytes terabyte teras", "mah" to "miliamperios hora", "w" to "vatios watts", "kw" to "kilovatios",
+        "kwh" to "kilovatios hora", "v" to "voltios", "hz" to "hercios", "mhz" to "megahercios", "ghz" to "gigahercios",
+        "mp" to "megapixeles", "fps" to "cuadros fotogramas por segundo", "mph" to "millas por hora",
+        "cda" to "cucharada", "cdas" to "cucharadas", "cdta" to "cucharadita", "cdtas" to "cucharaditas",
+        "cdita" to "cucharadita", "tz" to "taza tazas", "ee" to "estados", "uu" to "unidos", "eeuu" to "estados unidos",
+        "etc" to "etcetera", "aprox" to "aproximadamente", "ej" to "ejemplo", "sr" to "senor", "sra" to "senora",
+        "srta" to "senorita", "dr" to "doctor", "dra" to "doctora", "ud" to "usted", "uds" to "ustedes",
+        "nro" to "numero", "num" to "numero", "pag" to "pagina", "tel" to "telefono", "av" to "avenida",
+        "max" to "maximo", "vs" to "versus contra", "am" to "manana", "pm" to "tarde noche", "x" to "por",
+        "usd" to "dolares", "clp" to "pesos chilenos", "eur" to "euros", "ia" to "inteligencia artificial",
+        "km2" to "kilometros cuadrados", "m2" to "metros cuadrados", "m3" to "metros cubicos", "cc" to "centimetros cubicos")
+    // Una sola palabra tuya basta si es para cortar a la IA (o si la llamas por su nombre)
+    private val echoInterruptWords = setOf(
+        "espera", "esperate", "esperame", "espere", "esperen", "para", "parale", "pare", "paren", "parar",
+        "detente", "detenga", "detengase", "basta", "alto", "silencio", "callate", "callese", "oye", "oiga",
+        "stop", "wait", "momento", "cancela", "cancelar", "suficiente")
+    // Respuestas cortas que se dicen apenas la IA termina («dale», «gracias», «otro»…)
+    private val echoReplyWords = setOf(
+        "dale", "gracias", "okay", "okey", "claro", "perfecto", "bueno", "listo", "vale", "exacto", "obvio",
+        "otra", "otro", "siguiente", "repite", "repitelo", "repetir", "continua", "sigue", "cuentame",
+        "explicame", "seguro", "correcto", "genial", "nada", "quiero", "puedes", "dime")
+
+    private fun echoNorm(t: String): String =
+        java.text.Normalizer.normalize(t.lowercase(Locale.getDefault()), java.text.Normalizer.Form.NFD)
+            .replace(echoMarksRx, "").replace(echoSymbolsRx, " ")
+
+    /** Cómo SUENA la palabra (h muda, b/v, s/z/c, ll/y, qu/k…): el micrófono confunde letras que suenan igual. */
+    private fun echoSound(w: String): String = w
+        .replace("ch", "\u0001").replace("h", "").replace("\u0001", "ch")
+        .replace("ll", "y").replace('v', 'b').replace('w', 'u').replace('z', 's')
+        .replace(echoSoftCRx, "s").replace("qu", "k").replace(echoHardCRx, "k")
+        .replace(echoSoftGRx, "j").replace(echoGuRx, "g")
+        .replace(echoDoubleRx, "$1")
+
+    /** Prepara (una sola vez por respuesta) las palabras que la IA está diciendo. */
+    private fun refreshEchoRef() {
+        val raw = "$currentSpokenReply $previousSpokenReply"
+        if (raw == echoRefKey && echoStopWords.isNotEmpty()) return
+        echoRefKey = raw
+        // Lo que la voz dice en lugar de los símbolos (18°C → «grados celsius», 5% → «por ciento»…)
+        val spoken = raw.replace("°C", " grados celsius ").replace("°F", " grados fahrenheit ")
+            .replace("°", " grados degrees ").replace("%", " por ciento percent ")
+            .replace("km/h", " kilometros por hora ").replace("$", " pesos dolares ").replace("€", " euros ")
+            .replace("+", " mas ").replace("=", " igual ").replace("&", " y ").replace("@", " arroba ")
+            .replace("²", " cuadrados ").replace("³", " cubicos ").replace("½", " medio media ")
+            .replace("¼", " cuarto ").replace("¾", " tres cuartos ").replace("×", " por ").replace("≈", " aproximadamente ")
+            .replace("<", " menor que ").replace(">", " mayor que ").replace("#", " numero ").replace("£", " libras ")
+            .replace("º", " grados primero ").replace("ª", " primera ") +
+            (if (Regex("\\d/\\d").containsMatchIn(raw)) " medio media cuarto cuartos tercio tercios" else "") +
+            (if (Regex("\\d:\\d\\d").containsMatchIn(raw)) " media cuarto horas" else "")
+        val words = echoNorm(spoken).split(echoSpacesRx).filter { it.isNotBlank() }
+            .flatMap { w -> listOf(w) + (echoSpokenForms[w]?.split(' ') ?: emptyList()) }
+        echoRefWords = words.toHashSet()
+        echoRefSounds = words.map { echoSound(it) }.toHashSet()
+        echoRefSquashed = words.joinToString("") { echoSound(it) }
+        val aiName = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("ai_name", null)
+            ?.trim().orEmpty().ifEmpty { "Cumulus" }
+        echoStopWords = echoInterruptWords + echoNorm(aiName).split(echoSpacesRx).filter { it.length >= 3 }
+    }
+
+    private fun echoDistance(a: String, b: String, max: Int): Int {
+        var prev = IntArray(b.length + 1) { it }
+        for (i in 1..a.length) {
+            val cur = IntArray(b.length + 1)
+            cur[0] = i
+            var best = cur[0]
+            for (j in 1..b.length) {
+                cur[j] = minOf(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1)
+                if (cur[j] < best) best = cur[j]
+            }
+            if (best > max) return max + 1
+            prev = cur
+        }
+        return prev[b.length]
+    }
+
+    /** ¿Esta palabra la está diciendo la IA? (igual, o casi igual / suena igual) */
+    private fun isEchoWord(w: String): Boolean {
+        if (w in echoRefWords) return true
+        val k = echoSound(w)
+        if (k in echoRefSounds) return true
+        if (k.length >= 5 && echoRefSquashed.contains(k)) return true
+        // Casi igual solo en palabras largas («tema» y «toma» son palabras distintas)
+        if (k.length < 5) return false
+        val maxD = if (k.length >= 8) 2 else 1
+        return echoRefSounds.any { r -> kotlin.math.abs(r.length - k.length) <= maxD && echoDistance(k, r, maxD) <= maxD }
+    }
+
+    private fun isEchoContent(w: String) = w.length >= 3 && w.none { c -> c.isDigit() } && !echoNumberRx.matches(w)
+
+    /** Palabras con contenido (sin números ni palabritas de 1–2 letras). */
+    private fun echoContentWords(text: String): List<String> =
+        echoNorm(text).split(echoSpacesRx).filter { isEchoContent(it) }
+
+    /**
+     * ¿Lo oído hasta ahora es solo la voz de la IA? Tolera alguna palabra mal entendida en medio
+     * (1 de cada 5), pero lo ÚLTIMO que oyó tiene que ser de ella (si no, puede que empezaras a hablar tú).
+     */
+    private fun echoLike(text: String): Boolean {
+        refreshEchoRef()
+        val words = echoContentWords(text)
+        if (words.isEmpty()) return true
+        if (!isEchoWord(words.last())) return false
+        return words.count { !isEchoWord(it) } <= words.size / 5
+    }
+
+    /** ¿En lo que oyó el micrófono hay palabras TUYAS (no el eco de lo que dice la IA)? */
+    private fun userSpokeOverAi(heard: String, aiStillTalking: Boolean): Boolean {
+        refreshEchoRef()
+        // Tu voz llega al final de lo oído y de corrido: 2 de las últimas 3 palabras tienen que ser tuyas
+        // (una palabra rara suelta en medio de lo que dice la IA no la corta)
+        val tail = echoContentWords(heard).takeLast(3)
+        val foreign = tail.filter { !isEchoWord(it) }
+        if (foreign.size >= 2) return true
+        if (foreign.any { it in echoStopWords }) return true
+        // La IA ya se calló: una respuesta corta al final también es tuya («dale», «gracias»)
+        return !aiStillTalking && foreign.size == 1 && tail.lastOrNull() == foreign[0] && foreign[0] in echoReplyWords
+    }
+
+    private fun looksLikeEcho(heard: String): Boolean {
+        refreshEchoRef()
+        // Todo lo que oyó (con contenido) es lo que la IA está diciendo
+        return echoContentWords(heard).all { isEchoWord(it) }
+    }
+
+    /**
+     * Quita del comienzo lo que el micrófono oyó de la IA antes de que empezaras a hablar.
+     * [allowEmpty]: si TODO lo oído era su voz, queda vacío (si no, por seguridad se deja como estaba).
+     */
+    private fun dropEchoPrefix(text: String, allowEmpty: Boolean = false): String {
+        val n = echoOnlyWords
+        val tokens = text.trim().split(echoSpacesRx).filter { it.isNotBlank() }
+        if (n <= 0 || (n >= tokens.size && !allowEmpty)) return text
+        refreshEchoRef()
+        val cut = minOf(n, tokens.size)
+        // Seguridad: solo se quita si de verdad esa parte era la voz de la IA
+        val head = echoContentWords(tokens.take(cut).joinToString(" "))
+        if (head.isNotEmpty() && head.count { isEchoWord(it) } < head.size * 0.7) return text
+        return tokens.drop(cut).joinToString(" ")
+    }
+
+    /**
+     * Cuántas palabras del comienzo son la voz de la IA: hasta la última palabra CON CONTENIDO que ella dijo.
+     * Las palabritas que vienen después («sí», «no», «el segundo») no se cuentan como suyas.
+     */
+    private fun echoPrefixLength(text: String): Int {
+        refreshEchoRef()
+        val norm = text.trim().split(echoSpacesRx).filter { it.isNotBlank() }.map { echoNorm(it).replace(echoSpacesRx, "") }
+        val content = norm.indices.filter { isEchoContent(norm[it]) }
+        var lastEcho = 0
+        for ((k, i) in content.withIndex()) {
+            if (isEchoWord(norm[i])) { lastEcho = i + 1; continue }
+            // Una palabra que no es de ella, pero la siguiente sí: fue una palabra mal entendida en medio de su voz
+            val next = content.getOrNull(k + 1) ?: break
+            if (!isEchoWord(norm[next])) break
+        }
+        return lastEcho
+    }
+
+    /** Dónde empezaste a hablar encima de la IA: tu primera palabra (aunque se haya mezclado con alguna de ella),
+     *  con hasta 2 palabritas antes («y en Valparaíso»). */
+    private fun userStartIndex(text: String): Int {
+        refreshEchoRef()
+        val norm = text.trim().split(echoSpacesRx).filter { it.isNotBlank() }.map { echoNorm(it).replace(echoSpacesRx, "") }
+        val content = norm.indices.filter { isEchoContent(norm[it]) }
+        if (content.isEmpty()) return 0
+        val from = maxOf(0, content.size - 3)
+        var pos = (from until content.size).firstOrNull { !isEchoWord(norm[content[it]]) } ?: return 0
+        // Hacia atrás: otra palabra tuya a 1–2 palabras de distancia también es del comienzo de lo que dijiste
+        while (true) {
+            val prev = (pos - 1 downTo maxOf(0, pos - 2)).firstOrNull { !isEchoWord(norm[content[it]]) } ?: break
+            pos = prev
+        }
+        val first = content[pos]
+        var start = first
+        while (start > 0 && first - start < 2 && norm[start - 1].length <= 2) start--
+        return start
+    }
+
+    /** ¿Casi todo (60 % o más) lo que queda es lo que dijo la IA? (lo que no tiene palabras con contenido, como «sí», cuenta como tuyo) */
+    private fun mostlyEcho(text: String): Boolean {
+        refreshEchoRef()
+        val words = echoContentWords(text)
+        return words.isNotEmpty() && words.count { isEchoWord(it) } >= words.size * 0.6
+    }
+
+    /** ¿Dos palabras suenan igual o casi igual? («Pol» ≈ «Paul», «yevar» ≈ «llevar») */
+    private fun sameSpoken(a: String, b: String): Boolean {
+        if (a == b) return true
+        val ka = echoSound(a); val kb = echoSound(b)
+        if (ka == kb) return true
+        if (ka.length < 3 || kb.length < 3) return false
+        val maxD = if (maxOf(ka.length, kb.length) >= 4) 2 else 1
+        return kotlin.math.abs(ka.length - kb.length) <= maxD && echoDistance(ka, kb, maxD) <= maxD
+    }
+
+    /**
+     * Cuando la IA ya terminó: el micrófono entiende sus ÚLTIMAS palabras con un poco de atraso.
+     * Si lo oído empieza con el final de su respuesta, esa parte se quita; lo que queda es tuyo
+     * («…¿Marte o Júpiter? el segundo» → «el segundo»; «…excelente día, Pol» → nada).
+     */
+    private fun dropEchoTail(text: String): String {
+        val tokens = text.trim().split(echoSpacesRx).filter { it.isNotBlank() }
+        if (tokens.isEmpty()) return ""
+        refreshEchoRef()
+        val last = echoNorm(currentSpokenReply).split(echoSpacesRx).lastOrNull { it.isNotBlank() } ?: return text
+        val norm = tokens.map { echoNorm(it).replace(echoSpacesRx, "") }
+        for (j in norm.size downTo 1) {
+            if (!sameSpoken(norm[j - 1], last)) continue
+            // Lo anterior también tiene que ser su voz: sus palabras (alguna mal entendida, 1 de cada 3)
+            // y palabritas o números que ella también dijo (así tu «sí, el…» no se toma como suyo)
+            val before = (0 until j - 1).map { norm[it] }.filter { it.isNotEmpty() }
+            val content = before.filter { isEchoContent(it) }
+            val okContent = content.count { !isEchoWord(it) } <= maxOf(1, (content.size + 1) / 3)
+            val okSmall = before.filter { !isEchoContent(it) }.all { it.any { c -> c.isDigit() } || it in echoRefWords }
+            if (okContent && okSmall) return tokens.drop(j).joinToString(" ")
+        }
+        return text
+    }
+
+    private fun sendQueuedVoiceIfAny() {
+        val queued = queuedVoiceText ?: return
+        queuedVoiceText = null
+        if (isVoiceConversationActive && queued.isNotBlank()) runVoiceTurn(queued)
+    }
+
+    // ========================================================================
+    // 🎙️ VOZ A VOZ PURO: no crea mensajes en el chat, solo escucha y habla
+    // ========================================================================
+    private val voiceHistory = mutableListOf<Pair<String, String>>()
+    @Volatile private var voiceTurnId = 0
+
+    private fun runVoiceTurn(heard: String) {
+        // 🧰 Igual que en el chat: tu respuesta a «¿con qué tecnología?» se junta con lo que pediste…
+        val spokenText = runCatching { mergeTechAnswer(heard) }.getOrDefault(heard)
+        if (spokenText.isBlank()) return
+        // 🌐 Modo General: todo menos programar
+        runCatching { generalModeGate(spokenText, voiceHistory.lastOrNull { it.first == "assistant" }?.second, emptyList()) }.getOrNull()?.let { notHere ->
+            voiceHistory.add("user" to heard)
+            voiceHistory.add("assistant" to notHere)
+            speakThenListen(notHere)
+            return
+        }
+        // …y si pides crear una app o página sin decir con qué, primero te lo pregunta
+        runCatching { techChoiceQuestion(spokenText) }.getOrNull()?.let { question ->
+            voiceHistory.add("user" to heard)
+            voiceHistory.add("assistant" to question)
+            speakThenListen(question)
+            return
+        }
+        val turn = ++voiceTurnId
+        stopRequested = false
+        runCatching { nativeSetStop(false) }
+        isAiBusy = true
+        updateSendButtonIcon()
+        etChatInput?.hint = "💭 Pensando..."
+        val history = voiceHistory.toList()
+        val backend = spinnerBackend?.selectedItem?.toString() ?: getSavedBackend()
+        AiActivity.start(-1)   // voz a voz: no hay burbuja, pero los pasos quedan para la ventana de actividad
+        AiActivity.log("🎙️ Te escuché", spokenText.take(300))
+        thread {
+            val reply = runCatching { generateAiResponse(spokenText, backend, emptyList(), history) }
+                .getOrElse { AiReply("Perdón, ocurrió un error.", "") }
+            runOnUiThread {
+                AiActivity.finish()
+                isAiBusy = false
+                if (!isVoiceConversationActive) return@runOnUiThread
+                if (turn != voiceTurnId) {
+                    // Me interrumpiste mientras pensaba: respondo a lo nuevo
+                    sendQueuedVoiceIfAny()
+                    return@runOnUiThread
+                }
+                voiceHistory.add("user" to spokenText)
+                voiceHistory.add("assistant" to reply.text)
+                while (voiceHistory.size > 40) voiceHistory.removeAt(0)
+                if (queuedVoiceText != null) sendQueuedVoiceIfAny() else speakThenListen(reply.text)
+            }
+        }
+    }
+
+    // Si el idioma no está descargado para usarse sin internet, se vuelve al reconocimiento normal
+    private var preferOfflineSpeech = true
+    private var offlineSpeechUnavailable = false   // el teléfono dijo que ese idioma no está sin internet (error 12/13)
+
+    /**
+     * 🎙️ Texto del cuadro de chat con el MISMO micrófono del botón de al lado del enviar
+     * (mismo dibujo, en azul de activado), en vez del emoji de micrófono.
+     */
+    private fun micHint(text: String, leading: String = ""): CharSequence {
+        val src = btnMic?.drawable?.constantState?.newDrawable()?.mutate() ?: return "$leading🎙️ $text"
+        val size = ((etChatInput?.textSize ?: 40f) * 1.1f).toInt()
+        src.setBounds(0, 0, size, size)
+        // 🔵 Azul: indica que la conversación por voz está activada
+        src.colorFilter = android.graphics.PorterDuffColorFilter(Color.parseColor("#3D5AFE"), android.graphics.PorterDuff.Mode.SRC_IN)
+        val sp = android.text.SpannableStringBuilder(leading).append("\u0000 ").append(text)
+        sp.setSpan(android.text.style.ImageSpan(src, android.text.style.DynamicDrawableSpan.ALIGN_CENTER),
+            leading.length, leading.length + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return sp
+    }
+
+    private fun startConversationListening() {
+        if (!isVoiceConversationActive || isListeningForChat) return
+        // 🎯 Una sola escucha a la vez: si ya se pidió abrir el micrófono (o está entregando lo que
+        //    dijiste), no se pide otra encima. Dos pedidos juntos lo dejaban «ocupado» y se apagaba.
+        if (micSessionOpen) return
+        if (speechRecognizer == null) setupChatSpeechRecognizer()
+        val recognizer = speechRecognizer ?: return
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, LanguageManager.getSelectedLanguage(this@MainActivity))
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            // ⚡ Responde antes: da por terminada tu frase tras ~0.8 s de silencio (antes ~2 s)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 800L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 600L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 400L)
+            // Reconocimiento dentro del teléfono (más rápido que mandarlo a internet)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOfflineSpeech)
+        }
+        // Escucha nueva: todavía no oyó a la IA ni a ti
+        sessionHeardTts = isTtsSpeaking
+        bargedInThisSession = false
+        aiCutByHand = false
+        echoOnlyWords = 0
+        sessionFirstPartialAt = 0L
+        sessionStartedAt = System.currentTimeMillis()
+        micSessionOpen = true
+        micRestart.removeCallbacksAndMessages(null)
+        micRestartDueAt = 0L
+        lastMicSignalAt = android.os.SystemClock.elapsedRealtime()
+        runCatching { recognizer.startListening(intent) }
+            .onFailure {
+                Log.e(TAG, "No se pudo escuchar: ${it.message}")
+                micSessionOpen = false   // el vigilante lo vuelve a intentar
+            }
+        // 🐕 Si en 2.5 s el micrófono no abrió de verdad, se vuelve a abrir (y si sigue igual, se recrea el reconocedor)
+        micWatchdog.removeCallbacksAndMessages(null)
+        micWatchdog.postDelayed({
+            if (isVoiceConversationActive && !isListeningForChat &&
+                android.os.SystemClock.elapsedRealtime() - lastMicSignalAt >= 2000L) {
+                Log.w(TAG, "🎙️ El micrófono no abrió; se vuelve a abrir")
+                reviveMic("no abrió")
+            }
+        }, 2500L)
+    }
+
+    private val micWatchdog = android.os.Handler(android.os.Looper.getMainLooper())
+    private val partialCut = android.os.Handler(android.os.Looper.getMainLooper())
+    private var micFailStreak = 0
+    private var micRebuilds = 0
+    // 🎙️ Estado del micrófono en la conversación por voz
+    private val micRestart = android.os.Handler(android.os.Looper.getMainLooper())   // reapertura programada (una sola)
+    private val micKeepAlive = android.os.Handler(android.os.Looper.getMainLooper()) // vigilante cada medio segundo
+    private var micRestartDueAt = 0L          // cuándo toca la reapertura programada (0 = ninguna)
+    private var micSessionOpen = false        // hay una escucha en curso (desde que se pide hasta el resultado)
+    private var lastMicSignalAt = 0L          // último aviso del reconocedor (volumen, palabras, etc.)
+    private var micRmsSeen = false            // este reconocedor avisa el volumen (sirve para saber si sigue vivo)
+    private var micDeadStreak = 0             // cortes seguidos sin aviso
+    private var micErrorStreak = 0            // errores seguidos (para esperar un poco más cada vez)
+    private var sessionHeardTts = false       // en esta escucha sonó la voz de la IA (puede traer eco)
+    private var sessionStartedAt = 0L
+    private var sessionFirstPartialAt = 0L    // cuándo llegó lo primero que oyó en esta escucha
+    private var bargedInThisSession = false   // en esta escucha ya la interrumpiste
+    private var aiCutByHand = false           // en esta escucha la IA se calló a la fuerza (botón, mensaje escrito…)
+    private var echoOnlyWords = 0             // palabras del comienzo que eran solo la voz de la IA
+
+    private var micCancelledAt = 0L
+
+    /** Cierra a propósito la escucha en curso (y recuerda cuándo, para no confundir su aviso tardío con una falla). */
+    private fun cancelMicSession() {
+        micCancelledAt = android.os.SystemClock.elapsedRealtime()
+        runCatching { speechRecognizer?.cancel() }
+    }
+
+    /** Programa UNA sola reapertura del micrófono (si había otra pendiente, se reemplaza). */
+    private fun scheduleConversationListening(delayMs: Long) {
+        if (!isVoiceConversationActive) return
+        micRestart.removeCallbacksAndMessages(null)
+        micRestartDueAt = android.os.SystemClock.elapsedRealtime() + delayMs
+        micRestart.postDelayed({
+            micRestartDueAt = 0L
+            startConversationListening()
+        }, delayMs)
+    }
+
+    /** 🐕 Vigilante: mientras la conversación por voz esté activa, revisa cada medio segundo que el micrófono siga encendido. */
+    private fun startMicKeepAlive() {
+        micKeepAlive.removeCallbacksAndMessages(null)
+        micKeepAlive.postDelayed(object : Runnable {
+            override fun run() {
+                if (!isVoiceConversationActive) return
+                runCatching { checkMicAlive() }
+                micKeepAlive.postDelayed(this, 500L)
+            }
+        }, 500L)
+    }
+
+    private fun checkMicAlive() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val quiet = now - lastMicSignalAt
+        when {
+            // Dice que escucha, pero el micrófono ya no manda sonido: se cortó sin avisar
+            // (el punto verde se apagaba a los 2 s y había que apagar y prender el interruptor)
+            isListeningForChat -> if (quiet > (if (micRmsSeen) 2000L else 10000L)) reviveMic("se cortó sin avisar")
+            // Se pidió abrir, o está entregando lo que dijiste, pero no llega nada
+            // (si ya había oído palabras tuyas, se le da más tiempo: con internet lento el resultado tarda)
+            micSessionOpen -> if (quiet > (if (sessionFirstPartialAt == 0L) 3000L else 7000L)) reviveMic("no respondió")
+            // Quedó cerrado y no hay nada programado para volver a abrirlo
+            micRestartDueAt == 0L || now > micRestartDueAt + 1500L -> startConversationListening()
+        }
+    }
+
+    /**
+     * Vuelve a abrir el micrófono que se cortó: primero igual que lo hacías a mano
+     * (cerrar la escucha trabada y abrir otra); si vuelve a fallar, crea un reconocedor nuevo.
+     */
+    private fun reviveMic(why: String) {
+        if (!isVoiceConversationActive) return
+        micDeadStreak++
+        Log.w(TAG, "🎙️ Micrófono: $why (intento $micDeadStreak) → se vuelve a abrir")
+        micWatchdog.removeCallbacksAndMessages(null)
+        partialCut.removeCallbacksAndMessages(null)
+        // Si el reconocimiento sin internet es el que se traba, se usa el normal
+        if (micDeadStreak >= 2) preferOfflineSpeech = false
+        if (micDeadStreak % 2 == 0) { rebuildRecognizerAndListen(); return }
+        cancelMicSession()
+        isListeningForChat = false
+        micSessionOpen = false
+        scheduleConversationListening(if (micDeadStreak < 3) 200L else minOf(5000L, 500L * micDeadStreak))
+    }
+
+    /** Destruye el reconocedor trabado, crea uno nuevo y vuelve a escuchar (sin rendirse mientras esté activa). */
+    private fun rebuildRecognizerAndListen() {
+        if (!isVoiceConversationActive) return
+        micRebuilds++
+        micFailStreak = 0
+        // Antes, a los 3 intentos se quedaba apagado y había que apagar y prender el interruptor:
+        // ahora lo sigue intentando (cada vez esperando un poco más) hasta que el micrófono responda
+        if (micRebuilds >= 3) etChatInput?.hint = "⚠️ El micrófono no responde, lo sigo intentando..."
+        cancelMicSession()
+        runCatching { speechRecognizer?.destroy() }
+        speechRecognizer = null
+        isListeningForChat = false
+        micSessionOpen = false
+        micWatchdog.removeCallbacksAndMessages(null)
+        partialCut.removeCallbacksAndMessages(null)
+        setupChatSpeechRecognizer()
+        scheduleConversationListening(if (micRebuilds < 3) 300L else minOf(5000L, 1000L * (micRebuilds - 2)))
+    }
+
+    // Quita código y símbolos para que la voz suene natural
+    // Limpia el texto antes de leerlo en voz alta: sin asteriscos, almohadillas,
+    // código, enlaces ni emojis (así no dice "asterisco asterisco")
+    private fun textForSpeech(text: String): String =
+        text.replace(Regex("```.*?```", RegexOption.DOT_MATCHES_ALL), " Te dejé el código en la pantalla. ")
+            // 😄 Risas: «jajajaja» → «ja ja ja», «jejeje» → «je je je»; «jsjs», «xD» y «lol» no se leen
+            .replace(Regex("(?iu)(?<![\\p{L}])(?:j[aeiou]){2,}j?(?![\\p{L}])")) { m ->
+                val v = m.value.lowercase().firstOrNull { it in "aeiou" } ?: 'a'
+                List(minOf(4, maxOf(2, m.value.length / 2))) { "j$v" }.joinToString(" ")
+            }
+            .replace(Regex("(?iu)(?<![\\p{L}])(?:(?:js){2,}j?|xd+|lol)(?![\\p{L}])"), " ")
+            .replace(Regex("`([^`]*)`"), "$1")
+            .replace(Regex("!?\\[([^\\]]*)]\\([^)]*\\)"), "$1")      // [texto](enlace) → texto
+            .replace(Regex("https?://\\S+"), " ")
+            .replace(Regex("(?m)^\\s*[-*+•]\\s+"), "")              // viñetas al inicio de línea
+            .replace(Regex("[*#_~>|`]+"), " ")
+            .replace(Regex("[\\x{1F000}-\\x{1FAFF}\\x{2600}-\\x{27BF}\\x{FE0F}]"), " ")
+            .replace(Regex("[ \\t]+"), " ")
+            .replace(Regex("\\s*\\n\\s*"), ". ")
+            .replace(Regex("\\.\\s*\\."), ".")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    // ⏹️ Interrumpe a la IA: corta lo que está escribiendo y lo que está diciendo
+    private fun stopAiNow() {
+        stopRequested = true
+        runCatching { nativeSetStop(true) }
+        thread { runCatching { GenieXEngineManager.requestStop() } }
+        markAiCutForMic()
+        runCatching { chatTtsEngine?.stop() }
+        isTtsSpeaking = false
+        replyTtsActive = false
+        updateSendButtonIcon()
+        cumulusToast(this, "⏹️ Detenido", Toast.LENGTH_SHORT).show()
+    }
+
+    // El botón de enviar se vuelve un cuadrado mientras la IA escribe o habla
+    /**
+     * La IA solo está LEYENDO en voz alta (no escribiendo) y tú escribiste un mensaje nuevo:
+     * el botón vuelve a ser «Enviar» (la calla y manda lo tuyo). Mientras dictas no cuenta,
+     * porque tu dictado se manda solo al terminar.
+     */
+    private fun typedWhileSpeaking(): Boolean =
+        !isAiBusy && !etChatInput?.text?.toString().isNullOrBlank() && !(isListeningForChat && !isVoiceConversationActive)
+
+    /** La IA se calló a la fuerza (botón detener, mensaje escrito, cambio de voz…): la escucha abierta
+     *  sabe que oyó su voz hasta este momento (así ese eco no se toma como si hablaras tú). */
+    private fun markAiCutForMic() {
+        if (isVoiceConversationActive && (micSessionOpen || isListeningForChat) && (isTtsSpeaking || replyTtsActive)) {
+            sessionHeardTts = true
+            aiCutByHand = true
+            ttsFinishedAt = System.currentTimeMillis()
+        }
+    }
+
+    private fun updateSendButtonIcon() {
+        val btn = btnSend ?: return
+        if (sendIconDrawable == null) sendIconDrawable = btn.drawable
+        if (sendBgDrawable == null) sendBgDrawable = btn.background
+        val busy = isAiBusy || ((isTtsSpeaking || replyTtsActive) && !typedWhileSpeaking())
+        if (busy == showingStopIcon) return
+        showingStopIcon = busy
+        if (busy) {
+            val d = resources.displayMetrics.density
+            btn.setImageDrawable(android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = 3 * d
+                setColor(Color.parseColor("#9A9A9A"))   // gris, como el botón de copiar
+                setSize((14 * d).toInt(), (14 * d).toInt())
+            })
+            btn.imageTintList = null
+            btn.background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(Color.parseColor("#2A2A2A"))
+                setStroke((1.5f * d).toInt(), Color.parseColor("#9A9A9A"))
+            }
+            btn.contentDescription = "Detener"
+        } else {
+            btn.setImageDrawable(sendIconDrawable)
+            btn.background = sendBgDrawable
+            btn.imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            btn.contentDescription = "Enviar"
+        }
+    }
+
+    private fun startStopIconWatcher() {
+        stopIconHandler.removeCallbacksAndMessages(null)
+        stopIconHandler.post(object : Runnable {
+            override fun run() {
+                updateSendButtonIcon()
+                stopIconHandler.postDelayed(this, 250)
+            }
+        })
+    }
+
+    private fun speakThenListen(replyText: String) {
+        if (!isVoiceConversationActive) return
+        val spoken = textForSpeech(replyText)
+        val engine = chatTtsEngine
+        if (spoken.isBlank() || engine == null) {
+            sendQueuedVoiceIfAny()
+            startConversationListening()
+            return
+        }
+        previousSpokenReply = currentSpokenReply
+        currentSpokenReply = spoken
+        isTtsSpeaking = true
+        // La escucha que ya está abierta va a oír la voz de la IA (eco): se analiza aparte
+        if (micSessionOpen || isListeningForChat) sessionHeardTts = true
+        etChatInput?.hint = micHint("Respondiendo... (micrófono encendido)", leading = "🔊 ")
+        engine.speak(spoken) {
+            runOnUiThread {
+                isTtsSpeaking = false
+                ttsFinishedAt = System.currentTimeMillis()
+                if (isVoiceConversationActive) {
+                    etChatInput?.hint = micHint("Te escucho...")
+                    sendQueuedVoiceIfAny()
+                    startConversationListening()
+                }
+            }
+        }
+        // El micrófono no se apaga mientras la IA habla
+        startConversationListening()
+    }
+
+    /** Micrófono de al lado de Enviar: azul mientras graba tu mensaje de voz, gris cuando termina. */
+    private fun setDictationMic(active: Boolean) {
+        btnMic?.setColorFilter(Color.parseColor(if (active) "#3D5AFE" else "#808080"))
+    }
+
+    private fun toggleChatVoiceRecognition() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.RECORD_AUDIO),
+                PERMISSION_REQUEST_CODE
+            )
+            return
+        }
+        val recognizer = speechRecognizer ?: run {
+            cumulusToast(this, "Reconocimiento de voz no disponible", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (isListeningForChat) {
+            recognizer.stopListening()
+            isListeningForChat = false
+            setDictationMic(false)
+            return
+        }
+        setDictationMic(true)   // 🔵 azul mientras te escucha para tu mensaje de voz
+        val languageCode = LanguageManager.getSelectedLanguage(this)
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageCode)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        }
+        recognizer.startListening(intent)
+    }
+    private fun updateChatComposerExpansion(expanded: Boolean) {
+        // El texto ahora siempre va arriba y los botones abajo,
+        // así que solo se guarda el estado.
+        isChatInputExpanded = expanded
+    }
+
+    @Suppress("unused")
+    private fun updateChatComposerExpansionLegacy(expanded: Boolean) {
+        val composer = chatComposer ?: return
+
+        val constraints = ConstraintSet()
+        constraints.clone(composer)
+        constraints.clear(R.id.et_chat_input, ConstraintSet.START)
+        constraints.clear(R.id.et_chat_input, ConstraintSet.END)
+        constraints.clear(R.id.et_chat_input, ConstraintSet.TOP)
+        constraints.clear(R.id.et_chat_input, ConstraintSet.BOTTOM)
+
+        if (expanded) {
+            constraints.connect(
+                R.id.et_chat_input,
+                ConstraintSet.START,
+                ConstraintSet.PARENT_ID,
+                ConstraintSet.START
+            )
+            constraints.connect(
+                R.id.et_chat_input,
+                ConstraintSet.END,
+                ConstraintSet.PARENT_ID,
+                ConstraintSet.END
+            )
+            constraints.connect(
+                R.id.et_chat_input,
+                ConstraintSet.TOP,
+                ConstraintSet.PARENT_ID,
+                ConstraintSet.TOP
+            )
+            constraints.connect(
+                R.id.et_chat_input,
+                ConstraintSet.BOTTOM,
+                R.id.btn_voice_play_pause,
+                ConstraintSet.TOP,
+                4
+            )
+        } else {
+            constraints.connect(
+                R.id.et_chat_input,
+                ConstraintSet.START,
+                R.id.btn_voice_play_pause,
+                ConstraintSet.END
+            )
+            constraints.connect(
+                R.id.et_chat_input,
+                ConstraintSet.END,
+                R.id.btn_mic,
+                ConstraintSet.START
+            )
+            constraints.connect(
+                R.id.et_chat_input,
+                ConstraintSet.TOP,
+                ConstraintSet.PARENT_ID,
+                ConstraintSet.TOP
+            )
+            constraints.connect(
+                R.id.et_chat_input,
+                ConstraintSet.BOTTOM,
+                ConstraintSet.PARENT_ID,
+                ConstraintSet.BOTTOM
+            )
+        }
+
+        constraints.applyTo(composer)
+    }
+
+    private fun closeChatKeyboard() {
+        val chatInput = etChatInput ?: return
+        if (!chatInput.hasFocus()) return
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(chatInput.windowToken, 0)
+        chatInput.clearFocus()
+    }
+
+    private fun hideKeyboardAndRestoreChat() {
+        val inputMethodManager = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        val inputView = etChatInput
+        if (inputView != null) {
+            inputMethodManager.hideSoftInputFromWindow(inputView.windowToken, 0)
+            inputView.clearFocus()
+        }
+
+        rvChatMessages?.post {
+            val lastPosition = chatMessages.lastIndex
+            if (lastPosition >= 0) {
+                rvChatMessages?.scrollToPosition(lastPosition)
+            }
+        }
+    }
+
+    private data class AiReply(val text: String, val tokens: String)
+
+    // ========================================================================
+    // 💭 NIVEL DE PENSAMIENTO (botón ⋮ de arriba): rápido / medio / profundo
+    // ========================================================================
+    private fun thinkLevel(): String =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("think_level", "rapido") ?: "rapido"
+
+    private fun showThinkLevelMenu(anchor: View) {
+        // ✨ Íconos de líneas modernos (rayo · ampolleta · lupa) y el ✓ en su propia columna
+        val options = listOf("rapido" to "Pensamiento rápido", "medio" to "Pensamiento medio", "profundo" to "Pensamiento profundo")
+        val icons = listOf(R.drawable.ic_think_fast, R.drawable.ic_think_medium, R.drawable.ic_think_deep)
+        val current = thinkLevel()
+        showRoundMenu(anchor, options.map { it.second }, above = false,
+            checked = options.indexOfFirst { it.first == current }.coerceAtLeast(0),
+            widthFrom = options.map { it.second }, icons = icons) { i ->
+            val (key, label) = options[i]
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString("think_level", key).apply()
+            cumulusToast(this, label, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Instrucción extra y tokens adicionales según el nivel elegido
+    private fun thinkInstruction(level: String): Pair<String, Int> = when (level) {
+        "medio" -> " Antes de responder, razona brevemente paso a paso dentro de <pensamiento>...</pensamiento>" +
+            " (máximo 6 líneas) y después escribe la respuesta final fuera de esas etiquetas." to 512
+        "profundo" -> " Antes de responder, piensa a fondo dentro de <pensamiento>...</pensamiento>: analiza la pregunta," +
+            " considera varias opciones, verifica cálculos o código y revisa posibles errores. Después escribe" +
+            " la respuesta final, clara y completa, fuera de esas etiquetas." to 1536
+        else -> " Responde de forma directa, sin escribir tu razonamiento." to 0
+    }
+
+    // Quita el razonamiento del texto final (también <think> de modelos como Qwen3 o DeepSeek-R1)
+    // ========================================================================
+    // 🌐 AGENTE WEB: la IA usa internet con herramientas <buscar> y <abrir>
+    // ========================================================================
+    private val agentToolRegex = Regex(
+        "<(buscar|abrir)>\\s*(.*?)\\s*</\\1>",
+        setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+    )
+    private val maxAgentActions = 3
+
+    // ================= 📅 PEDIDOS DIARIOS =================
+    // La app reconoce lo que un usuario pide todos los días y le entrega a la IA
+    // datos reales ya listos. Los modelos pequeños no saben buscar bien solos y
+    // terminan inventando; así solo tienen que resumir.
+
+    private fun rxAny(text: String, vararg patterns: String): Boolean =
+        patterns.any { Regex("(?i)$it").containsMatchIn(text) }
+
+    private fun xmlUnescape(t: String): String = t
+        .replace("<![CDATA[", "").replace("]]>", "")
+        .replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'")
+        .replace("&lt;", "<").replace("&gt;", ">").trim()
+
+    // País de las noticias: primero la tarjeta SIM / red móvil (dice Chile aunque el teléfono esté en "Español (US)")
+    private fun newsCountry(): String {
+        runCatching {
+            val tm = getSystemService(Context.TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+            listOf(tm.simCountryIso, tm.networkCountryIso).firstOrNull { !it.isNullOrBlank() && it.length == 2 }
+                ?.let { return it.uppercase(Locale.US) }
+        }
+        val c = Locale.getDefault().country.uppercase(Locale.US)
+        return if (c.length == 2) c else "CL"
+    }
+
+    // Países que el usuario puede nombrar en la pregunta → código de Google Noticias
+    private val newsCountries = linkedMapOf(
+        "chile" to "CL", "argentina" to "AR", "per[uú]" to "PE", "bolivia" to "BO", "colombia" to "CO",
+        "m[eé]xico" to "MX", "espa[ñn]a" to "ES", "venezuela" to "VE", "ecuador" to "EC", "uruguay" to "UY",
+        "paraguay" to "PY", "cuba" to "CU", "guatemala" to "GT", "honduras" to "HN", "el salvador" to "SV",
+        "nicaragua" to "NI", "costa rica" to "CR", "panam[aá]" to "PA", "rep[uú]blica dominicana" to "DO",
+        "puerto rico" to "PR", "estados unidos|ee\\.? ?uu|eeuu|usa" to "US"
+    )
+
+    private fun countryInPrompt(prompt: String): Pair<String, String>? {
+        for ((rx, code) in newsCountries) {
+            val m = Regex("(?i)\\b($rx)\\b").find(prompt) ?: continue
+            return code to m.value
+        }
+        return null
+    }
+
+    private fun fetchGoogleNews(url: String, max: Int = 8): List<String> {
+        val (_, xml) = httpGetText(url) ?: return emptyList()
+        return Regex("<item>(.*?)</item>", RegexOption.DOT_MATCHES_ALL).findAll(xml).take(max).mapNotNull { m ->
+            val item = m.groupValues[1]
+            val title = Regex("<title>(.*?)</title>", RegexOption.DOT_MATCHES_ALL).find(item)?.groupValues?.get(1)?.let { xmlUnescape(it) }
+                ?: return@mapNotNull null
+            val src = Regex("<source[^>]*>(.*?)</source>", RegexOption.DOT_MATCHES_ALL).find(item)?.groupValues?.get(1)?.let { xmlUnescape(it) }
+            // Google a veces responde con un aviso en vez de noticias: se descarta
+            if (Regex("(?i)feed (no est[aá] disponible|is not available|isn.t available)|no disponible").containsMatchIn(title)) return@mapNotNull null
+            val clean = if (src != null) title.removeSuffix(" - $src") else title
+            "• $clean" + (if (src != null) " ($src)" else "")
+        }.toList()
+    }
+
+    private fun newsContext(prompt: String): String? {
+        val named = countryInPrompt(prompt)
+        val gl = named?.first ?: newsCountry()
+        val hl = if (gl == "ES") "es" else "es-419"
+        val base = "hl=$hl&gl=$gl&ceid=$gl:$hl"
+        val sections = mutableListOf<Pair<String, String>>()
+        val wantsWorld = rxAny(prompt, "internacional", "del mundo", "mundiales", "extranjer")
+        val wantsNational = rxAny(prompt, "nacional", "del pa[ií]s", "de chile", "de aqu[ií]", "locales") || !wantsWorld
+        when {
+            rxAny(prompt, "deport", "f[uú]tbol") -> sections += "Deportes" to "https://news.google.com/rss/headlines/section/topic/SPORTS?$base"
+            rxAny(prompt, "econom", "negocio", "finanz") -> sections += "Economía" to "https://news.google.com/rss/headlines/section/topic/BUSINESS?$base"
+            rxAny(prompt, "tecnolog", "ciencia") -> sections += "Tecnología" to "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?$base"
+            rxAny(prompt, "espect[aá]culo", "far[aá]ndula", "entreten") -> sections += "Espectáculos" to "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?$base"
+            rxAny(prompt, "salud") -> sections += "Salud" to "https://news.google.com/rss/headlines/section/topic/HEALTH?$base"
+            else -> {
+                if (wantsNational) sections += "Nacionales" to "https://news.google.com/rss/headlines/section/geo/$gl?$base"
+                if (wantsWorld || rxAny(prompt, " e internacional", " y internacional", "\\bhe internacional"))
+                    sections += "Internacionales" to "https://news.google.com/rss/headlines/section/topic/WORLD?$base"
+            }
+        }
+        val countryName = named?.second ?: java.util.Locale("", gl).getDisplayCountry(Locale("es"))
+        AiActivity.analyzing("📰 Descargando titulares de Google Noticias",
+            "País: $countryName ($gl) · secciones: " + sections.joinToString(", ") { it.first })
+        val seenNews = HashSet<String>()   // 🔁 cada noticia aparece una sola vez, aunque venga en varias secciones
+        val seenStories = mutableListOf<Set<String>>()   // 🔁 y la MISMA noticia contada por dos medios con otras palabras, también
+        val sectionLists = mutableListOf<Pair<String, List<String>>>()   // 📋 para la lista que arma la app (opción B)
+        val blocks = sections.mapNotNull { (name, url) ->
+            var list = fetchGoogleNews(url)
+            // Si la sección no responde, se busca la noticia por palabras (últimas 24 horas)
+            if (list.isEmpty()) {
+                val q = when (name) {
+                    "Nacionales" -> countryName
+                    "Internacionales" -> "noticias internacionales mundo"
+                    else -> "$name $countryName"
+                }
+                list = fetchGoogleNews("https://news.google.com/rss/search?q=${java.net.URLEncoder.encode("$q when:1d", "UTF-8")}&$base")
+            }
+            if (list.isEmpty() && name == "Nacionales") list = fetchGoogleNews("https://news.google.com/rss?$base")
+            list = list.filter { item ->
+                if (!seenNews.add(newsKey(item))) return@filter false
+                val words = storyWords(item)
+                if (seenStories.any { sameStory(it, words) }) false else { seenStories.add(words); true }
+            }
+            if (list.isNotEmpty()) sectionLists += name to list
+            if (list.isEmpty()) null else "Noticias $name" + (if (name == "Nacionales") " de " + java.util.Locale("", gl).getDisplayCountry(Locale("es")) else "") + " (Google Noticias, hoy):\n" + list.joinToString("\n")
+        }
+        if (blocks.isEmpty()) return null
+        AiActivity.log("🔁 Quito las noticias repetidas", "${sectionLists.sumOf { it.second.size }} noticias distintas")
+        // 🖼️ Fotos de las noticias (Bing Noticias): sus titulares también se pasan a la IA
+        val photoQuery = when {
+            sections.any { it.first == "Internacionales" } && sections.none { it.first == "Nacionales" } -> "noticias internacionales"
+            sections.first().first == "Nacionales" -> "noticias " + java.util.Locale("", gl).getDisplayCountry(Locale("es"))
+            else -> "noticias " + sections.first().first + " " + java.util.Locale("", gl).getDisplayCountry(Locale("es"))
+        }
+        // Las fotos NO se filtran contra el texto (antes se borraban justo porque esa noticia ya estaba
+        // en la lista); solo se evita repetir la misma foto dos veces.
+        val seenPhotos = HashSet<String>()
+        // 🖼️ Una foto POR CADA titular de hoy (antes se buscaba siempre «noticias Chile» y salían
+        //    las mismas fotos). Se buscan en paralelo y se evitan las fotos ya mostradas hace poco.
+        val recentPrefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val recent = recentPrefs.getString("recent_news_photos", "").orEmpty().split("\n").filter { it.isNotBlank() }.toMutableList()
+        val headlines = blocks.flatMap { it.lines() }.filter { it.startsWith("• ") }
+            .map { it.removePrefix("• ").replace(Regex("\\s*\\([^)]*\\)\\s*$"), "").trim() }
+            .filter { it.length > 15 && newsKey(it) !in recent }
+            .take(8)
+        AiActivity.log("🖼️ Buscando una foto para cada titular", "${headlines.size} búsquedas en Bing Noticias")
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+        val perHeadline = try {
+            headlines.map { h -> pool.submit<Pair<String, String>?> {
+                runCatching { fetchNewsImages(h, gl, 1).firstOrNull()?.let { h to it.second } }.getOrNull()
+            } }.mapNotNull { f -> runCatching { f.get(15, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull() }
+        } finally { pool.shutdownNow() }
+        val photos = (perHeadline.ifEmpty { runCatching { fetchNewsImages(photoQuery, gl) }.getOrDefault(emptyList()) })
+            .filter { seenPhotos.add(newsKey(it.first)) }
+            .distinctBy { runCatching { java.io.File(it.second).length() }.getOrDefault(0L) }   // misma foto = mismo tamaño
+            .take(4)
+        // Se recuerdan las últimas ~40 noticias con foto para no repetirlas en el próximo pedido
+        recent.addAll(0, photos.map { newsKey(it.first) })
+        recentPrefs.edit().putString("recent_news_photos", recent.distinct().take(40).joinToString("\n")).apply()
+        photos.forEach { replyImages.add(it.second) }
+        AiActivity.log("📸 ${photos.size} foto(s) listas")
+        val photoBlock = if (photos.isEmpty()) "" else "\n\nNoticias con foto (se muestran como imágenes ARRIBA de tu respuesta, en este orden; si las nombras, di que están más arriba):\n" +
+            photos.mapIndexed { i, ph -> "${i + 1}. ${ph.first}" }.joinToString("\n")
+        // 📋 Opción B: la APP arma la lista final (titular, medio y foto), numerada y sin repetidos.
+        //    La IA no la reescribe: así no repite noticias, no las mezcla y no inventa.
+        runCatching {
+            val photoKeys = photos.map { newsKey(it.first) }
+            val matched = HashSet<String>()
+            val all = mutableListOf<String>()
+            val sb = StringBuilder("📰 Noticias de hoy")
+            if (sections.any { it.first == "Nacionales" } || named != null) sb.append(" en ").append(countryName)
+            sb.append(" · ").append(java.text.SimpleDateFormat("EEEE d 'de' MMMM", Locale("es", "ES")).format(java.util.Date()))
+            var n = 0
+            for ((name, list) in sectionLists) {
+                val icon = when (name) {
+                    "Nacionales" -> flagEmoji(gl)
+                    "Internacionales" -> "🌍"; "Deportes" -> "⚽"; "Economía" -> "💰"
+                    "Tecnología" -> "💻"; "Espectáculos" -> "🎬"; "Salud" -> "🩺"; else -> "🗞️"
+                }
+                sb.append("\n\n").append(icon).append(" ").append(name)
+                for (item in list) {
+                    n++
+                    val line = item.removePrefix("• ").trim()
+                    val key = newsKey(line)
+                    val hasPhoto = key in photoKeys
+                    if (hasPhoto) matched += key
+                    all += line
+                    sb.append("\n").append(n).append(". ").append(if (hasPhoto) "📸 " else "").append(line)
+                }
+            }
+            // Fotos que no corresponden a un titular de la lista (fotos generales de noticias)
+            val extra = photos.filter { newsKey(it.first) !in matched }
+            if (extra.isNotEmpty()) sb.append("\n\n📸 Más noticias con foto:\n").append(extra.joinToString("\n") { "• ${it.first}" })
+            if (photos.isNotEmpty()) sb.append("\n\n📸 Te dejé las fotos más arriba para que las veas, en el mismo orden.")
+            sb.append("\n\nPídeme «más detalles de la 3» (o el número que quieras) y te cuento esa noticia.")
+            if (n > 0) { dailyDirect = sb.toString(); dailyDirectHeadlines = all }
+        }
+        return "Noticias reales de HOY que la app ya descargó de internet para ti (entrégaselas al usuario):\n\n" +
+            blocks.joinToString("\n\n") + photoBlock +
+            "\n\nInstrucción: resume estos titulares en una lista clara, agrupados por sección, mencionando el medio. " +
+            "Cada noticia va UNA sola vez: no repitas la misma noticia ni la misma idea con otras palabras. " +
+            "Usa SOLO estos titulares; no inventes noticias ni agregues datos que no aparecen aquí."
+    }
+
+    private fun weatherCodeEs(code: Int): String = when (code) {
+        0 -> "despejado"; 1 -> "mayormente despejado"; 2 -> "parcialmente nublado"; 3 -> "nublado"
+        45, 48 -> "niebla"; 51, 53, 55 -> "llovizna"; 56, 57 -> "llovizna helada"
+        61 -> "lluvia débil"; 63 -> "lluvia moderada"; 65 -> "lluvia fuerte"; 66, 67 -> "lluvia helada"
+        71 -> "nieve débil"; 73 -> "nieve moderada"; 75 -> "nieve fuerte"; 77 -> "granizo fino"
+        80, 81, 82 -> "chubascos"; 85, 86 -> "chubascos de nieve"; 95 -> "tormenta"; 96, 99 -> "tormenta con granizo"
+        else -> "condición desconocida"
+    }
+
+    // Ubicación: la ciudad que diga el usuario, o la aproximada por internet
+    private fun weatherLocation(prompt: String): Triple<String, Double, Double>? {
+        val city = Regex("(?i)\\b(?:en|de|para)\\s+([A-Za-zÁÉÍÓÚÑáéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ .-]{2,40})")
+            .findAll(prompt).map { it.groupValues[1].trim().trimEnd('?', '.', '!') }
+            .firstOrNull { !Regex("(?i)^(la |el |los |las )?(semana|mañana|hoy|tarde|noche|momento|ahora|fin de semana|d[ií]a|clima|tiempo)").containsMatchIn(it) }
+        if (city != null) {
+            httpGetText("https://geocoding-api.open-meteo.com/v1/search?name=${java.net.URLEncoder.encode(city, "UTF-8")}&count=1&language=es")?.let { (_, body) ->
+                runCatching {
+                    val r = org.json.JSONObject(body).getJSONArray("results").getJSONObject(0)
+                    val name = r.optString("name") + (r.optString("country").let { if (it.isNotBlank()) ", $it" else "" })
+                    return Triple(name, r.getDouble("latitude"), r.getDouble("longitude"))
+                }
+            }
+        }
+        httpGetText("https://ipwho.is/?lang=es")?.let { (_, body) ->
+            runCatching {
+                val o = org.json.JSONObject(body)
+                if (o.optBoolean("success", false))
+                    return Triple(o.optString("city") + ", " + o.optString("country"), o.getDouble("latitude"), o.getDouble("longitude"))
+            }
+        }
+        return null
+    }
+
+    private fun weatherContext(prompt: String): String? {
+        AiActivity.analyzing("🌤️ Buscando dónde quieres saber el clima")
+        val (place, lat, lon) = weatherLocation(prompt) ?: return null
+        AiActivity.log("🌤️ Consultando el clima en Open-Meteo", "$place · ${"%.3f".format(Locale.US, lat)}, ${"%.3f".format(Locale.US, lon)} · 7 días")
+        val url = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
+            "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m" +
+            "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
+            "&timezone=auto&forecast_days=7"
+        val (_, body) = httpGetText(url) ?: return null
+        return runCatching {
+            val o = org.json.JSONObject(body)
+            val c = o.getJSONObject("current")
+            val d = o.getJSONObject("daily")
+            val days = d.getJSONArray("time")
+            val sb = StringBuilder("Clima real en $place (Open-Meteo):\n")
+            sb.append("Ahora: ${c.optDouble("temperature_2m")}°C, sensación ${c.optDouble("apparent_temperature")}°C, ")
+                .append("${weatherCodeEs(c.optInt("weather_code"))}, humedad ${c.optInt("relative_humidity_2m")}%, ")
+                .append("viento ${c.optDouble("wind_speed_10m")} km/h.\n")
+            val names = listOf("Hoy", "Mañana", "Pasado mañana")
+            val inFmt = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val outFmt = java.text.SimpleDateFormat("EEEE d", Locale("es", "ES"))
+            for (i in 0 until days.length()) {
+                val label = names.getOrNull(i) ?: runCatching { outFmt.format(inFmt.parse(days.getString(i))!!) }.getOrDefault(days.getString(i))
+                sb.append("$label: ${weatherCodeEs(d.getJSONArray("weather_code").optInt(i))}, ")
+                    .append("mín ${d.getJSONArray("temperature_2m_min").optDouble(i)}°C, máx ${d.getJSONArray("temperature_2m_max").optDouble(i)}°C, ")
+                    .append("probabilidad de lluvia ${d.getJSONArray("precipitation_probability_max").optInt(i)}%.\n")
+            }
+            runCatching {
+                val n = days.length()
+                val labels = (0 until n).map { i -> names.getOrNull(i) ?: runCatching { outFmt.format(inFmt.parse(days.getString(i))!!) }.getOrDefault(days.getString(i)) }
+                    .map { it.replaceFirstChar { ch -> ch.uppercase() } }
+                renderWeatherCard(place, c.optDouble("temperature_2m"), c.optDouble("apparent_temperature"), c.optInt("weather_code"),
+                    c.optInt("relative_humidity_2m"), c.optDouble("wind_speed_10m"), labels,
+                    (0 until n).map { d.getJSONArray("weather_code").optInt(it) },
+                    (0 until n).map { d.getJSONArray("temperature_2m_min").optDouble(it) },
+                    (0 until n).map { d.getJSONArray("temperature_2m_max").optDouble(it) },
+                    (0 until n).map { d.getJSONArray("precipitation_probability_max").optInt(it) })?.let { replyImages.add(it) }
+            }
+            // 📋 Opción B: la APP escribe el clima con los datos EXACTOS (la IA no cambia las cifras)
+            runCatching {
+                val n = days.length()
+                val label = { i: Int -> (names.getOrNull(i) ?: runCatching { outFmt.format(inFmt.parse(days.getString(i))!!) }
+                    .getOrDefault(days.getString(i))).replaceFirstChar { ch -> ch.uppercase() } }
+                val code = { i: Int -> d.getJSONArray("weather_code").optInt(i) }
+                val tMin = { i: Int -> d.getJSONArray("temperature_2m_min").optDouble(i) }
+                val tMax = { i: Int -> d.getJSONArray("temperature_2m_max").optDouble(i) }
+                val rain = { i: Int -> d.getJSONArray("precipitation_probability_max").optInt(i) }
+                // ¿Qué día preguntó? (para el consejo) · ¿quiere la semana completa?
+                val asked = when {
+                    rxAny(prompt, "pasado ma[ñn]ana") -> 2
+                    Regex("(?i)(?<!esta )\\bma[ñn]ana\\b").containsMatchIn(prompt) -> 1
+                    else -> 0
+                }.coerceAtMost((n - 1).coerceAtLeast(0))
+                val wantsWeek = rxAny(prompt, "semana", "pr[oó]ximos d[ií]as", "\\b7 d[ií]as", "lunes", "martes", "mi[eé]rcoles",
+                    "jueves", "viernes", "s[aá]bado", "domingo")
+                val show = if (wantsWeek) n else minOf(3, n)
+                val out = StringBuilder("🌤️ Clima en $place\n")
+                out.append("Ahora: ${weatherEmoji(c.optInt("weather_code"))} ${numEs(c.optDouble("temperature_2m"))} °C ")
+                    .append("(sensación ${numEs(c.optDouble("apparent_temperature"))} °C), ${weatherCodeEs(c.optInt("weather_code"))}\n")
+                    .append("Humedad ${c.optInt("relative_humidity_2m")} % · viento ${numEs(c.optDouble("wind_speed_10m"))} km/h\n")
+                for (i in 0 until show) {
+                    out.append("\n${weatherEmoji(code(i))} ${label(i)}: ${weatherCodeEs(code(i))} · mín ${numEs(tMin(i))} °C · ")
+                        .append("máx ${numEs(tMax(i))} °C · lluvia ${rain(i)} %")
+                }
+                if (n > 0) out.append("\n\n💡 Consejo para ${label(asked).lowercase(Locale("es", "ES"))}: ")
+                    .append(weatherAdvice(code(asked), tMin(asked), tMax(asked), rain(asked)))
+                dailyDirect = out.toString()
+            }
+            sb.append("\nInstrucción: responde solo lo que el usuario preguntó (ahora, mañana o la semana) usando EXACTAMENTE estos datos. ")
+                .append("Da un consejo corto (paraguas, abrigo, protector solar). No inventes otras cifras.")
+            sb.toString()
+        }.getOrNull()
+    }
+
+    private fun currencyContext(): String? {
+        AiActivity.analyzing("💵 Consultando el tipo de cambio", "open.er-api.com · base: 1 dólar (USD)")
+        val (_, body) = httpGetText("https://open.er-api.com/v6/latest/USD") ?: return null
+        return runCatching {
+            val root = org.json.JSONObject(body)
+            val r = root.getJSONObject("rates")
+            // 💱 Moneda local según la tarjeta SIM / red (Chile → CLP aunque el teléfono esté en «Español (US)»)
+            val local = runCatching { java.util.Currency.getInstance(Locale("", newsCountry())).currencyCode }.getOrNull()
+                ?.takeIf { r.has(it) }
+                ?: runCatching { java.util.Currency.getInstance(Locale.getDefault()).currencyCode }.getOrNull()?.takeIf { r.has(it) }
+                ?: "USD"
+            val codes = listOf(local, "CLP", "EUR", "ARS", "MXN", "PEN", "COP", "BRL").distinct().filter { r.has(it) }
+            // 📋 Opción B: la APP escribe los valores EXACTOS (la IA no los toca)
+            runCatching {
+                val es = Locale("es", "ES")
+                // 945,32 · 1.032,50 · 0,9215 (con 2 decimales como mínimo)
+                val money = { v: Double ->
+                    if (v >= 100) String.format(es, "%,.2f", v)
+                    else String.format(es, "%,.4f", v).trimEnd('0').let { s ->
+                        val dec = s.substringAfter(',', "")
+                        if (dec.length < 2) s + "0".repeat(2 - dec.length) else s
+                    }
+                }
+                val updated = runCatching {
+                    val t = java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss Z", Locale.US).parse(root.optString("time_last_update_utc"))!!
+                    java.text.SimpleDateFormat("EEEE d 'de' MMMM, HH:mm", es).format(t)
+                }.getOrNull()
+                val out = StringBuilder("💵 Tipo de cambio de hoy (valores referenciales)\n1 dólar (USD) equivale a:")
+                codes.filter { it != "USD" }.forEach { code ->
+                    val name = runCatching { java.util.Currency.getInstance(code).getDisplayName(es) }.getOrDefault(code)
+                    out.append("\n• ").append(money(r.getDouble(code))).append(" ").append(code).append(" — ").append(name)
+                }
+                if (local != "EUR" && r.has("EUR")) out.append("\n\n💶 1 euro = ").append(money(r.getDouble(local) / r.getDouble("EUR"))).append(" ").append(local)
+                if (updated != null) out.append("\n🕒 Actualizado: ").append(updated)
+                dailyDirect = out.toString()
+            }
+            "Tipo de cambio actual (1 dólar USD):\n" + codes.joinToString("\n") { "• $it: ${r.getDouble(it)}" } +
+                "\n1 euro = ${"%.2f".format(r.getDouble(local) / r.getDouble("EUR"))} $local\n" +
+                "Instrucción: responde con estos valores exactos y aclara que son referenciales."
+        }.getOrNull()
+    }
+
+    private fun foodContext(): String {
+        val h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val meal = when (h) { in 5..10 -> "desayuno"; in 11..15 -> "almuerzo"; in 16..19 -> "once o merienda"; else -> "cena" }
+        // 🍽️ Varias categorías (como pediste en las reglas de búsqueda), no solo 3 platos
+        return "Contexto: son las ${h}h, momento de $meal. Instrucción: recomienda opciones para $meal ORGANIZADAS EN CATEGORÍAS, " +
+            "2 platos concretos por categoría: 🍳 Rápida (15 min o menos) · 🥗 Saludable · 🍲 Casera y contundente · " +
+            "🌮 Internacional · 🍰 Algo dulce. Cada plato en una línea: Plato — ingredientes principales — tiempo aprox. " +
+            "Si el usuario dio gustos, ingredientes o restricciones, respétalos. Al final ofrece dar la receta de la que elija."
+    }
+
+    // ================= 📋 OPCIÓN B: LA APP HACE LO QUE MEJOR SABE HACER =================
+    // Noticias, clima y divisas: la app arma la respuesta con los datos EXACTOS (lista, cifras, fotos, tarjeta).
+    // La IA no los reescribe (los modelos pequeños repetían, mezclaban o cambiaban los datos).
+
+    /** Respuesta lista para mostrar que dejó el último pedido diario (noticias, clima o divisas). */
+    @Volatile private var dailyDirect: String? = null
+    /** Titulares de la última lista de noticias (para el resumen corto de la IA). */
+    @Volatile private var dailyDirectHeadlines: List<String> = emptyList()
+
+    /** Bandera del país (🇨🇱) a partir de su código de 2 letras. */
+    private fun flagEmoji(country: String): String {
+        val cc = country.uppercase(Locale.ROOT)
+        if (cc.length != 2 || !cc.all { it in 'A'..'Z' }) return "🏠"
+        return String(Character.toChars(0x1F1E6 + (cc[0] - 'A'))) + String(Character.toChars(0x1F1E6 + (cc[1] - 'A')))
+    }
+
+    private val storyStopWords = setOf("para", "como", "este", "esta", "estos", "estas", "sobre", "tras", "entre", "desde",
+        "hasta", "pero", "porque", "cuando", "donde", "segun", "luego", "ante", "tiene", "tienen", "sera", "ser", "fue", "son",
+        "dice", "dijo", "hace", "hoy", "ayer", "anos", "nuevo", "nueva", "todo", "todos", "otra", "otro", "sus", "los", "las", "del", "que", "una", "con")
+
+    /** Palabras importantes de un titular (sin tildes, sin el medio entre paréntesis). */
+    private fun storyWords(title: String): Set<String> = java.text.Normalizer.normalize(
+        title.lowercase(Locale.ROOT).removePrefix("• ").replace(Regex("\\s*\\([^)]*\\)\\s*$"), ""),
+        java.text.Normalizer.Form.NFD
+    ).replace(Regex("\\p{M}+"), "").split(Regex("[^a-z0-9]+")).filter { it.length >= 4 && it !in storyStopWords }.toSet()
+
+    /** ¿Es la misma noticia contada con otras palabras? (comparten la mayoría de sus palabras importantes) */
+    private fun sameStory(a: Set<String>, b: Set<String>): Boolean {
+        if (a.size < 3 || b.size < 3) return false
+        val common = a.intersect(b).size
+        return common >= 3 && common.toDouble() / minOf(a.size, b.size) >= 0.6
+    }
+
+    /** Número con coma decimal y sin «,0» al final (18,5 · 22). */
+    private fun numEs(v: Double): String {
+        if (v.isNaN()) return "—"
+        return String.format(Locale("es", "ES"), "%.1f", v).removeSuffix(",0").removeSuffix(".0")
+    }
+
+    /** Consejo corto calculado con los datos reales (sin la IA). */
+    private fun weatherAdvice(code: Int, min: Double, max: Double, rain: Int): String {
+        val tips = mutableListOf<String>()
+        if (rain >= 50 || code in 51..67 || code in 80..82 || code >= 95) tips += "lleva paraguas ☔"
+        else if (rain >= 30) tips += "por si acaso, ten un paraguas a mano 🌂"
+        if (code in 71..77 || code == 85 || code == 86) tips += "cuidado con la nieve en el camino ❄️"
+        if (!min.isNaN() && min <= 7) tips += "abrígate bien 🧥"
+        else if (!min.isNaN() && min <= 12) tips += "lleva algo para abrigarte en la mañana y en la noche 🧥"
+        if (!max.isNaN() && max >= 28) tips += "usa protector solar y toma agua 🧴"
+        if (tips.isEmpty()) tips += "buen día para salir 🙂"
+        return tips.joinToString(", ").replaceFirstChar { it.uppercase() } + "."
+    }
+
+    /**
+     * 📰 «Más detalles de la 3», «cuéntame la segunda noticia»… justo después de una lista de noticias.
+     * Devuelve el titular elegido (o null si el mensaje no habla de una noticia de la lista).
+     */
+    private fun newsItemAsked(prompt: String, lastAssistant: String?): String? {
+        if (lastAssistant == null || !lastAssistant.contains("📰 Noticias")) return null
+        val p = prompt.lowercase(Locale.ROOT)
+        if (p.split(Regex("\\s+")).size > 16) return null
+        val ordinals = listOf("primer", "segund", "tercer", "cuart", "quint", "sext", "s[eé]ptim", "octav", "noven", "d[eé]cim")
+        val num = Regex("\\b(?:la|el|noticia|n[uú]mero|titular|#)\\s*(?:n[uú]mero\\s*)?(\\d{1,2})\\b").find(p)?.groupValues?.get(1)?.toIntOrNull()
+            ?: ordinals.indexOfFirst { Regex("\\b(?:la|el)\\s+$it").containsMatchIn(p) }.takeIf { it >= 0 }?.plus(1)
+            ?: return null
+        val items = Regex("(?m)^\\s*(\\d{1,2})\\.\\s+(?:📸\\s*)?(.+)$").findAll(lastAssistant)
+            .associate { it.groupValues[1].toInt() to it.groupValues[2].trim() }
+        return items[num]
+    }
+
+    /** ✍️ Resumen corto (1 o 2 frases) de los titulares, escrito por la IA. Si sale mal, no se muestra. */
+    private fun newsSummary(headlines: List<String>, backend: String): String? {
+        if (headlines.size < 2 || stopRequested) return null
+        val sys = "Resumes titulares de noticias en español, en 1 o 2 frases. Usas SOLO los titulares dados: no agregas datos, cifras ni opiniones."
+        val ask = "Titulares de hoy:\n" + headlines.take(10).joinToString("\n") { "- $it" } +
+            "\n\nEscribe un resumen de 1 o 2 frases con lo más importante. Sin saludo, sin lista y sin copiar los titulares completos."
+        val raw = runCatching { removeThinking(rawGenerate(sys, ask, 120, backend)) }.getOrNull() ?: return null
+        val s = stripMarkdownSymbols(raw).lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" ").trim()
+        if (stopRequested || s.length !in 25..450) return null
+        if (Regex("(?i)(no puedo|no tengo acceso|lo siento|como (modelo|ia)|i can'?t|i cannot)").containsMatchIn(s)) return null
+        return s
+    }
+
+    /** Devuelve datos listos para la IA si el mensaje es un pedido diario conocido. */
+    private fun dailyIntentContext(prompt: String, codeOnly: Boolean = false, prevUser: String? = null): String? {
+        val online = isInternetEnabled()
+        // 🛠️ Pedido de programación: «actualízate en…» y «busca…» solo cuentan si el mensaje EMPIEZA con esa orden
+        //    («créame una app que busca recetas» es una app, no una búsqueda)
+        if (codeOnly && !Regex("(?i)^\\s*(por favor\\s+|oye\\s+)?(actual[ií]zate|ponte al d[ií]a|aprende|estudia|inf[oó]rmate|investiga|" +
+                "b[uú]sca(me|r)?|averigua(r)?|googlea(r)?|consulta en internet)\\b").containsMatchIn(prompt)) return null
+        // 📚 "Actualízate en ..." → aprende de internet y guarda las notas
+        learnTopic(prompt)?.let { topic ->
+            if (!online) return null
+            AiActivity.analyzing("📚 Aprendiendo de internet sobre «$topic»", "3 búsquedas: novedades, versión y documentación")
+            val ctx = learnContext(topic) ?: return "Instrucción: el usuario pidió que te actualizaras sobre «$topic», pero la búsqueda en internet no devolvió resultados. Díselo con honestidad."
+            pendingLearnTopic = topic
+            return "Resultados de internet (aprendizaje): " + ctx
+        }
+        // ▶️ «Dame una canción de Amar Azul en YouTube», «ponme Bailando», «el tráiler de Dune 3» → la app busca en YouTube
+        if (!codeOnly && online) WebSearchRules.youtubeRequest(prompt, ytPrevKind, newsCountry())?.let { return youtubeContext(it) }
+        // 🍽️ «Quiero sushi», «tengo hambre», «delivery de pizza en Ñuñoa» → la app busca los locales reales cerca:
+        //    teléfono, dirección, horario, delivery, mapa y una foto de su carta (como las noticias: la IA no inventa datos)
+        if (!codeOnly && online) FoodFinder.parse(prompt)?.let { req -> return foodPlacesContext(req) }
+        // 🔎 "Busca en internet ...", "investiga ...", "averigua ..." → la app busca directo
+        val searchCmd = Regex("(?i)\\b(b[uú]sca(me|r)?|investiga(r)?|averigua(r)?|googlea(r)?|consulta en internet)\\b(\\s+(en|por)\\s+(internet|google|la web))?(\\s+(sobre|acerca de|informaci[oó]n (de|sobre)|info (de|sobre)|qu[eé] es|qui[eé]n es))?\\s+(.{3,})")
+            .find(prompt)
+        // 🌍 «Búscame esto por internet», «quiero algo por internet», «¿sabéis qué música hay por internet?»,
+        //    «search the web for…», «pesquisa na internet…», «cherche sur internet…»: en cualquier idioma y forma
+        val anyLangSearch = if (codeOnly) null else runCatching { WebSearchRules.internetSearch(prompt) }.getOrNull()
+        // 📰🌤️ Noticias y clima (en cualquier idioma) tienen su propio camino, con los datos directos
+        val newsOrWeather = rxAny(prompt, "\\bnoticia", "\\bclima\\b", "\\bnews\\b", "\\bheadlines\\b", "\\bnot[ií]cias?\\b",
+            "\\bnouvelles\\b", "\\bactualit[ée]s?\\b", "\\bnotizie\\b", "\\bnachrichten\\b", "\\bweather\\b", "\\bm[ée]t[ée]o\\b", "\\bwetter\\b")
+        // 🔌 Pidió buscar en internet pero el botón de internet está apagado: se le dice (antes la IA se trababa o inventaba)
+        if ((searchCmd != null || anyLangSearch != null) && !online && !codeOnly && !humorJokeAsk(prompt))
+            return "Instrucción: el usuario pidió buscar en internet, pero el internet de la app está APAGADO (botón 🌐). " +
+                "Dile en una o dos frases, en el mismo idioma en que te escribió, que active el botón de internet y lo vuelva a pedir. " +
+                "No inventes resultados."
+        // 😄 Los chistes, payas y adivinanzas tienen su propia búsqueda (más abajo): aquí no
+        if ((searchCmd != null || anyLangSearch != null) && online && !newsOrWeather && !humorJokeAsk(prompt)) {
+            var query = (anyLangSearch ?: searchCmd!!.groupValues.last()).trim().trimEnd('?', '.', '!')
+                .let { q -> runCatching { WebSearchRules.stripRequestWords(q) }.getOrDefault(q) }
+                .replace(Regex("(?iu)\\s+(?:en|por|de|desde|con)\\s+(?:el\\s+)?(?:internet|google|la web)\\b"), " ").trim()
+            // «búscalo por internet», «busca eso», «google it»: se busca lo que preguntó antes
+            if (runCatching { WebSearchRules.isPronounSearch(query) }.getOrDefault(false) || query.length < 2) {
+                val prev = prevUser?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()?.take(200)
+                if (prev.isNullOrBlank()) return null
+                query = (runCatching { WebSearchRules.internetSearch(prev) }.getOrNull()
+                    ?: runCatching { WebSearchRules.stripRequestWords(prev) }.getOrDefault(prev)).trim().trimEnd('?', '.', '!')
+            }
+            if (query.isBlank()) return null
+            AiActivity.analyzing("🔎 Me pediste buscar en internet", "«$query»")
+            // 🌐 Reglas de búsqueda: tipo de pedido, fecha, ubicación e idioma (como las noticias)
+            val cat = WebSearchRules.detect(query)
+            lastExplicitWebCategory = cat
+            // 📍 «Búscame el horario de la locomoción»: con tu ubicación exacta (antes usaba la ciudad de internet → «Santiago»)
+            val place = runCatching { searchPlace(cat, prompt) }.getOrDefault("")
+            val rules = webRulesBlock(cat, place, query)
+            val webQuery = WebSearchRules.searchQuery(cat, query, place, java.util.Calendar.getInstance().get(java.util.Calendar.YEAR), newsCountry())
+            AiActivity.log("🧭 Tipo de búsqueda: ${cat.title}", "Busco: «$webQuery»" + (if (place.isNotBlank()) "\n📍 $place" else ""))
+            // 💻 En modo Ingeniero de código (o pidiendo crear una app), «busca…» va a las páginas de programación
+            val web = fetchWebContext(webQuery, reserveChars = rules.length, cat = cat, code = codeOnly)
+            return if (web != null)
+                "Resultados de internet obtenidos ahora para «$query»:\n\n$web\n\n$rules\n\n" +
+                    "Instrucción: el usuario pidió buscar esto. Entrégale la información encontrada de forma clara y ordenada, " +
+                    "usando SOLO estos resultados, y menciona los sitios de donde sale. " +
+                    "Responde en el mismo idioma en que te escribió el usuario. " + DELIVER_DATA_RULE
+            else "Instrucción: el usuario pidió buscar «$query» en internet, pero la búsqueda no devolvió resultados. " +
+                "Díselo con honestidad, en el mismo idioma en que te escribió, y no inventes información."
+        }
+        // 🛠️ Pedido de programación: no se buscan noticias, clima, divisas ni comida
+        if (codeOnly) return null
+        return when {
+            rxAny(prompt, "\\bnoticia", "\\btitulares", "qu[eé] (est[aá] pasando|pas[oó]) (hoy|en el mundo)",
+                "\\bnews\\b", "\\bheadlines\\b", "\\bnot[ií]cias?\\b", "\\bnouvelles\\b", "\\bnotizie\\b", "\\bnachrichten\\b") ->
+                if (online) newsContext(prompt) else null
+            rxAny(prompt, "\\bclima\\b", "\\btiempo (hace|har[aá]|va a hacer|para|de hoy|de mañana|en)", "\\bpron[oó]stico",
+                "va a llover", "llover[aá]", "\\btemperatura", "hace (fr[ií]o|calor)", "har[aá] (fr[ií]o|calor)") ->
+                if (online) weatherContext(prompt) else null
+            rxAny(prompt, "precio del d[oó]lar", "\\bd[oó]lar (hoy|est[aá]|a cu[aá]nto)", "tipo de cambio", "cu[aá]nto (est[aá]|vale) el (d[oó]lar|euro)") ->
+                if (online) currencyContext() else null
+            rxAny(prompt, "qu[eé] (puedo|podr[ií]a|deber[ií]a) (comer|cocinar|almorzar|cenar|desayunar)", "recomi[eé]nda(me)? (algo de |qu[eé] )?(comer|comida|cocinar)",
+                "qu[eé] (como|cocino|almuerzo|ceno|desayuno)( hoy)?\\b", "ideas? (de|para) (comida|almuerzo|cena|desayuno)") ->
+                foodContext().also { AiActivity.log("🍽️ Ideas de comida según la hora del teléfono") }
+            else -> null
+        }
+    }
+
+    // ========================================================================
+    // 📄 DOCUMENTOS: leer Word / Excel / PowerPoint / PDF y guardar respuestas como archivo
+    // ========================================================================
+    private fun xmlText(t: String): String = t
+        .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+        .replace("&apos;", "'").replace("&#39;", "'").replace("&amp;", "&")
+
+    private fun zipEntries(file: File, filter: (String) -> Boolean): Map<String, String> {
+        val out = sortedMapOf<String, String>(compareBy({ Regex("\\d+").find(it)?.value?.toIntOrNull() ?: 0 }, { it }))
+        java.util.zip.ZipFile(file).use { zip ->
+            for (e in zip.entries()) {
+                if (!e.isDirectory && filter(e.name))
+                    out[e.name] = zip.getInputStream(e).bufferedReader(Charsets.UTF_8).readText()
+            }
+        }
+        return out
+    }
+
+    private fun docxText(file: File): String {
+        val xml = zipEntries(file) { it == "word/document.xml" }.values.firstOrNull() ?: return ""
+        return xml.split("</w:p>").joinToString("\n") { p ->
+            Regex("<w:t[^>]*>(.*?)</w:t>|<w:tab/>|<w:br/>", RegexOption.DOT_MATCHES_ALL).findAll(p).joinToString("") {
+                when {
+                    it.value.startsWith("<w:tab") -> "\t"
+                    it.value.startsWith("<w:br") -> "\n"
+                    else -> xmlText(it.groupValues[1])
+                }
+            }
+        }.replace(Regex("\n{3,}"), "\n\n").trim()
+    }
+
+    private fun xlsxText(file: File): String {
+        val entries = zipEntries(file) { it == "xl/sharedStrings.xml" || it.startsWith("xl/worksheets/sheet") }
+        val shared = entries["xl/sharedStrings.xml"]?.let { ss ->
+            Regex("<si>(.*?)</si>", RegexOption.DOT_MATCHES_ALL).findAll(ss).map { si ->
+                Regex("<t[^>]*>(.*?)</t>", RegexOption.DOT_MATCHES_ALL).findAll(si.groupValues[1]).joinToString("") { xmlText(it.groupValues[1]) }
+            }.toList()
+        } ?: emptyList()
+        val sb = StringBuilder()
+        entries.filterKeys { it.startsWith("xl/worksheets/sheet") }.entries.forEachIndexed { i, (_, xml) ->
+            sb.append("Hoja ${i + 1}:\n")
+            Regex("<row[^>]*>(.*?)</row>", RegexOption.DOT_MATCHES_ALL).findAll(xml).forEach { row ->
+                val cells = Regex("<c([^>]*)>(.*?)</c>", RegexOption.DOT_MATCHES_ALL).findAll(row.groupValues[1]).map { c ->
+                    val attrs = c.groupValues[1]
+                    val inner = c.groupValues[2]
+                    val v = Regex("<v>(.*?)</v>", RegexOption.DOT_MATCHES_ALL).find(inner)?.groupValues?.get(1)
+                    when {
+                        attrs.contains("t=\"s\"") -> v?.toIntOrNull()?.let { shared.getOrNull(it) } ?: ""
+                        attrs.contains("t=\"inlineStr\"") -> Regex("<t[^>]*>(.*?)</t>", RegexOption.DOT_MATCHES_ALL).find(inner)?.groupValues?.get(1)?.let { xmlText(it) } ?: ""
+                        else -> v?.let { xmlText(it) } ?: ""
+                    }
+                }.toList()
+                if (cells.any { it.isNotBlank() }) sb.append(cells.joinToString("\t")).append('\n')
+            }
+            sb.append('\n')
+        }
+        return sb.toString().trim()
+    }
+
+    private fun pptxText(file: File): String =
+        zipEntries(file) { it.startsWith("ppt/slides/slide") && it.endsWith(".xml") }.values.mapIndexed { i, xml ->
+            "Diapositiva ${i + 1}:\n" + xml.split("</a:p>").joinToString("\n") { p ->
+                Regex("<a:t>(.*?)</a:t>", RegexOption.DOT_MATCHES_ALL).findAll(p).joinToString("") { xmlText(it.groupValues[1]) }
+            }.replace(Regex("\n{2,}"), "\n").trim()
+        }.joinToString("\n\n")
+
+    private fun odfText(file: File): String {
+        val xml = zipEntries(file) { it == "content.xml" }.values.firstOrNull() ?: return ""
+        return xml.replace(Regex("</text:p>|</text:h>|<text:line-break/>"), "\n").replace(Regex("<text:tab/>"), "\t")
+            .replace(Regex("<[^>]+>"), "").let { xmlText(it) }.replace(Regex("\n{3,}"), "\n\n").trim()
+    }
+
+    private fun rtfText(file: File): String = file.readText(Charsets.ISO_8859_1)
+        .replace(Regex("\\\\par[d]?"), "\n").replace(Regex("\\\\'([0-9a-fA-F]{2})")) { it.groupValues[1].toInt(16).toChar().toString() }
+        .replace(Regex("\\\\[a-zA-Z]+-?\\d* ?"), "").replace(Regex("[{}]"), "").trim()
+
+    private var pdfBoxReady = false
+    private fun pdfText(file: File): String {
+        if (!pdfBoxReady) {
+            com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(applicationContext)
+            pdfBoxReady = true
+        }
+        com.tom_roush.pdfbox.pdmodel.PDDocument.load(file).use { doc ->
+            return com.tom_roush.pdfbox.text.PDFTextStripper().getText(doc).trim()
+        }
+    }
+
+    // ========================================================================
+    // 🧩 CÓDIGO CON CUALQUIER EXTENSIÓN y 📦 COMPRIMIDOS (.zip, .jar, .apk, .tar, .tar.gz, .tgz, .gz)
+    // ========================================================================
+    /** Lo que ya se averiguó mirando el contenido (para no volver a abrir el archivo cada vez). */
+    private val sniffedKinds = java.util.concurrent.ConcurrentHashMap<String, AttachKind>()
+
+    /** Primeros bytes del archivo: dicen qué es de verdad, sin fiarse de la extensión. */
+    private fun fileHead(f: File, n: Int = 8192): ByteArray = runCatching {
+        f.inputStream().use { ins ->
+            val buf = ByteArray(n)
+            var tot = 0
+            while (tot < n) {
+                val r = ins.read(buf, tot, n - tot)
+                if (r <= 0) break
+                tot += r
+            }
+            buf.copyOf(tot)
+        }
+    }.getOrDefault(ByteArray(0))
+
+    private enum class ArchiveType { ZIP, TAR, GZ }
+
+    private fun archiveTypeOf(head: ByteArray): ArchiveType? = when {
+        head.size >= 4 && head[0] == 'P'.code.toByte() && head[1] == 'K'.code.toByte() &&
+            ((head[2].toInt() == 3 && head[3].toInt() == 4) || (head[2].toInt() == 5 && head[3].toInt() == 6)) -> ArchiveType.ZIP
+        head.size >= 2 && head[0] == 0x1F.toByte() && head[1] == 0x8B.toByte() -> ArchiveType.GZ
+        head.size >= 262 && String(head, 257, 5, Charsets.US_ASCII) == "ustar" -> ArchiveType.TAR
+        else -> null
+    }
+
+    /** ¿Es texto? Sin bytes 0 y casi sin caracteres de control (o con la marca de UTF-16). */
+    private fun looksLikeText(b: ByteArray): Boolean {
+        if (b.size >= 2 && ((b[0] == 0xFF.toByte() && b[1] == 0xFE.toByte()) || (b[0] == 0xFE.toByte() && b[1] == 0xFF.toByte()))) return true
+        val n = minOf(b.size, 8192)
+        var ctrl = 0
+        for (i in 0 until n) {
+            val c = b[i].toInt() and 0xFF
+            if (c == 0) return false
+            if (c < 0x20 && c != 9 && c != 10 && c != 13 && c != 12 && c != 8 && c != 27) ctrl++
+        }
+        return ctrl * 50 <= n   // hasta 2 % de caracteres raros
+    }
+
+    /** Extensión que no está en la lista: se mira el contenido. Código o texto (.app, .aidl, .svg, Makefile…)
+     *  se lee; un comprimido (.zip, .jar, .apk, .tar.gz…) se abre y se leen los archivos de adentro. */
+    private fun sniffKind(file: File): AttachKind {
+        val key = "${file.absolutePath}|${file.length()}|${file.lastModified()}"
+        sniffedKinds[key]?.let { return it }
+        val head = fileHead(file)
+        val kind = when {
+            head.isEmpty() -> AttachKind.OTHER
+            archiveTypeOf(head) != null -> AttachKind.TEXT
+            looksLikeText(head) -> AttachKind.TEXT
+            else -> AttachKind.OTHER
+        }
+        sniffedKinds[key] = kind
+        return kind
+    }
+
+    /** Lee hasta [cap] bytes. Devuelve los bytes y si quedó algo sin leer ([probe] = mirar 1 byte más para saberlo). */
+    private fun readBytesCapped(ins: java.io.InputStream, cap: Int, probe: Boolean = true): Pair<ByteArray, Boolean> {
+        val out = java.io.ByteArrayOutputStream(minOf(cap, 64 * 1024).coerceAtLeast(16))
+        val buf = ByteArray(16 * 1024)
+        var tot = 0
+        while (tot < cap) {
+            val r = ins.read(buf, 0, minOf(buf.size, cap - tot))
+            if (r <= 0) break
+            out.write(buf, 0, r)
+            tot += r
+        }
+        val more = probe && tot >= cap && ins.read() != -1
+        return out.toByteArray() to more
+    }
+
+    /** Bytes → texto: UTF-8; si no lo es, UTF-16 (con su marca) o Windows-1252 (tildes de archivos viejos). */
+    private fun decodeText(bytes: ByteArray, truncated: Boolean): String {
+        var b = bytes
+        if (b.size >= 2 && b[0] == 0xFF.toByte() && b[1] == 0xFE.toByte())
+            return String(b, 2, (b.size - 2) and 1.inv(), Charsets.UTF_16LE)
+        if (b.size >= 2 && b[0] == 0xFE.toByte() && b[1] == 0xFF.toByte())
+            return String(b, 2, (b.size - 2) and 1.inv(), Charsets.UTF_16BE)
+        if (truncated) {
+            // Cortado a la mitad: se corta en el último salto de línea (o antes de una letra partida)
+            val nl = b.lastIndexOf('\n'.code.toByte())
+            b = if (nl > 0) b.copyOf(nl + 1) else {
+                var i = b.size - 1
+                var k = 0
+                while (i > 0 && k < 3 && (b[i].toInt() and 0xC0) == 0x80) { i--; k++ }
+                if (i >= 0 && (b[i].toInt() and 0xFF) >= 0xC0) b.copyOf(i) else b
+            }
+        }
+        val start = if (b.size >= 3 && b[0] == 0xEF.toByte() && b[1] == 0xBB.toByte() && b[2] == 0xBF.toByte()) 3 else 0
+        return runCatching {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(java.nio.ByteBuffer.wrap(b, start, b.size - start)).toString()
+        }.getOrElse {
+            String(b, start, b.size - start, runCatching { charset("windows-1252") }.getOrDefault(Charsets.ISO_8859_1))
+        }
+    }
+
+    /** Archivo de texto o código: se lee solo lo que puede entrar (no carga archivos gigantes enteros). */
+    private fun readTextSmart(f: File, budget: Int): String {
+        val cap = (budget.toLong() * 4 + 4096).coerceAtMost(4L shl 20).toInt()
+        return f.inputStream().use { ins ->
+            val (b, more) = readBytesCapped(ins, cap)
+            decodeText(b, more)
+        }
+    }
+
+    /** Carpetas que no aportan nada para entender el código (compilados, dependencias, caché del editor). */
+    private val archiveJunk = Regex("(^|/)(build|\\.git|\\.gradle|\\.idea|\\.vscode|\\.svn|node_modules|__MACOSX|\\.dart_tool|Pods|DerivedData|\\.cxx|\\.externalNativeBuild|__pycache__|\\.next)/")
+
+    /** Extensiones que seguro no son texto: se listan pero no se abren. */
+    private val archiveBinaryExt = setOf(
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "heic", "avif", "psd", "so", "dex", "class", "jar", "apk", "aab",
+        "aar", "arsc", "bin", "o", "a", "obj", "exe", "dll", "dylib", "ttf", "otf", "woff", "woff2", "mp3", "mp4", "wav",
+        "ogg", "m4a", "aac", "flac", "webm", "mkv", "mov", "avi", "keystore", "jks", "gguf", "onnx", "tflite", "litertlm",
+        "pt", "safetensors", "pdf", "zip", "gz", "tgz", "rar", "7z", "xz", "bz2", "db", "sqlite", "realm", "pb", "npy", "flatbuffers"
+    )
+
+    /** Orden de lectura: primero lo que más explica el proyecto. */
+    private fun archivePriority(path: String): Int {
+        val low = path.lowercase(Locale.US)
+        val name = low.substringAfterLast('/')
+        val ext = name.substringAfterLast('.', "")
+        return when {
+            name.startsWith("readme") -> 0
+            name == "androidmanifest.xml" || name == "package.json" || name == "cmakelists.txt" || name == "pubspec.yaml" ||
+                name == "cargo.toml" || name == "go.mod" || name == "requirements.txt" || name == "pyproject.toml" ||
+                name.startsWith("build.gradle") || name.startsWith("settings.gradle") || name == "pom.xml" ||
+                name == "index.html" -> 1
+            name.endsWith(".min.js") || name.endsWith(".min.css") || name.endsWith("-lock.json") || name.endsWith(".lock") -> 9
+            ext in setOf("kt", "kts", "java", "py", "js", "ts", "jsx", "tsx", "mjs", "cjs", "vue", "svelte", "c", "cc", "cpp",
+                "cxx", "h", "hpp", "cs", "go", "rs", "swift", "dart", "php", "rb", "lua", "scala", "m", "mm", "html", "htm",
+                "css", "scss", "sql", "sh", "gd", "aidl", "glsl") -> 2
+            "/layout" in low || "/values" in low || "/navigation" in low || "/menu" in low || ext == "xml" -> 3
+            else -> 5
+        }
+    }
+
+    /** Arma el texto del comprimido: la lista de archivos + el código de adentro, lo que quepa en [budget]. */
+    private fun buildArchiveText(arcName: String, all: List<Pair<String, Long>>, budget: Int,
+                                 read: (String) -> Pair<ByteArray, Boolean>?): String {
+        val files = all.filter { (p, _) ->
+            val name = p.substringAfterLast('/')
+            !p.endsWith("/") && !archiveJunk.containsMatchIn(p) && !name.startsWith("._") && name != ".DS_Store" && name.isNotEmpty()
+        }
+        val omitted = all.count { !it.first.endsWith("/") } - files.size
+        val ordered = files.sortedWith(compareBy({ archivePriority(it.first) }, { it.first.count { c -> c == '/' } }, { it.first }))
+
+        val header = StringBuilder("📦 Comprimido «$arcName»: ${files.size} archivo(s)")
+        if (omitted > 0) header.append(" (se saltaron $omitted de build/, .git/, node_modules/ y similares)")
+        header.append(".\n")
+
+        // Lista de archivos (hasta ~20 % del espacio)
+        val treeBudget = (budget / 5).coerceAtLeast(300)
+        val tree = StringBuilder("Archivos:\n")
+        val byPath = files.sortedBy { it.first }
+        for ((i, e) in byPath.withIndex()) {
+            val line = e.first + "\n"
+            if (tree.length + line.length > treeBudget) {
+                tree.append("… y ${byPath.size - i} más\n")
+                break
+            }
+            tree.append(line)
+        }
+
+        // Contenido de los archivos de texto/código, en orden de importancia
+        val bodyBudget = budget - header.length - tree.length - 200
+        val body = StringBuilder()
+        var shown = 0
+        var notFit = 0
+        var binaries = 0
+        // Un archivo enorme no se come todo el espacio: cada uno ocupa como mucho un tercio (si hay varios)
+        val textCount = ordered.count { (p, _) -> p.substringAfterLast('/').substringAfterLast('.', "").lowercase(Locale.US) !in archiveBinaryExt }
+        val oneShare = if (textCount <= 1) Int.MAX_VALUE else maxOf(bodyBudget / 3, 1500)
+        for ((p, _) in ordered) {
+            val ext = p.substringAfterLast('/').substringAfterLast('.', "").lowercase(Locale.US)
+            if (ext in archiveBinaryExt) { binaries++; continue }
+            val left = bodyBudget - body.length - p.length - 16
+            if (left < 200) { notFit++; continue }
+            val room = minOf(left, oneShare)
+            val (bytes, more) = runCatching { read(p) }.getOrNull() ?: continue
+            if (!looksLikeText(bytes)) { binaries++; continue }
+            val text = decodeText(bytes, more).trimEnd()
+            if (text.isBlank()) continue
+            body.append("\n──── ").append(p).append(" ────\n")
+            if (text.length <= room && !more) body.append(text)
+            else body.append(text, 0, minOf(text.length, room)).append("\n… (el archivo sigue, no cupo completo)")
+            body.append('\n')
+            shown++
+        }
+
+        val sb = StringBuilder().append(header).append(tree).append(body)
+        if (shown == 0) sb.append("\n(No trae archivos de texto o código que se puedan leer: un .apk o .jar trae el código ya compilado.)")
+        if (notFit > 0) sb.append("\n($notFit archivo(s) más no cupieron por el tamaño del contexto.)")
+        return sb.toString()
+    }
+
+    /** Recorre un .tar (ya descomprimido si venía en .tar.gz). Guarda solo lo que [keep] pide, con tope de tamaño. */
+    private fun readTarEntries(ins: java.io.InputStream, perEntryCap: Int,
+                               keep: (String) -> Boolean): Pair<List<Pair<String, Long>>, Map<String, Pair<ByteArray, Boolean>>> {
+        val names = mutableListOf<Pair<String, Long>>()
+        val data = HashMap<String, Pair<ByteArray, Boolean>>()
+        val hdr = ByteArray(512)
+        var stored = 0L
+        var scanned = 0L
+        var longName: String? = null
+        fun readFully(buf: ByteArray): Boolean {
+            var tot = 0
+            while (tot < buf.size) {
+                val r = ins.read(buf, tot, buf.size - tot)
+                if (r <= 0) return false
+                tot += r
+            }
+            return true
+        }
+        fun skipFully(n: Long) {
+            var left = n
+            val tmp = ByteArray(8192)
+            while (left > 0) {
+                val s = ins.skip(left)
+                if (s > 0) { left -= s; continue }
+                val r = ins.read(tmp, 0, minOf(tmp.size.toLong(), left).toInt())
+                if (r <= 0) return
+                left -= r
+            }
+        }
+        fun field(off: Int, len: Int): String {
+            var e = off
+            while (e < off + len && hdr[e] != 0.toByte()) e++
+            return String(hdr, off, e - off, Charsets.UTF_8)
+        }
+        while (names.size < 20000) {
+            if (!readFully(hdr)) break
+            if (hdr.all { it == 0.toByte() }) break
+            val size = if ((hdr[124].toInt() and 0x80) != 0) {
+                var v = 0L
+                for (i in 125 until 136) v = (v shl 8) or (hdr[i].toLong() and 0xFF)
+                v
+            } else field(124, 12).trim().toLongOrNull(8) ?: 0L
+            val type = hdr[156].toInt().toChar()
+            val prefix = if (String(hdr, 257, 5, Charsets.US_ASCII) == "ustar") field(345, 155) else ""
+            val name = (longName ?: if (prefix.isNotEmpty()) "$prefix/${field(0, 100)}" else field(0, 100))
+                .removePrefix("./").replace('\\', '/')
+            longName = null
+            val padded = (size + 511) / 512 * 512
+            scanned += padded + 512
+            if (scanned > (512L shl 20)) break   // tope: no recorrer comprimidos gigantes enteros
+            when {
+                type == 'L' || type == 'x' -> {
+                    // Nombre largo (GNU) o datos extra (PAX, "NN path=..."): valen para el archivo que sigue
+                    val (b, _) = readBytesCapped(ins, size.coerceAtMost(65536).toInt(), probe = false)
+                    skipFully(padded - b.size)
+                    val s = String(b, Charsets.UTF_8)
+                    longName = if (type == 'L') s.trimEnd('\u0000')
+                    else Regex("\\d+ path=([^\n]*)\n").find(s)?.groupValues?.get(1)
+                }
+                type == '0' || type == '\u0000' || type == '7' -> {
+                    names += name to size
+                    if (keep(name) && stored < (24L shl 20)) {
+                        val part = readBytesCapped(ins, size.coerceAtMost(perEntryCap.toLong()).toInt(), probe = false)
+                        data[name] = part.first to (size > part.first.size)
+                        stored += part.first.size
+                        skipFully(padded - part.first.size)
+                    } else skipFully(padded)
+                }
+                else -> skipFully(padded)   // carpetas, enlaces, etc.
+            }
+        }
+        return names to data
+    }
+
+    /** Abre un comprimido y devuelve la lista de archivos + el código de adentro (lo que quepa). */
+    private fun archiveText(f: File, budget0: Int): String {
+        val budget = budget0.coerceIn(1500, 400_000)
+        val arcName = f.name.substringAfter('_')
+        val cap = (budget.toLong() * 4 + 4096).coerceAtMost(2L shl 20).toInt()
+        val head = fileHead(f, 512)
+        val keep: (String) -> Boolean = { p ->
+            val ext = p.substringAfterLast('/').substringAfterLast('.', "").lowercase(Locale.US)
+            !p.endsWith("/") && !archiveJunk.containsMatchIn(p) && ext !in archiveBinaryExt
+        }
+        return when (archiveTypeOf(head)) {
+            ArchiveType.ZIP -> {
+                // Nombres en UTF-8; si el zip se hizo con otra codificación (Windows viejo), se reintenta
+                val zip = try {
+                    java.util.zip.ZipFile(f, Charsets.UTF_8).also { z ->
+                        try { z.entries().toList() } catch (e: Throwable) { z.close(); throw e }
+                    }
+                } catch (_: Throwable) {
+                    java.util.zip.ZipFile(f, Charsets.ISO_8859_1)
+                }
+                zip.use { z ->
+                    val entries = z.entries().asSequence().take(20000).toList()
+                    val byName = entries.associateBy { it.name.replace('\\', '/') }
+                    buildArchiveText(arcName, byName.map { (k, e) -> k to e.size }, budget) { p ->
+                        val e = byName[p] ?: return@buildArchiveText null
+                        z.getInputStream(e).use { readBytesCapped(it, cap) }
+                    }
+                }
+            }
+            ArchiveType.TAR -> f.inputStream().buffered().use { ins ->
+                val (names, data) = readTarEntries(ins, cap, keep)
+                buildArchiveText(arcName, names, budget) { data[it] }
+            }
+            ArchiveType.GZ -> {
+                // .tar.gz / .tgz → un .tar adentro; .gz solo → un único archivo comprimido
+                val inner = java.util.zip.GZIPInputStream(f.inputStream().buffered()).use { readBytesCapped(it, 512).first }
+                if (archiveTypeOf(inner) == ArchiveType.TAR) {
+                    java.util.zip.GZIPInputStream(f.inputStream().buffered()).use { ins ->
+                        val (names, data) = readTarEntries(ins, cap, keep)
+                        buildArchiveText(arcName, names, budget) { data[it] }
+                    }
+                } else {
+                    java.util.zip.GZIPInputStream(f.inputStream().buffered()).use { ins ->
+                        val (b, more) = readBytesCapped(ins, cap)
+                        if (looksLikeText(b)) "📦 «$arcName» (comprimido .gz):\n" + decodeText(b, more) else ""
+                    }
+                }
+            }
+            null -> readTextSmart(f, budget)
+        }
+    }
+
+    private fun isArchiveFile(f: File): Boolean = archiveTypeOf(fileHead(f, 512)) != null
+
+    /** Texto de cualquier adjunto: archivos de texto o código (con cualquier extensión), comprimidos (.zip, .tar.gz…),
+     *  Word, Excel, PowerPoint, OpenDocument, RTF y PDF. [budget] = cuántos caracteres caben en el contexto. */
+    private fun readAttachmentText(f: File, budget: Int = 70000): String {
+        val ext = f.extension.lowercase(Locale.US)
+        val text = runCatching {
+            when (ext) {
+                "docx" -> docxText(f)
+                "xlsx" -> xlsxText(f)
+                "pptx" -> pptxText(f)
+                "odt", "ods", "odp" -> odfText(f)
+                "rtf" -> rtfText(f)
+                "pdf" -> pdfText(f)
+                else -> if (isArchiveFile(f)) archiveText(f, budget) else readTextSmart(f, budget)
+            }
+        }.onFailure { Log.e(TAG, "No se pudo leer ${f.name}: ${it.message}") }.getOrDefault("")
+        if (text.isBlank() && ext == "pdf")
+            return "[Este PDF no tiene texto seleccionable (parece escaneado o es una imagen). Avisa al usuario que no se puede leer el texto.]"
+        if (text.isBlank()) return "[No se pudo leer el contenido de este archivo.]"
+        return text
+    }
+
+    // ---------- Guardar respuestas como archivo ----------
+    private fun xmlEscape(t: String) = t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    private fun buildDocx(text: String): ByteArray {
+        val body = text.lines().joinToString("") { line ->
+            "<w:p><w:r><w:t xml:space=\"preserve\">${xmlEscape(line)}</w:t></w:r></w:p>"
+        }
+        val files = linkedMapOf(
+            "[Content_Types].xml" to """<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>""",
+            "_rels/.rels" to """<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>""",
+            "word/document.xml" to """<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>$body<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>"""
+        )
+        val bos = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(bos).use { zip ->
+            files.forEach { (name, content) ->
+                zip.putNextEntry(java.util.zip.ZipEntry(name)); zip.write(content.toByteArray(Charsets.UTF_8)); zip.closeEntry()
+            }
+        }
+        return bos.toByteArray()
+    }
+
+    private fun buildPdf(text: String): ByteArray {
+        val pageW = 595; val pageH = 842; val margin = 50
+        val paint = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f; color = Color.BLACK }
+        val layout = android.text.StaticLayout.Builder.obtain(text, 0, text.length, paint, pageW - margin * 2)
+            .setLineSpacing(2f, 1f).build()
+        val doc = android.graphics.pdf.PdfDocument()
+        val usable = pageH - margin * 2
+        var line = 0; var pageNum = 1
+        while (line < layout.lineCount) {
+            val page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(pageW, pageH, pageNum).create())
+            val top = layout.getLineTop(line)
+            var last = line
+            while (last + 1 < layout.lineCount && layout.getLineBottom(last + 1) - top <= usable) last++
+            val c = page.canvas
+            c.save()
+            c.translate(margin.toFloat(), (margin - top).toFloat())
+            c.clipRect(0, top, pageW, layout.getLineBottom(last))
+            layout.draw(c)
+            c.restore()
+            doc.finishPage(page)
+            line = last + 1; pageNum++
+        }
+        val bos = java.io.ByteArrayOutputStream()
+        doc.writeTo(bos); doc.close()
+        return bos.toByteArray()
+    }
+
+    /** Guarda el archivo dentro de la app (privado) y devuelve su Uri para abrir / compartir / descargar. */
+    private fun saveToDownloads(name: String, mime: String, bytes: ByteArray): Uri? = runCatching {
+        val f = File(deliveriesDir(), name); f.writeBytes(bytes); privateUri(f)
+    }.onFailure { Log.e(TAG, "No se pudo guardar: ${it.message}") }.getOrNull()
+
+    private fun saveTextAsFile(rawText: String, format: String) {
+        val text = stripMarkdownSymbols(rawText).replace("⏹️ (detenida)", "").trim()
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())
+        val title = text.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty()
+            .replace(Regex("[^\\p{L}\\p{N} ]"), "").trim().take(30).replace(' ', '_').ifBlank { "documento" }
+        val (ext, mime) = when (format) {
+            "docx" -> "docx" to "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "pdf" -> "pdf" to "application/pdf"
+            else -> "txt" to "text/plain"
+        }
+        val name = "${title}_$stamp.$ext"
+        thread {
+            val bytes = runCatching {
+                when (format) { "docx" -> buildDocx(text); "pdf" -> buildPdf(text); else -> text.toByteArray(Charsets.UTF_8) }
+            }.getOrNull()
+            val uri = bytes?.let { saveToDownloads(name, mime, it) }
+            runOnUiThread {
+                if (uri == null) {
+                    cumulusToast(this, "❌ No se pudo guardar el archivo", Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                postDeliveredFile("📄 Aquí tienes tu archivo listo: $name\nToca para abrirlo · ⬇️ para guardarlo en tu teléfono", deliveryTag(null, uri, mime, name))
+            }
+        }
+    }
+
+    // ¿El usuario pidió el resultado como archivo? → "docx", "pdf", "txt", "ask" (sin formato) o null
+    private fun requestedFileFormat(prompt: String): String? {
+        val p = prompt.lowercase(Locale.ROOT)
+        val asksFile = Regex("(en|como|a|formato|archivo|documento)\\s+(de\\s+)?(word|docx|pdf|txt|texto plano)\\b").containsMatchIn(p) ||
+            Regex("\\b(gu[aá]rda(lo|la|me)?|exp[oó]rta(lo|la)?|desc[aá]rga(lo|la)?|convi[eé]rte(lo|la)?|p[aá]sa(lo|la))\\b.*\\b(archivo|documento|word|pdf|txt)\\b").containsMatchIn(p) ||
+            Regex("\\b(crea|haz|hazme|genera|gen[eé]rame|cr[eé]ame)\\s+(un|el)\\s+(archivo|documento)\\b").containsMatchIn(p)
+        if (!asksFile) return null
+        return when {
+            Regex("\\b(word|docx)\\b").containsMatchIn(p) -> "docx"
+            Regex("\\bpdf\\b").containsMatchIn(p) -> "pdf"
+            Regex("\\b(txt|texto plano)\\b").containsMatchIn(p) -> "txt"
+            else -> "ask"
+        }
+    }
+
+    // Solo una orden de guardar ("guárdalo en Word") → se guarda la última respuesta sin preguntarle a la IA
+    private fun isOnlySaveCommand(prompt: String): Boolean {
+        val p = prompt.lowercase(Locale.ROOT).trim()
+        return p.length < 70 && Regex("^(por favor\\s+)?(gu[aá]rda(lo|la|me)?|exp[oó]rta(lo|la)?|desc[aá]rga(lo|la)?|convi[eé]rte(lo|la)?|p[aá]sa(lo|la)?|ponlo|d[aá]melo|hazlo)\\b").containsMatchIn(p)
+    }
+
+    private fun offerSaveAsFile(text: String, format: String) {
+        if (format != "ask") { saveTextAsFile(text, format); return }
+        val labels = arrayOf("📝 Word (.docx)", "📕 PDF (.pdf)", "📄 Texto (.txt)")
+        val codes = arrayOf("docx", "pdf", "txt")
+        AlertDialog.Builder(this)
+            .setTitle("Guardar como archivo")
+            .setItems(labels) { _, which -> saveTextAsFile(text, codes[which]) }
+            .setNegativeButton("Cancelar", null)
+            .show().also { styleDarkRoundDialog(it) }
+    }
+
+    // ========================================================================
+    // 🎬 UNIR VIDEOS: junta varios clips en un solo video (sin perder calidad)
+    // ========================================================================
+    private fun wantsJoinVideos(prompt: String): Boolean =
+        Regex("(?i)\\b(j[uú]nta(los|las|r)?|[uú]ne(los|las)?|unir|combina(los|r)?|fusiona(los|r)?|pega(los|r)?|haz(me)? un (solo )?video|un solo video|montaje)\\b")
+            .containsMatchIn(prompt)
+
+    /**
+     * Copia los clips uno detrás de otro con MediaExtractor + MediaMuxer.
+     * No vuelve a comprimir: es rápido y mantiene la calidad, pero los clips deben
+     * tener el mismo formato (lo normal si son de la misma cámara).
+     */
+    private fun joinVideos(clips: List<File>, out: File): Long {
+        val muxer = android.media.MediaMuxer(out.absolutePath, android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        var videoTrack = -1; var audioTrack = -1
+        var offsetUs = 0L
+        val buffer = java.nio.ByteBuffer.allocate(4 * 1024 * 1024)
+        val info = android.media.MediaCodec.BufferInfo()
+        try {
+            // Formatos y giro tomados del primer clip
+            android.media.MediaExtractor().apply { setDataSource(clips[0].absolutePath) }.let { ex ->
+                for (i in 0 until ex.trackCount) {
+                    val f = ex.getTrackFormat(i); val mime = f.getString(android.media.MediaFormat.KEY_MIME).orEmpty()
+                    if (mime.startsWith("video/") && videoTrack < 0) videoTrack = muxer.addTrack(f)
+                    if (mime.startsWith("audio/") && audioTrack < 0) audioTrack = muxer.addTrack(f)
+                }
+                ex.release()
+            }
+            runCatching {
+                val r = android.media.MediaMetadataRetriever(); r.setDataSource(clips[0].absolutePath)
+                r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull()?.let { muxer.setOrientationHint(it) }
+                r.release()
+            }
+            if (videoTrack < 0) throw IllegalStateException("El primer archivo no tiene video")
+            muxer.start()
+            for (clip in clips) {
+                var clipEndUs = 0L
+                for (kind in listOf("video/", "audio/")) {
+                    val target = if (kind == "video/") videoTrack else audioTrack
+                    if (target < 0) continue
+                    val ex = android.media.MediaExtractor(); ex.setDataSource(clip.absolutePath)
+                    val idx = (0 until ex.trackCount).firstOrNull { ex.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME).orEmpty().startsWith(kind) }
+                    if (idx == null) { ex.release(); continue }
+                    ex.selectTrack(idx)
+                    while (true) {
+                        info.offset = 0
+                        info.size = ex.readSampleData(buffer, 0)
+                        if (info.size < 0) break
+                        info.presentationTimeUs = ex.sampleTime + offsetUs
+                        info.flags = if (ex.sampleFlags and android.media.MediaExtractor.SAMPLE_FLAG_SYNC != 0)
+                            android.media.MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+                        muxer.writeSampleData(target, buffer, info)
+                        clipEndUs = maxOf(clipEndUs, info.presentationTimeUs + 1)
+                        ex.advance()
+                    }
+                    ex.release()
+                }
+                // El siguiente clip empieza justo donde terminó este (≈ 1 cuadro de separación)
+                offsetUs = clipEndUs + 33_000
+            }
+        } finally {
+            runCatching { muxer.stop() }
+            runCatching { muxer.release() }
+        }
+        return offsetUs / 1_000_000
+    }
+
+    private fun saveVideoToGallery(file: File, name: String): Uri? = runCatching {
+        val f = File(deliveriesDir(), name)
+        file.copyTo(f, overwrite = true)
+        privateUri(f)
+    }.getOrNull()
+
+    /** Une los videos adjuntos y muestra el resultado en el chat. */
+    private fun runJoinVideos(clips: List<File>, thinkingIndex: Int) {
+        AiActivity.start(thinkingIndex, AiActivity.ANALYZING)
+        AiActivity.log("🎬 Uniendo ${clips.size} videos en uno solo", clips.joinToString("\n") { it.name.substringAfter('_') })
+        chatAdapter?.notifyItemChanged(thinkingIndex)
+        thread {
+            val start = System.currentTimeMillis()
+            val out = File(cacheDir, "union_${System.currentTimeMillis()}.mp4")
+            val result = runCatching { joinVideos(clips, out) }
+            val name = "CumulusIA_union_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date()) + ".mp4"
+            val uri = if (result.isSuccess) saveVideoToGallery(out, name) else null
+            val thumb = if (uri != null) videoThumb(out) else null
+            runOnUiThread {
+                val secs = (System.currentTimeMillis() - start) / 1000.0
+                val text = if (uri != null) {
+                    "🎬 ¡Listo! Uní tus ${clips.size} videos en uno solo de unos ${result.getOrDefault(0L)} segundos.\n\n" +
+                        "Toca el video para verlo · ⬇️ para guardarlo en tu teléfono."
+                } else {
+                    Log.e(TAG, "Unión de videos falló: ${result.exceptionOrNull()?.message}")
+                    "⚠️ No pude unir los videos. Esto pasa cuando los clips tienen formatos distintos " +
+                        "(por ejemplo, diferente resolución, cámara o app de origen). Prueba con clips grabados con la misma cámara."
+                }
+                AiActivity.finish(if (uri != null) "Video listo" else "No se pudo unir los videos")
+                if (thinkingIndex in chatMessages.indices) chatMessages[thinkingIndex] = ChatMessage(text = text, isUser = false, sender = "Cumulus",
+                    tokens = "🎬 ${clips.size} videos · ${String.format(Locale.US, "%.1f", secs)} s",
+                    attachments = if (uri != null) listOf(deliveryTag(thumb, uri, "video/mp4", name)) else emptyList())
+                chatAdapter?.notifyItemChanged(thinkingIndex)
+                rvChatMessages?.scrollToPosition(thinkingIndex)
+                isAiBusy = false
+                updateSendButtonIcon()
+                saveCurrentChat()
+                runCatching { out.delete() }
+            }
+        }
+    }
+
+    // ========================================================================
+    // 🎞️ CREAR VIDEO CLIP: imágenes gratis por internet (Pollinations) + animación en el teléfono
+    // ========================================================================
+    private fun wantsCreateVideo(prompt: String): Boolean = wantsCreateVideoEs(prompt) ||
+        // 🌍 En los demás idiomas (EE.UU., Latinoamérica, Europa, Asia y Medio Oriente): «make a video of…», «crie um vídeo…»
+        runCatching { !CreateMedia.isSpanish(prompt) && CreateMedia.wantsVideo(prompt) }.getOrDefault(false)
+
+    /** 🌍 Idioma del pedido de imagen o video si NO es español (null = español: textos de siempre). */
+    private fun mediaLang(prompt: String): String? = runCatching {
+        if (CreateMedia.isSpanish(prompt) || !(CreateMedia.wantsImage(prompt) || CreateMedia.wantsVideo(prompt))) null
+        else CreateMedia.language(prompt, newsCountry()).takeIf { it != "es" }
+    }.getOrNull()
+
+    private fun wantsCreateVideoEs(prompt: String): Boolean =
+        Regex("(?i)\\b(crea(me)?|haz(me)?|genera(me)?|gen[eé]rame|cr[eé]ame|produce|arma(me)?)\\s+(un|una)\\s+(peque[ñn]o\\s+)?(video|v[ií]deo|clip|videoclip|animaci[oó]n)\\b")
+            .containsMatchIn(prompt) &&
+            // 💻 «Crea una animación en CSS / JavaScript / Kotlin» es código, no un video
+            !Regex("(?i)\\b(html|css|javascript|js|kotlin|java|python|c[oó]digo|app|aplicaci[oó]n|programa|script|p[aá]gina web|sitio web|android|xml|react|flutter|svg|canvas|lottie)\\b").containsMatchIn(prompt)
+
+    /** 💻 ¿Es un pedido de programación? (app, página web, juego, calculadora, HTML, Kotlin...) */
+    private fun looksLikeCodeRequest(prompt: String): Boolean =
+        Regex("(?i)\\b(html|css|javascript|js|typescript|kotlin|java|python|php|sql|react|vue|angular|flutter|dart|swift|node|json|xml|apis?|" +
+            "web|p[aá]ginas?|sitios?|landing|apps?|aplicaci[oó]n(es)?|programas?|software|scripts?|c[oó]digos?|funci[oó]n(es)?|clases?|calculadoras?|" +
+            "formularios?|login|base de datos|bots?|android|layouts?|widgets?|extensi[oó]n(es)?|plugins?|algoritmos?|juegos?|videojuegos?|chatbots?|crud|dashboards?)\\b")
+            .containsMatchIn(prompt) || Regex("(?i)c\\+\\+|c#|\\.(kt|js|html?|css|py)\\b").containsMatchIn(prompt)
+
+    /** 📋 ¿El mensaje trae código pegado (por ejemplo, el formato de la app que quiere)? */
+    private fun hasPastedCode(prompt: String): Boolean {
+        if (prompt.contains("```")) return true
+        val lines = prompt.lines().filter { it.isNotBlank() }
+        if (lines.size < 3) return false
+        val codeLike = lines.count {
+            Regex("^\\s*(<[a-zA-Z!?/]|import |package |fun |val |var |class |object |interface |def |function |const |let |public |" +
+                "private |protected |return |if ?\\(|for ?\\(|while ?\\(|#include|@\\w|[}{\\])]|//|/\\*|\\*)|[;{}>]\\s*$").containsMatchIn(it)
+        }
+        return codeLike >= 3 || codeLike * 2 >= lines.size
+    }
+
+    /**
+     * 🛠️ ¿Pide CREAR algo (app, página web, juego, programa…) o trae el código/formato de lo que quiere?
+     * Si es así, siempre es programación: nunca noticias, clima, divisas, comida, imagen ni video.
+     * En el modo Ingeniero de código basta con pedir «crea / haz / desarrolla…» (salvo que diga imagen o video).
+     */
+    private fun isCreationRequest(prompt: String): Boolean {
+        if (prompt.isBlank()) return false
+        if (hasPastedCode(prompt)) return true
+        val p = prompt.lowercase(Locale.ROOT)
+        val verb = Regex("\\b(cr[eé]a(me|r|la|lo)?|haz(me|la|lo)?|hacer|genera(me|r)?|gen[eé]rame|desarrolla(me|r)?|programa(me|r)?|" +
+            "constr[uú]ye(me)?|construir|arma(me)?|dise[ñn]a(me|r)?|implementa(me|r)?|escr[ií]be(me)?|codifica)\\b").containsMatchIn(p)
+        val want = Regex("\\b(quiero|necesito|me gustar[ií]a)\\b").containsMatchIn(p)
+        val code = looksLikeCodeRequest(p)
+        if ((verb || want) && code) return true
+        if (currentChatMode().key == "codigo" && verb) {
+            // En modo código: «créame…» es programar, salvo que pida otra cosa (imagen, video, poema, noticias…)
+            return !nonCodeThingsRx.containsMatchIn(p)
+        }
+        return false
+    }
+
+    // ========================================================================
+    // 🧰 ¿CON QUÉ TECNOLOGÍA? Antes de crear una app o página web se le pregunta al usuario
+    // ========================================================================
+    @Volatile private var pendingTechRequest: String? = null
+
+    /** Ya dijo con qué la quiere (Kotlin, XML, C++, llama.cpp, HTML, CSS, JavaScript, Python…). */
+    private val techNamedRx = Regex("(?i)(kotlin|\\bxml\\b|\\bjava\\b|c\\+\\+|\\bcpp\\b|llama|html|\\bcss\\b|javascript|\\bjs\\b|" +
+        "typescript|python|flutter|\\bdart\\b|react|\\bvue\\b|angular|swift|\\bphp\\b|node|compose|unity|godot)")
+
+    /**
+     * Si pide CREAR una app o una página web sin decir la tecnología, devuelve la pregunta
+     * (y recuerda el pedido para juntarlo con la respuesta). Si no, null.
+     */
+    private fun techChoiceQuestion(message: String): String? {
+        if (message.isBlank() || hasPastedCode(message)) return null
+        val p = message.lowercase(Locale.ROOT)
+        if (techNamedRx.containsMatchIn(p)) return null
+        // «¿Cómo creo una app?» es una pregunta, no un pedido
+        if (Regex("c[oó]mo (se )?(crea|creo|hace|hago|puedo|programo|desarrollo)").containsMatchIn(p)) return null
+        // «Créame una imagen / un logo / un video de una app» no es crear la app («app para editar fotos» sí lo es)
+        if (Regex("\\b(cr[eé]ame|haz(me)?|genera(me)?|gen[eé]rame|dise[ñn]a(me)?|dib[uú]ja(me)?)\\s+(un |una |el |la )?" +
+                "(im[aá]gen(es)?|fotos?|dibujos?|ilustraci[oó]n|videos?|v[ií]deos?|logos?|[ií]conos?|fondos? de pantalla)\\b").containsMatchIn(p)) return null
+        val strongVerb = Regex("\\b(cr[eé]a(me|r|la)?|haz(me|la)?|genera(me|r)?|gen[eé]rame|desarrolla(me|r)?|progr[aá]ma(me|r)|" +
+            "constr[uú]ye(me)?|construir|arma(me)?|dise[ñn]a(me|r)?)\\b").containsMatchIn(p)
+        // «quiero / necesito una app…» solo en modo Ingeniero (en otro modo suele ser pedir una recomendación)
+        val wantVerb = currentChatMode().key == "codigo" && Regex("\\b(quiero|necesito)\\b").containsMatchIn(p)
+        val thing = Regex("\\b(app|apps|aplicaci[oó]n|p[aá]gina web|p[aá]gina|sitio web|sitio|landing|juego)\\b").containsMatchIn(p)
+        if (!(strongVerb || wantVerb) || !thing) return null
+        pendingTechRequest = message
+        return "🧰 ¡Buena idea! Antes de empezar, ¿con qué la quieres?\n\n" +
+            "1️⃣ Kotlin + XML: app Android nativa (con maqueta para ver sus pantallas)\n" +
+            "2️⃣ C++ + llama.cpp: app Android con IA local (el motor en C++ y la pantalla en Kotlin + XML)\n" +
+            "3️⃣ HTML + CSS + JavaScript: página web (negocio, portafolio, blog…) o app web (con vista previa para probarla)\n\n" +
+            "Respóndeme con el número o el nombre (por ejemplo «1» o «Kotlin»)."
+    }
+
+    /** Si estaba pendiente la pregunta de la tecnología, junta la respuesta con el pedido original. */
+    private fun mergeTechAnswer(message: String): String {
+        val pending = pendingTechRequest ?: return message
+        pendingTechRequest = null
+        val p = message.lowercase(Locale.ROOT).trim()
+        val tech = when {
+            Regex("^(el |la |opci[oó]n )?(1|uno|primer[ao]?)\\b").containsMatchIn(p) -> "Kotlin y XML (app Android nativa)"
+            Regex("^(el |la |opci[oó]n )?(2|dos|segund[ao])\\b").containsMatchIn(p) ->
+                "C++ con llama.cpp para la IA local (JNI) y Kotlin + XML para la pantalla"
+            Regex("^(el |la |opci[oó]n )?(3|tres|tercer[ao]?)\\b").containsMatchIn(p) -> "HTML, CSS y JavaScript (página web)"
+            Regex("c\\+\\+|\\bcpp\\b|llama").containsMatchIn(p) -> "C++ con llama.cpp para la IA local (JNI) y Kotlin + XML para la pantalla"
+            Regex("kotlin|\\bxml\\b|android").containsMatchIn(p) -> "Kotlin y XML (app Android nativa)"
+            Regex("html|\\bcss\\b|javascript|\\bjs\\b|\\bweb\\b").containsMatchIn(p) -> "HTML, CSS y JavaScript (página web)"
+            techNamedRx.containsMatchIn(p) -> message.trim().replace(Regex("(?i)^(con|en)\\s+"), "")   // otra que nombró (Python, Flutter…)
+            else -> return message   // habló de otra cosa: se sigue normal
+        }
+        return "$pending\n\nHazla con $tech."
+    }
+
+    /** Cosas que NO son programación (en el modo Ingeniero de código no se hacen). */
+    private val nonCodeThingsRx = Regex("(?i)\\b(noticias?|titulares|clima|pron[oó]stico|d[oó]lar|euro|tipo de cambio|poemas?|poes[ií]as?|versos?|" +
+        "cuentos?|historias?|canci[oó]n(es)?|chistes?|cartas?|correos?|emails?|ensayos?|res[uú]men(es)?|recetas?|comidas?|hor[oó]scopo|" +
+        "frases?|datos? curiosos?|consejos?|dietas?|im[aá]gen(es)?|fotos?|fotograf[ií]as?|dibujos?|ilustraci[oó]n(es)?|fondos? de pantalla|" +
+        "wallpapers?|videos?|v[ií]deos?|clips?|videoclips?|pel[ií]culas?|series?|m[uú]sica|partidos?|f[uú]tbol)\\b")
+
+    /** Palabras de programación (preguntas de código aunque no pida crear: «¿qué es una variable?», «tengo un error»…). */
+    private val codeTopicRx = Regex("(?i)\\b(variables?|bucles?|loops?|arrays?|arreglos?|strings?|objetos?|m[eé]todos?|par[aá]metros?|" +
+        "excepci[oó]n(es)?|exceptions?|errores|error|bugs?|compila\\w*|gradle|librer[ií]as?|dependencias?|github|git|commits?|repositorios?|" +
+        "servidor(es)?|backend|frontend|endpoints?|frameworks?|sdk|ide|android studio|depura\\w*|debug\\w*|logcat|crash\\w*|null\\w*|" +
+        "programaci[oó]n|programar|desarrollador(es)?|deploy|build|apk|interfaz|ui|ux|componentes?|bot[oó]n|botones|pantallas?|activity|fragments?|" +
+        "viewmodel|room|retrofit|firebase|corrutinas?|coroutines?|threads?|async|await|promesas?|promises?|npm|pip|terminal|consola|comandos?|linux|bash|" +
+        "compilar|ejecutar|refactoriza\\w*|optimiza\\w*|sintaxis|indentaci[oó]n|tipado|interfaces?|herencia|polimorfismo|recursi[oó]n|regex|" +
+        "solid|mvvm|mvc|patr[oó]n de dise[ñn]o|estructura de datos|base de datos)\\b")
+
+    /** Palabras que SIEMPRE son programación («app de noticias», «código para el clima»…). */
+    private val strongTechRx = Regex("(?i)\\b(html|css|javascript|js|typescript|kotlin|java|python|php|sql|react|vue|angular|flutter|dart|swift|" +
+        "node|json|xml|apis?|apps?|aplicaci[oó]n(es)?|c[oó]digos?|scripts?|android|layouts?|programar|programaci[oó]n|p[aá]gina web|sitio web)\\b")
+
+    /**
+     * 💻 ¿El mensaje es de programación? (crear apps, páginas web o código; preguntas de código; código pegado;
+     * seguir con lo que venían programando; archivos o capturas para programar)
+     */
+    private fun isCodeTopic(prompt: String, lastAssistant: String?, hasAttachments: Boolean): Boolean {
+        if (prompt.isBlank()) return hasAttachments
+        if (hasPastedCode(prompt)) return true
+        val p = prompt.lowercase(Locale.ROOT)
+        if (isCreationRequest(prompt)) return true                  // «créame una página web de noticias»
+        if (strongTechRx.containsMatchIn(p)) return true            // «app de noticias», «tengo un error en mi app»
+        val nonCode = nonCodeThingsRx.containsMatchIn(p)
+        if (nonCode) return false                                   // «dame las noticias», «muéstrame una imagen», «un poema»
+        if (looksLikeCodeRequest(p) || codeTopicRx.containsMatchIn(p)) return true   // «¿qué es una variable?»
+        // Sigue con lo que venían programando («agrégale…», «corrígelo», «siguiente», «ok»)
+        if (lastAssistant?.contains("```") == true && !nonCode &&
+            (isFollowUp(prompt) || p.split(Regex("\\s+")).size <= 6)) return true
+        // Con un archivo o una captura adjunta (el diseño a copiar, un error…), si no pide otra cosa
+        return hasAttachments && !nonCode
+    }
+
+    /**
+     * 💻 Modo Ingeniero de código: SOLO programación (crear apps, páginas web y código; corregir y explicar código).
+     * Noticias, imágenes, videos, poemas, clima, etc. no se hacen en este modo: se le dice que cambie de modo.
+     * Devuelve la respuesta para el usuario, o null si el pedido sí es de programación.
+     */
+    private fun codeModeGate(prompt: String, history: List<Pair<String, String>>, hasAttachments: Boolean): String? {
+        if (currentChatMode().key != "codigo") return null
+        val p = prompt.trim()
+        val low = p.lowercase(Locale.ROOT)
+        // Nombres, internet y lo aprendido se siguen respondiendo
+        if (nameAnswer(p) != null || crashReportAnswer(p) != null) return null
+        if (Regex("\\b(qu[eé] (has aprendido|aprendiste|temas sabes)|olvida|borra lo aprendido)\\b").containsMatchIn(low)) return null
+        if (Regex("^[¿¡\\s]*(hola|holi|hey|buenas|buenos d[ií]as|buenas (tardes|noches)|qu[eé] tal|c[oó]mo est[aá]s)[!.?,¿¡\\s]*$").containsMatchIn(low))
+            return "👋 ¡Hola! Estoy en modo Ingeniero de código. Dime qué app, página web o código quieres que cree, " +
+                "o pégame el código que quieres que revise o corrija."
+        if (Regex("^[¡\\s]*(muchas )?gracias[!.?,\\s]*$|^[¡\\s]*(ok|vale|genial|excelente|perfecto),? gracias[!.?,\\s]*$").containsMatchIn(low))
+            return "¡De nada! 💻 ¿Qué más programamos?"
+        val lastAssistant = history.lastOrNull { it.first == "assistant" }?.second
+        if (isCodeTopic(p, lastAssistant, hasAttachments)) return null
+        val what = when {
+            Regex("\\bnoticias?|titulares").containsMatchIn(low) -> "ver las noticias"
+            Regex("\\b(clima|pron[oó]stico|llover|temperatura)").containsMatchIn(low) -> "ver el clima"
+            Regex("\\b(d[oó]lar|euro|tipo de cambio)").containsMatchIn(low) -> "ver el tipo de cambio"
+            Regex("\\b(im[aá]gen|foto|dibuj|ilustra|fondo de pantalla|wallpaper)").containsMatchIn(low) -> "crear o mostrar imágenes"
+            Regex("\\b(video|v[ií]deo|clip)").containsMatchIn(low) -> "crear videos"
+            Regex("\\b(poema|poes[ií]a|verso|cuento|historia|canci[oó]n|chiste|carta|correo|ensayo|frase)").containsMatchIn(low) ->
+                "escribir poemas, cuentos u otros textos"
+            Regex("\\b(receta|comida|cocinar|almorzar|cenar|desayun)").containsMatchIn(low) -> "recetas y comida"
+            else -> "eso"
+        }
+        return "💻 Estoy en modo Ingeniero de código: aquí solo creo apps, páginas web y código (y también corrijo o explico código).\n\n" +
+            "Para $what cambia de modo: toca el botón «Ingeniero de código» de abajo y elige «General» o «Solo chat».\n\n" +
+            "¿Qué app, página web o código quieres que cree?"
+    }
+
+    /** Extensiones de archivos de código (para el modo General, que no programa). */
+    private val codeFileExts = setOf("kt", "kts", "java", "py", "js", "jsx", "ts", "tsx", "html", "htm", "css", "scss", "php", "c", "h",
+        "cpp", "hpp", "cc", "cs", "swift", "dart", "go", "rs", "rb", "lua", "sql", "gradle", "xml", "sh", "bat", "ps1", "vue", "svelte")
+
+    /**
+     * 🌐 Modo General: sirve para todo MENOS programar (eso es del modo Ingeniero de código) y usa el tono normal
+     * (la personalidad personalizada va en su propio modo). Si piden crear, escribir, corregir o revisar código,
+     * apps o páginas web, se disculpa y explica cómo cambiar de modo. Preguntas generales de tecnología
+     * («¿qué es Python?», «¿qué app me recomiendas?») sí se responden. Devuelve la respuesta o null.
+     */
+    private fun generalModeGate(prompt: String, lastAssistant: String?, attachments: List<File>): String? {
+        if (currentChatMode().key != "general") return null
+        val low = prompt.lowercase(Locale.ROOT)
+        val tech = "kotlin|java|python|javascript|typescript|html|css|php|sql|swift|flutter|dart|react|node|c\\+\\+|c#"
+        val codeFile = attachments.any { it.name.substringAfterLast('.', "").lowercase(Locale.ROOT) in codeFileExts }
+        val pasted = hasPastedCode(prompt)
+        // «créame una app de recetas», «hazme una página web», «escríbeme un script», «genera un juego»
+        val build = Regex("\\b(cr[eé]a(me|r|la|lo)?|haz(me|la|lo)?|genera(me|r)?|gen[eé]rame|desarrolla(me|r)?|progr[aá]ma(me|r)|" +
+            "constr[uú]ye(me)?|construir|arma(me)?|implementa(me|r)?|codifica(me|r)?|escr[ií]be(me)?|" +
+            "crees|hagas|generes|desarrolles|programes|construyas|armes)\\s+((un|una|el|la|mi|me|otra|otro)\\s+)?" +
+            "(\\S+\\s+){0,2}?(apps?|aplicaci[oó]n|p[aá]gina web|sitio web|web app|landing|juego|videojuego|script|c[oó]digo|" +
+            "funci[oó]n|clase|bot|chatbot|api|plugin|extensi[oó]n|calculadora|formulario|algoritmo)\\b").containsMatchIn(low) &&
+            !Regex("\\b(im[aá]gen|foto|logo|[ií]cono|dibujo|video|v[ií]deo)").containsMatchIn(low)
+        // «corrige este código», «revisa mi función en Kotlin», «optimiza el script»
+        val fix = Regex("\\b(corr[ií]ge|arregla|depura|revisa|optimiza|refactoriza|mejora|modifica|completa)\\w*\\b.{0,40}" +
+            "\\b(c[oó]digo|script|funci[oó]n|clase|bug|compil\\w*|$tech)\\b").containsMatchIn(low) ||
+            Regex("\\bexpl[ií]ca\\w*\\s+(este|esta|mi|el|la)\\s+(c[oó]digo|script|funci[oó]n|clase|programa)\\b").containsMatchIn(low)
+        // «¿cómo hago un login en Kotlin?», «escríbeme un for en Python» («¿qué es Python?» sí se responde)
+        val howTo = Regex("\\b(c[oó]mo (hago|se hace|puedo hacer|programo|creo|implemento)|escr[ií]be(me)?|haz(me)?|dame)\\b.*\\b(en|con) ($tech)\\b")
+            .containsMatchIn(low)
+        // Seguir con un código que quedó en el chat («agrégale un botón», «corrígelo»)
+        val followCode = lastAssistant?.contains("```") == true && isFollowUp(prompt)
+        if (!(codeFile || pasted || build || fix || howTo || followCode)) return null
+        return "🙏 Lo siento, el modo General sirve para todo menos programar: crear apps o páginas web, escribir código, " +
+            "corregirlo o revisarlo.\n\n" +
+            "Para eso cambia de modo: toca el botón «General» de abajo y elige «Ingeniero de código». Ahí lo hago completo y " +
+            "con vista previa.\n\n¿Te ayudo con otra cosa?"
+    }
+
+    /**
+     * 🖥️/📱 ¿Lo que pide se puede ver funcionando? "web" = vista previa web (HTML/CSS/JS),
+     * "app" = maqueta de la app (Kotlin + diseños XML). null = otro tipo de código o no es código.
+     */
+    private fun codePreviewKind(prompt: String, lastAssistant: String?): String? {
+        val p = prompt.lowercase(Locale.ROOT)
+        if (Regex("\\b(html|css|javascript|js|p[aá]gina web|sitio web|web app|aplicaci[oó]n web|app web|landing|navegador)\\b").containsMatchIn(p)) return "web"
+        if (Regex("\\b(kotlin|android|jetpack|compose|xml|layout|apk)\\b").containsMatchIn(p)) return "app"
+        // Continuación («agrégale un botón») de un código que ya estaba en el chat
+        if (lastAssistant != null && lastAssistant.contains("```") && isFollowUp(prompt)) {
+            if (Regex("(?i)```(html|htm|css|js|javascript)\\b|<!doctype html|<html[\\s>]").containsMatchIn(lastAssistant)) return "web"
+            if (Regex("(?i)```(kotlin|kt|xml)\\b|<LinearLayout|ConstraintLayout").containsMatchIn(lastAssistant)) return "app"
+        }
+        // En modo Ingeniero de código, «créame una app de …» sin decir el lenguaje → app Android
+        if (currentChatMode().key == "codigo" && Regex("\\b(cr[eé]a|cr[eé]ame|haz|hazme|genera|desarrolla|programa)\\b").containsMatchIn(p) &&
+            Regex("\\b(app|aplicaci[oó]n)\\b").containsMatchIn(p)) return "app"
+        return null
+    }
+
+    // Lo que hay que dibujar: se quita la orden ("crea un video de...")
+    private fun videoSubject(prompt: String): String =
+        if (mediaLang(prompt) != null) CreateMedia.subject(prompt) else
+        prompt.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().replace(Regex("[\"“”«»]"), "").replace(Regex("(?i)^.*?\\b(video|v[ií]deo|clip|videoclip|animaci[oó]n)\\b\\s*(corto\\s+)?(de|del|sobre|con|que muestre|mostrando)?\\s*"), "")
+            .trim().trimEnd('.', '!', '?').ifBlank { prompt }
+
+    private fun downloadImage(url: String): android.graphics.Bitmap? = runCatching {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 20000; readTimeout = 90000
+            setRequestProperty("User-Agent", "CumulusIA/1.0 (Android)")
+        }
+        try {
+            if (conn.responseCode !in 200..299) return@runCatching null
+            conn.inputStream.use { android.graphics.BitmapFactory.decodeStream(it) }
+        } finally { conn.disconnect() }
+    }.getOrNull()
+
+    /**
+     * Pide las imágenes de cada escena a Pollinations (gratis, sin clave).
+     * Se piden UNA POR UNA: el servicio gratuito rechaza varias peticiones a la vez.
+     */
+    private fun fetchScenes(subject: String, w: Int, h: Int, onProgress: (Int) -> Unit): List<android.graphics.Bitmap> {
+        // 🎬 Se pide UNA sola imagen (el servicio gratuito no acepta varias seguidas, en CPU, NPU o GPU)
+        //    y de ella salen las 4 escenas: plano general, medio, detalle y final con luz cálida.
+        val reqW = 576; val reqH = 1024
+        val prompt = safeImagePrompt("$subject, cinematic shot, highly detailed")
+        val base = (System.currentTimeMillis() % 100000).toInt()
+        var img: android.graphics.Bitmap? = null
+        for (attempt in 0 until 4) {
+            val url = "https://image.pollinations.ai/prompt/" + java.net.URLEncoder.encode(prompt, "UTF-8").replace("+", "%20") +
+                "?width=$reqW&height=$reqH&seed=${base + attempt}&nologo=true&safe=true"
+            val (got, retryAfter) = downloadSceneImage(url)
+            img = got
+            if (img != null) break
+            Thread.sleep(((retryAfter ?: (5L * (attempt + 1))).coerceIn(3L, 30L)) * 1000L)
+        }
+        val src = img ?: return emptyList()
+        onProgress(1)
+        fun crop(frac: Float, cy: Float): android.graphics.Bitmap {
+            val cw = (src.width * frac).toInt().coerceAtLeast(1); val ch = (src.height * frac).toInt().coerceAtLeast(1)
+            val x = ((src.width - cw) / 2).coerceAtLeast(0)
+            val y = ((src.height * cy) - ch / 2f).toInt().coerceIn(0, src.height - ch)
+            return android.graphics.Bitmap.createBitmap(src, x, y, cw, ch)
+        }
+        val warm = src.copy(android.graphics.Bitmap.Config.ARGB_8888, true).also { bm ->
+            val cm = android.graphics.ColorMatrix(floatArrayOf(
+                1.10f, 0f, 0f, 0f, 12f,
+                0f, 1.02f, 0f, 0f, 4f,
+                0f, 0f, 0.88f, 0f, -6f,
+                0f, 0f, 0f, 1f, 0f))
+            android.graphics.Canvas(bm).drawBitmap(src, 0f, 0f,
+                android.graphics.Paint().apply { colorFilter = android.graphics.ColorMatrixColorFilter(cm) })
+        }
+        val scenes = listOf(src, crop(0.78f, 0.5f), crop(0.55f, 0.42f), warm)
+        onProgress(4)
+        return scenes
+    }
+
+    /** Descarga una escena; si el servicio dice «espera» (429/503), devuelve cuántos segundos esperar. */
+    private fun downloadSceneImage(url: String): Pair<android.graphics.Bitmap?, Long?> = runCatching {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 20000; readTimeout = 60000
+            setRequestProperty("User-Agent", "CumulusIA/1.0 (Android)")
+        }
+        try {
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                Log.w(TAG, "Pollinations escena HTTP $code")
+                return@runCatching null to conn.getHeaderField("Retry-After")?.trim()?.toLongOrNull()
+            }
+            conn.inputStream.use { android.graphics.BitmapFactory.decodeStream(it) } to null
+        } finally { conn.disconnect() }
+    }.getOrElse { Log.w(TAG, "Pollinations escena: ${it.message}"); null to null }
+
+    // Copia un cuadro ARGB a la imagen YUV del codificador (respeta el formato de cada teléfono)
+    private fun writeFrameToImage(argb: IntArray, w: Int, h: Int, img: android.media.Image) {
+        val yP = img.planes[0]; val uP = img.planes[1]; val vP = img.planes[2]
+        val yB = yP.buffer; val uB = uP.buffer; val vB = vP.buffer
+        val yRow = yP.rowStride; val uvRow = uP.rowStride; val uvPix = uP.pixelStride
+        for (j in 0 until h) {
+            val rowOff = j * w
+            for (i in 0 until w) {
+                val c = argb[rowOff + i]
+                val r = (c shr 16) and 0xff; val g = (c shr 8) and 0xff; val b = c and 0xff
+                yB.put(j * yRow + i, (((66 * r + 129 * g + 25 * b + 128) shr 8) + 16).toByte())
+                if (j % 2 == 0 && i % 2 == 0) {
+                    val off = (j / 2) * uvRow + (i / 2) * uvPix
+                    uB.put(off, (((-38 * r - 74 * g + 112 * b + 128) shr 8) + 128).toByte())
+                    vB.put(off, (((112 * r - 94 * g - 18 * b + 128) shr 8) + 128).toByte())
+                }
+            }
+        }
+    }
+
+    /** Arma el MP4: cada imagen con zoom/movimiento suave y fundido entre escenas. */
+    private fun renderSlideshow(images: List<android.graphics.Bitmap>, w: Int, h: Int, out: File,
+                                sceneSecs: List<Float>? = null, onProgress: (Int) -> Unit) {
+        val fps = 24; val fadeFrames = 12
+        // Cada escena dura 3 s, o lo que dure su narración
+        val framesPer = images.indices.map { i -> ((sceneSecs?.getOrNull(i) ?: 3f) * fps).toInt().coerceAtLeast(fps) }
+        val starts = framesPer.runningFold(0) { a, b -> a + b }
+        val total = starts.last()
+        val mime = android.media.MediaFormat.MIMETYPE_VIDEO_AVC
+        val format = android.media.MediaFormat.createVideoFormat(mime, w, h).apply {
+            setInteger(android.media.MediaFormat.KEY_COLOR_FORMAT, android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
+            setInteger(android.media.MediaFormat.KEY_BIT_RATE, 6_000_000)
+            setInteger(android.media.MediaFormat.KEY_FRAME_RATE, fps)
+            setInteger(android.media.MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+        }
+        val codec = android.media.MediaCodec.createEncoderByType(mime)
+        codec.configure(format, null, null, android.media.MediaCodec.CONFIGURE_FLAG_ENCODE)
+        codec.start()
+        val muxer = android.media.MediaMuxer(out.absolutePath, android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        var track = -1; var muxing = false
+        val info = android.media.MediaCodec.BufferInfo()
+        val frame = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(frame)
+        val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+        val pixels = IntArray(w * h)
+
+        fun drawScene(idx: Int, t: Float, alpha: Int) {
+            val bmp = images[idx]
+            val zoomIn = idx % 2 == 0
+            val scale = (maxOf(w.toFloat() / bmp.width, h.toFloat() / bmp.height)) * (if (zoomIn) 1f + 0.15f * t else 1.15f - 0.15f * t)
+            val dw = bmp.width * scale; val dh = bmp.height * scale
+            val panX = (if (idx % 3 == 1) -1f else 1f) * 0.04f * w * (t - 0.5f)
+            val left = (w - dw) / 2f + panX; val top = (h - dh) / 2f
+            paint.alpha = alpha
+            canvas.drawBitmap(bmp, null, android.graphics.RectF(left, top, left + dw, top + dh), paint)
+        }
+
+        fun drain(endOfStream: Boolean) {
+            while (true) {
+                val outIdx = codec.dequeueOutputBuffer(info, 10_000)
+                when {
+                    outIdx == android.media.MediaCodec.INFO_TRY_AGAIN_LATER -> if (!endOfStream) return
+                    outIdx == android.media.MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        track = muxer.addTrack(codec.outputFormat); muxer.start(); muxing = true
+                    }
+                    outIdx >= 0 -> {
+                        val buf = codec.getOutputBuffer(outIdx)!!
+                        if (info.flags and android.media.MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) info.size = 0
+                        if (info.size > 0 && muxing) {
+                            buf.position(info.offset); buf.limit(info.offset + info.size)
+                            muxer.writeSampleData(track, buf, info)
+                        }
+                        codec.releaseOutputBuffer(outIdx, false)
+                        if (info.flags and android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return
+                    }
+                }
+            }
+        }
+
+        try {
+            for (f in 0 until total) {
+                val scene = (starts.indexOfLast { it <= f }).coerceIn(0, images.size - 1)
+                val local = f - starts[scene]
+                val perScene = framesPer[scene]
+                canvas.drawColor(Color.BLACK)
+                drawScene(scene, local / perScene.toFloat(), 255)
+                // Fundido hacia la siguiente escena en el último medio segundo
+                if (scene + 1 < images.size && local >= perScene - fadeFrames) {
+                    val a = ((local - (perScene - fadeFrames) + 1) * 255 / fadeFrames).coerceIn(0, 255)
+                    drawScene(scene + 1, 0f, a)
+                }
+                frame.getPixels(pixels, 0, w, 0, 0, w, h)
+                var inIdx: Int
+                do { inIdx = codec.dequeueInputBuffer(10_000); if (inIdx < 0) drain(false) } while (inIdx < 0)
+                val img = codec.getInputImage(inIdx)!!
+                writeFrameToImage(pixels, w, h, img)
+                codec.queueInputBuffer(inIdx, 0, w * h * 3 / 2, f * 1_000_000L / fps, 0)
+                drain(false)
+                if (f % fps == 0) onProgress(f * 100 / total)
+            }
+            var eos: Int
+            do { eos = codec.dequeueInputBuffer(10_000); if (eos < 0) drain(false) } while (eos < 0)
+            codec.queueInputBuffer(eos, 0, 0, total * 1_000_000L / fps, android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+            drain(true)
+        } finally {
+            runCatching { codec.stop() }; runCatching { codec.release() }
+            runCatching { if (muxing) muxer.stop() }; runCatching { muxer.release() }
+            frame.recycle()
+        }
+    }
+
+    /** Crea el clip completo y lo muestra en el chat. */
+    private fun runCreateVideo(prompt: String, thinkingIndex: Int) {
+        val subject = videoSubject(prompt)
+        if (refuseUnsafeImage(prompt, thinkingIndex, "videos")) return
+        AiActivity.start(thinkingIndex, AiActivity.CREATING)
+        AiActivity.log("🎞️ Creando un video de «$subject»")
+        fun status(t: String) = runOnUiThread {
+            AiActivity.log(t)
+            if (thinkingIndex < chatMessages.size) {
+                chatMessages[thinkingIndex] = ChatMessage(text = t, isUser = false, sender = "Cumulus", tokens = "")
+                chatAdapter?.notifyItemChanged(thinkingIndex)
+            }
+        }
+        thread {
+            val start = System.currentTimeMillis()
+            val w = 720; val h = 1280   // vertical, ideal para el teléfono
+            status("🎨 Creando las escenas de tu video... (0/4)")
+            val images = fetchScenes(subject, w, h) { n -> status("🎨 Creando las escenas de tu video... ($n/4)") }
+            val out = File(cacheDir, "clip_${System.currentTimeMillis()}.mp4")
+            var uri: Uri? = null
+            var error: String? = null
+            var clipThumb: String? = null
+            var clipName = ""
+            var hasVoice = false
+            var hasMusic = false
+            if (images.size < 2) {
+                error = "No pude obtener las imágenes de internet (el servicio gratuito puede estar saturado). Inténtalo de nuevo en un momento."
+            } else {
+                // 🔊 Sonido del video: narración (ElevenLabs) + música de fondo, salvo que pidas lo contrario
+                val low = prompt.lowercase(Locale.ROOT)
+                val mute = Regex("\\b(mudo|sin sonido|sin audio)\\b").containsMatchIn(low)
+                val wantVoice = !mute && !Regex("\\bsin (voz|narraci[oó]n)\\b").containsMatchIn(low)
+                val wantMusic = !mute && !Regex("\\bsin m[uú]sica\\b").containsMatchIn(low)
+                var narration: ShortArray? = null
+                var sceneSecs: List<Float>? = null
+                var voiceClips: List<ShortArray?> = emptyList()
+                if (wantVoice) elevenKey()?.let { (key, voice) ->
+                    status("✍️ Escribiendo la narración...")
+                    val lines = narrationLines(subject, images.size, mediaLang(prompt) ?: "es")
+                    status("🗣️ Grabando la voz con ElevenLabs...")
+                    voiceClips = lines.map { elevenPcm(it, key, voice) }
+                    if (voiceClips.any { it != null })
+                        sceneSecs = voiceClips.map { c -> if (c == null) 3f else maxOf(3f, c.size / narrationRate.toFloat() + 0.8f) }
+                }
+                val secsList = sceneSecs ?: List(images.size) { 3f }
+                if (sceneSecs != null || wantMusic) {
+                    val totalSamples = (secsList.sum() * narrationRate).toInt() + narrationRate / 2
+                    val voiceTrack = FloatArray(totalSamples)
+                    if (sceneSecs != null) {
+                        var offset = 0f
+                        voiceClips.forEachIndexed { i, c ->
+                            val st = ((offset + 0.3f) * narrationRate).toInt()
+                            c?.forEachIndexed { k, v -> if (st + k < totalSamples) voiceTrack[st + k] = v / 32768f }
+                            offset += secsList[i]
+                        }
+                    }
+                    if (wantMusic) status("🎵 Componiendo la música de fondo...")
+                    val music = if (wantMusic) composeMusic(totalSamples, subject) else null
+                    narration = mixVoiceAndMusic(voiceTrack, music, sceneSecs != null)
+                    hasVoice = sceneSecs != null; hasMusic = music != null
+                }
+                sceneSecs = secsList
+                status("🎬 Animando y armando el video...")
+                val silent = if (narration != null) File(cacheDir, "mudo_${System.currentTimeMillis()}.mp4") else out
+                runCatching { renderSlideshow(images, w, h, silent, sceneSecs) { pct -> status("🎬 Armando el video... $pct%") } }
+                    .onFailure { error = "No pude armar el video en este teléfono (${it.message})."; Log.e(TAG, "Clip: ${it.message}") }
+                narration?.let { pcm ->
+                    if (error == null) {
+                        status("🔊 Agregando la voz al video...")
+                        val m4a = File(cacheDir, "voz_${System.currentTimeMillis()}.m4a")
+                        val ok = runCatching { encodePcmToM4a(pcm, m4a); muxVideoAudio(silent, m4a, out) }
+                            .onFailure { Log.e(TAG, "Audio del clip: ${it.message}") }.isSuccess
+                        if (!ok) { runCatching { silent.copyTo(out, overwrite = true) }; hasVoice = false; hasMusic = false }   // si falla el sonido, queda el video mudo
+                        runCatching { m4a.delete() }
+                    }
+                    runCatching { silent.delete() }
+                }
+                if (error == null) {
+                    val name = "CumulusIA_clip_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date()) + ".mp4"
+                    uri = saveVideoToGallery(out, name)
+                    if (uri == null) error = "El video se creó pero no se pudo preparar para mostrarlo."
+                    else { clipThumb = videoThumb(out); clipName = name }
+                }
+            }
+            images.forEach { it.recycle() }
+            runOnUiThread {
+                val secs = (System.currentTimeMillis() - start) / 1000.0
+                val ml = mediaLang(prompt)
+                val text = if (ml != null && error != null) (CreateMedia.text(ml, 2) ?: "⚠️ $error")
+                    else if (ml != null) (CreateMedia.text(ml, 1, images.size, subject) ?: "") + (if (hasVoice) " 🗣️" else "") + (if (hasMusic) " 🎵" else "") + "\n\n▶️ · ⬇️"
+                    else error?.let { "⚠️ $it" } ?: ("🎬 ¡Tu video está listo! ${images.size} escenas animadas de «$subject» " +
+                    (when {
+                        hasVoice && hasMusic -> "con narración de tu voz de ElevenLabs y música de fondo"
+                        hasVoice -> "con narración de tu voz de ElevenLabs"
+                        hasMusic -> "con música de fondo"
+                        else -> "(sin sonido)"
+                    }) + ".\n\nToca el video para verlo · ⬇️ para guardarlo en tu teléfono.")
+                val doneUri = uri
+                AiActivity.finish(if (error == null) "Video listo" else "No se pudo crear el video")
+                if (thinkingIndex in chatMessages.indices) chatMessages[thinkingIndex] = ChatMessage(text = text, isUser = false, sender = "Cumulus",
+                    tokens = "🎞️ Video clip · ${String.format(Locale.US, "%.1f", secs)} s\n🌐 Datos de: Pollinations (imágenes)",
+                    attachments = if (doneUri != null) listOf(deliveryTag(clipThumb, doneUri, "video/mp4", clipName)) else emptyList())
+                chatAdapter?.notifyItemChanged(thinkingIndex)
+                rvChatMessages?.scrollToPosition(thinkingIndex)
+                isAiBusy = false
+                updateSendButtonIcon()
+                saveCurrentChat()
+                runCatching { out.delete() }
+            }
+        }
+    }
+
+    // ========================================================================
+    // 🖼️ IMÁGENES: crear (gratis por internet), cambiar tamaño y mejorar (en el teléfono)
+    // ========================================================================
+    private fun wantsCreateImage(prompt: String): Boolean = wantsCreateImageEs(prompt) ||
+        // 🌍 En los demás idiomas: «draw me a cat», «erstelle ein Bild…», «画一只猫», «วาดรูปแมว», «ارسم صورة قطة»…
+        runCatching { !CreateMedia.isSpanish(prompt) && CreateMedia.wantsImage(prompt) }.getOrDefault(false)
+
+    private fun wantsCreateImageEs(prompt: String): Boolean =
+        Regex("(?i)\\b(crea(me)?|haz(me)?|genera(me)?|gen[eé]rame|cr[eé]ame|dibuja(me)?|dise[ñn]a(me)?)\\s+(un|una)\\s+(imagen|foto|fotograf[ií]a|dibujo|ilustraci[oó]n|fondo de pantalla|wallpaper|logo|p[oó]ster|retrato)\\b")
+            .containsMatchIn(prompt) || wantsCreateImageShort(prompt)
+
+    // "Créame una pareja en la playa", "dibújame un gato": también es una imagen,
+    // salvo que pida un texto (correo, poema, código, receta, lista...) o un video
+    private fun wantsCreateImageShort(prompt: String): Boolean {
+        val p = prompt.lowercase(Locale.ROOT).trim()
+        if (!Regex("^(por favor\\s+)?(cr[eé]ame|dib[uú]jame|dibuja|gen[eé]rame|ilustra(me)?)\\s+(un|una|unos|unas|el|la)\\s+").containsMatchIn(p)) return false
+        // 💻 «Créame una calculadora con HTML…», «créame un juego…», o estás en modo Ingeniero de código:
+        //    es un pedido de PROGRAMACIÓN, no una imagen (antes salía una foto de una calculadora)
+        val askedToCreate = Regex("^(por favor\\s+)?(cr[eé]ame|gen[eé]rame)\\b").containsMatchIn(p)
+        if (askedToCreate && (currentChatMode().key == "codigo" || looksLikeCodeRequest(p))) return false
+        if (Regex("\\b(html|css|javascript|kotlin|python|c[oó]digo)\\b").containsMatchIn(p)) return false
+        return !Regex("\\b(video|v[ií]deo|clip|texto|correo|email|mensaje|carta|documento|archivo|c[oó]digo|programa|app|aplicaci[oó]n|poema|cuento|historia|canci[oó]n|chiste|receta|lista|plan|resumen|informe|tabla|presentaci[oó]n|contrase[ñn]a|nombre|frase|guion|gui[oó]n)\\b").containsMatchIn(p)
+    }
+
+    private fun imageSubject(prompt: String): String =
+        if (mediaLang(prompt) != null) CreateMedia.subject(prompt) else
+        prompt.replace(Regex("(?i)^.*?\\b(imagen|foto|fotograf[ií]a|dibujo|ilustraci[oó]n|fondo de pantalla|wallpaper|logo|p[oó]ster|retrato)\\b\\s*(de|del|sobre|con|que muestre)?\\s*"), "")
+            .replace(Regex("(?i)^(por favor\\s+)?(cr[eé]ame|dib[uú]jame|dibuja|gen[eé]rame|ilustra(me)?)\\s+"), "")
+            .trim().trimEnd('.', '!', '?').ifBlank { prompt }
+
+    private enum class ImgOp { RESIZE, ENHANCE, EDIT, ERASE }
+
+    private fun imageOperation(prompt: String): ImgOp? {
+        val p = prompt.lowercase(Locale.ROOT)
+        return when {
+            Regex("\\b(borra(le|r)?|elimina(le|r)?|quita(le|r)?|saca(le|r)?)\\b").containsMatchIn(p) -> ImgOp.ERASE
+            Regex("\\b(tama[ñn]o|redimensiona|reduce|red[uú]cela|achica|agranda|ampl[ií]a|escala|\\d{2,5}\\s*[x×]\\s*\\d{2,5}|\\d{1,3}\\s*%|m[aá]s (peque[ñn]a|grande|chica))\\b").containsMatchIn(p) -> ImgOp.RESIZE
+            Regex("\\b(mejora(la|r)?|nitidez|n[ií]tida|enfoca(la|r)?|calidad|restaura(la|r)?|hd|realza|aviva|m[aá]s clara|ilumina(la)?)\\b").containsMatchIn(p) -> ImgOp.ENHANCE
+            Regex("\\b(c[aá]mbia(le|la|r)?|ponle|agr[eé]ga(le)?|a[ñn][aá]de(le)?|convi[eé]rte(la)?|transforma(la)?|hazla|edita(la|r)?|modifica(la|r)?|pinta(la|le)?)\\b").containsMatchIn(p) -> ImgOp.EDIT
+            else -> null
+        }
+    }
+
+    private fun loadBitmapUpright(file: File): android.graphics.Bitmap? = runCatching {
+        val bmp = android.graphics.BitmapFactory.decodeFile(file.absolutePath) ?: return@runCatching null
+        val rot = runCatching {
+            when (android.media.ExifInterface(file.absolutePath).getAttributeInt(
+                android.media.ExifInterface.TAG_ORIENTATION, 1)) { 6 -> 90f; 3 -> 180f; 8 -> 270f; else -> 0f }
+        }.getOrDefault(0f)
+        if (rot == 0f) bmp else android.graphics.Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height,
+            android.graphics.Matrix().apply { postRotate(rot) }, true)
+    }.getOrNull()
+
+    private fun resizeBitmap(src: android.graphics.Bitmap, prompt: String): android.graphics.Bitmap {
+        val p = prompt.lowercase(Locale.ROOT)
+        val exact = Regex("(\\d{2,5})\\s*[x×]\\s*(\\d{2,5})").find(p)
+        val pct = Regex("(\\d{1,3})\\s*%").find(p)?.groupValues?.get(1)?.toIntOrNull()
+        val (w, h) = when {
+            exact != null -> exact.groupValues[1].toInt() to exact.groupValues[2].toInt()
+            pct != null -> (src.width * pct / 100) to (src.height * pct / 100)
+            Regex("(peque[ñn]a|reduce|red[uú]cela|achica|chica)").containsMatchIn(p) -> src.width / 2 to src.height / 2
+            else -> src.width * 2 to src.height * 2
+        }
+        val maxSide = 4096
+        val f = minOf(1f, maxSide.toFloat() / maxOf(w, h))
+        return android.graphics.Bitmap.createScaledBitmap(src, (w * f).toInt().coerceAtLeast(16), (h * f).toInt().coerceAtLeast(16), true)
+    }
+
+    /** Mejora: la agranda si es pequeña, la enfoca y le da un poco más de contraste y color. */
+    private fun enhanceBitmap(src: android.graphics.Bitmap): android.graphics.Bitmap {
+        val up = if (maxOf(src.width, src.height) < 1600)
+            android.graphics.Bitmap.createScaledBitmap(src, src.width * 2, src.height * 2, true) else src
+        val w = up.width; val h = up.height
+        val px = IntArray(w * h); up.getPixels(px, 0, w, 0, 0, w, h)
+        val out = IntArray(w * h)
+        // Enfoque (máscara de enfoque suave)
+        val k = 0.6f
+        for (y in 0 until h) for (x in 0 until w) {
+            val i = y * w + x
+            if (x == 0 || y == 0 || x == w - 1 || y == h - 1) { out[i] = px[i]; continue }
+            val c = px[i]; val n = px[i - w]; val s = px[i + w]; val e = px[i + 1]; val o = px[i - 1]
+            fun ch(v: Int, sh: Int) = (v shr sh) and 0xff
+            fun sharp(sh: Int): Int {
+                val center = ch(c, sh); val avg = (ch(n, sh) + ch(s, sh) + ch(e, sh) + ch(o, sh)) / 4f
+                return (center + k * (center - avg)).toInt().coerceIn(0, 255)
+            }
+            out[i] = (0xff shl 24) or (sharp(16) shl 16) or (sharp(8) shl 8) or sharp(0)
+        }
+        val sharpBmp = android.graphics.Bitmap.createBitmap(out, w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        // Contraste +8 % y saturación +15 %
+        val result = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val cm = android.graphics.ColorMatrix().apply { setSaturation(1.15f) }
+        val contrast = 1.08f; val t = (1f - contrast) * 128f
+        cm.postConcat(android.graphics.ColorMatrix(floatArrayOf(
+            contrast, 0f, 0f, 0f, t, 0f, contrast, 0f, 0f, t, 0f, 0f, contrast, 0f, t, 0f, 0f, 0f, 1f, 0f)))
+        android.graphics.Canvas(result).drawBitmap(sharpBmp, 0f, 0f,
+            android.graphics.Paint().apply { colorFilter = android.graphics.ColorMatrixColorFilter(cm) })
+        sharpBmp.recycle()
+        return result
+    }
+
+    private fun saveImageToGallery(bmp: android.graphics.Bitmap, name: String): Pair<Uri?, File?> {
+        val f = File(deliveriesDir(), name)
+        runCatching { f.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, it) } }
+        if (!f.exists() || f.length() == 0L) return null to null
+        return runCatching { privateUri(f) }.getOrNull() to f
+    }
+
+    private fun showImageResult(thinkingIndex: Int, text: String, tokens: String, uri: Uri?, thumb: File?, mime: String = "image/jpeg") {
+        AiActivity.finish(if (uri != null || thumb != null) "Imagen lista" else "No se pudo terminar la imagen")
+        if (thinkingIndex in chatMessages.indices) chatMessages[thinkingIndex] = ChatMessage(text = text, isUser = false, sender = "Cumulus", tokens = tokens,
+            attachments = when {
+                uri != null && thumb != null -> listOf(deliveryTag(thumb.absolutePath, uri, mime, thumb.name))
+                else -> listOfNotNull(thumb?.absolutePath)
+            })
+        chatAdapter?.notifyItemChanged(thinkingIndex)
+        rvChatMessages?.scrollToPosition(thinkingIndex)
+        isAiBusy = false
+        updateSendButtonIcon()
+        saveCurrentChat()
+    }
+
+    private fun imgName(tag: String) = "CumulusIA_${tag}_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date()) + ".jpg"
+
+    // ========================================================================
+    // 🛡️ IMÁGENES Y VIDEOS SEGUROS (obligatorio para Google Play): nada de desnudos ni contenido sexual.
+    //    1) Si el pedido es sexual o de desnudos, se rechaza con una disculpa.
+    //    2) A todo pedido se le agrega «personas vestidas, apto para todo público».
+    //    3) Pollinations recibe safe=true: su filtro bloquea lo que igual salga inapropiado.
+    // ========================================================================
+    private val unsafeImageRegex = Regex(
+        "(?i)(desnud|semidesnud|\\bnud[oa]s?\\b|\\bnude|naked|sin ropa|topless|\\bsexo\\b|sexual|\\bsexy\\b|er[oó]tic|porn|\\bxxx\\b|nsfw|hentai|" +
+            "lencer[ií]a|onlyfans|genital|\\bpene\\b|vagina|\\btetas?\\b|\\bculo\\b|\\bpoto\\b|\\bnalgas?\\b|provocativ|sensual)"
+    )
+
+    private fun safeImagePrompt(subject: String) =
+        "$subject, all people fully clothed, family friendly, safe for work, no nudity"
+
+    /** true = se rechazó (el pedido era sexual o de desnudos) y ya se avisó en el chat. */
+    private fun refuseUnsafeImage(prompt: String, thinkingIndex: Int, what: String): Boolean {
+        // 🔞 En todos los idiomas (desnudos o contenido sexual en alemán, francés, ruso, chino, árabe…)
+        if (!unsafeImageRegex.containsMatchIn(prompt) && !CreateMedia.UNSAFE.containsMatchIn(prompt)) return false
+        runOnUiThread {
+            AiActivity.start(thinkingIndex, AiActivity.CREATING)
+            showImageResult(thinkingIndex,
+                "🙏 Lo siento, no puedo crear $what con desnudos ni contenido sexual. Puedo crearlo de otra forma, " +
+                    "por ejemplo con las personas vestidas. ¿Te ayudo así?", "", null, null)
+        }
+        return true
+    }
+
+    /** Crea una imagen nueva con Pollinations (gratis, sin clave). */
+    private fun runCreateImage(prompt: String, thinkingIndex: Int) {
+        val subject = imageSubject(prompt)
+        if (refuseUnsafeImage(prompt, thinkingIndex, "imágenes")) return
+        val p = prompt.lowercase(Locale.ROOT)
+        val (w, h) = when {
+            Regex("fondo de pantalla|wallpaper|vertical|celular|historia|estado").containsMatchIn(p) -> 768 to 1344
+            Regex("horizontal|panor[aá]mic|portada|banner").containsMatchIn(p) -> 1344 to 768
+            else -> 1024 to 1024
+        }
+        AiActivity.start(thinkingIndex, AiActivity.CREATING)
+        AiActivity.log("🎨 Creando tu imagen de «$subject»", "Tamaño: ${w}×$h")
+        runOnUiThread {
+            chatMessages[thinkingIndex] = ChatMessage(text = "🎨 Creando tu imagen...", isUser = false, sender = "Cumulus", tokens = "")
+            chatAdapter?.notifyItemChanged(thinkingIndex)
+        }
+        thread {
+            val start = System.currentTimeMillis()
+            val url = "https://image.pollinations.ai/prompt/" + java.net.URLEncoder.encode(safeImagePrompt("$subject, high quality, detailed"), "UTF-8").replace("+", "%20") +
+                "?width=$w&height=$h&seed=${(System.currentTimeMillis() % 1000000)}&nologo=true&enhance=true&safe=true"
+            // Hasta 4 intentos respetando la espera que pida el servicio (antes solo 2 seguidos)
+            var bmp: android.graphics.Bitmap? = null
+            for (attempt in 0 until 4) {
+                AiActivity.log(if (attempt == 0) "🌐 Pidiendo la imagen a Pollinations" else "🔁 Reintento ${attempt + 1} de 4 (el servicio estaba ocupado)",
+                    if (attempt == 0) url.substringBefore("?").take(160) else "")
+                val (got, retryAfter) = downloadSceneImage(if (attempt == 0) url else url.replace(Regex("seed=\\d+"), "seed=${System.currentTimeMillis() % 1000000 + attempt}"))
+                bmp = got
+                if (bmp != null) break
+                Thread.sleep(((retryAfter ?: (3L * (attempt + 1))).coerceIn(2L, 20L)) * 1000L)
+            }
+            val (uri, thumb) = bmp?.let { saveImageToGallery(it, imgName("imagen")) } ?: (null to null)
+            bmp?.recycle()
+            runOnUiThread {
+                val secs = (System.currentTimeMillis() - start) / 1000.0
+                val ml = mediaLang(prompt)
+                if (uri == null) showImageResult(thinkingIndex, ml?.let { CreateMedia.text(it, 2) }
+                    ?: "⚠️ No pude crear la imagen (el servicio gratuito puede estar saturado). Inténtalo de nuevo en un momento.", "", null, null)
+                else showImageResult(thinkingIndex, ml?.let { CreateMedia.text(it, 0, subject, "${w}×$h") } ?: "🎨 Aquí está tu imagen de «$subject» (${w}×$h).",
+                    "🖼️ Imagen · ${String.format(Locale.US, "%.1f", secs)} s\n🌐 Datos de: Pollinations (imágenes)", uri, thumb)
+            }
+        }
+    }
+
+    /** Cambia el tamaño o mejora la imagen adjunta, todo dentro del teléfono. */
+    private fun runImageTool(op: ImgOp, image: File, prompt: String, thinkingIndex: Int) {
+        AiActivity.start(thinkingIndex, AiActivity.ANALYZING)
+        AiActivity.log(if (op == ImgOp.RESIZE) "📐 Cambiando el tamaño de la imagen" else "✨ Mejorando la imagen (nitidez, contraste y color)",
+            image.name.substringAfter('_'))
+        chatAdapter?.notifyItemChanged(thinkingIndex)
+        thread {
+            val start = System.currentTimeMillis()
+            val src = loadBitmapUpright(image)
+            var text: String; var uri: Uri? = null; var thumb: File? = null
+            if (src == null) {
+                text = "⚠️ No pude abrir esa imagen."
+            } else {
+                val result = runCatching { if (op == ImgOp.RESIZE) resizeBitmap(src, prompt) else enhanceBitmap(src) }.getOrNull()
+                if (result == null) text = "⚠️ No pude procesar la imagen (puede ser demasiado grande)."
+                else {
+                    val saved = saveImageToGallery(result, imgName(if (op == ImgOp.RESIZE) "tamano" else "mejorada"))
+                    uri = saved.first; thumb = saved.second
+                    text = if (op == ImgOp.RESIZE) "📐 Listo: cambié el tamaño de ${src.width}×${src.height} a ${result.width}×${result.height}."
+                    else "✨ Listo: mejoré la imagen (más nítida, con más contraste y color" +
+                        (if (result.width > src.width) ", y la agrandé a ${result.width}×${result.height})." else ").")
+                    if (result != src) result.recycle()
+                }
+                src.recycle()
+            }
+            runOnUiThread {
+                val secs = (System.currentTimeMillis() - start) / 1000.0
+                showImageResult(thinkingIndex, text, "🖼️ Editor de imágenes · ${String.format(Locale.US, "%.1f", secs)} s", uri, thumb)
+            }
+        }
+    }
+
+    // ========================================================================
+    // ✂️🎨🪄 EDITOR DE IMÁGENES CON IA (todo se pide por el chat, todo dentro del teléfono)
+    //    Recortar · agrandar o achicar · subir o bajar la resolución con IA · fondo (color, transparente,
+    //    borroso u otra foto) · quitar o cambiar a una persona · versión nueva con IA (otro estilo, de noche…)
+    //    Las IA de resolución y relleno usan SOLO el motor elegido en ⚙️ (la app no lo cambia sola).
+    //    Nada se guarda en la galería: el resultado queda en el chat (tocar = abrir · mantener = compartir).
+    // ========================================================================
+    private class PendingImageEdit(val message: String, val images: List<File>, val at: Long)
+    /** Pedido que espera tu «sí» para descargar la IA de imágenes (solo la primera vez). */
+    private var pendingImageEdit: PendingImageEdit? = null
+    /** La última «versión nueva»: si dices «otra», se repite con la misma foto (y sale distinta). */
+    private var lastVariationRequest: PendingImageEdit? = null
+
+    /** Reemplaza «Pensando» por una respuesta corta (sin llamar a la IA). */
+    private fun replyInBubble(thinkingIndex: Int, text: String, tokens: String = "") {
+        if (thinkingIndex in chatMessages.indices) chatMessages[thinkingIndex] = ChatMessage(text = text, isUser = false, sender = "Cumulus", tokens = tokens)
+        chatAdapter?.notifyItemChanged(thinkingIndex)
+        rvChatMessages?.scrollToPosition(thinkingIndex)
+        saveCurrentChat()
+    }
+
+    /** La última imagen del chat (tuya o creada por la IA), solo si es de los últimos mensajes. */
+    private fun lastChatImage(): File? {
+        var checked = 0
+        for (i in chatMessages.indices.reversed()) {
+            for (a in chatMessages[i].attachments.reversed()) {
+                val f = if (a.startsWith("deliver:")) {
+                    val parts = a.removePrefix("deliver:").split('|')
+                    if (parts.size < 3 || !parts[2].startsWith("image/")) continue
+                    File(parts[0])
+                } else File(a)
+                if (f.exists() && f.length() > 0 && attachmentKind(f) == AttachKind.IMAGE) return f
+            }
+            if (++checked >= 12) break
+        }
+        return null
+    }
+
+    /** true = el mensaje era para el editor de imágenes (ya respondió o ya empezó a trabajar). */
+    private fun startImageEditor(message: String, attachments: List<File>, thinkingIndex: Int, userMessageIndex: Int): Boolean {
+        // 1) ¿Es la respuesta a «¿descargo la IA de imágenes?»
+        val pend = pendingImageEdit
+        if (pend != null) {
+            pendingImageEdit = null
+            if (attachments.isEmpty() && System.currentTimeMillis() - pend.at < 30 * 60_000L) {
+                if (ImageEditCommand.isYes(message)) {
+                    val steps = ImageEditCommand.parse(pend.message, pend.images.size)
+                    if (steps != null && pend.images.isNotEmpty() && pend.images.all { it.exists() }) {
+                        runImageEditor(steps, pend.images, emptyList(), thinkingIndex, -1, pend.message)
+                        return true
+                    }
+                    replyInBubble(thinkingIndex, "⚠️ Ya no encuentro esa imagen. Adjúntala de nuevo y pídemelo otra vez.")
+                    return true
+                }
+                if (ImageEditCommand.isNo(message)) {
+                    replyInBubble(thinkingIndex, "👍 Listo, no la descargo. Cuando quieras, vuelve a pedírmelo.")
+                    return true
+                }
+            }
+        }
+        // 2) «otra», «de nuevo»: se repite la última versión nueva con la misma foto (sale distinta)
+        val again = lastVariationRequest
+        if (again != null && attachments.isEmpty() && ImageEditCommand.isAgain(message) &&
+            System.currentTimeMillis() - again.at < 2 * 60 * 60_000L) {
+            val steps = ImageEditCommand.parse(again.message, again.images.size)
+            if (steps != null && again.images.isNotEmpty() && again.images.all { it.exists() }) {
+                runImageEditor(steps, again.images, emptyList(), thinkingIndex, -1, again.message)
+                return true
+            }
+        }
+        // 3) ¿Con qué imagen? La que adjuntaste, o la última del chat si hablas de ella
+        val attachedImages = attachments.filter { attachmentKind(it) == AttachKind.IMAGE }
+        if (attachedImages.size != attachments.size) return false      // con videos, audios o archivos: no es para el editor
+        if (message.isBlank()) return false
+        val usingLastImage = attachedImages.isEmpty()
+        val images: List<File> = if (!usingLastImage) attachedImages.take(2) else {
+            // Sin adjuntar: solo órdenes cortas y claras sobre una imagen («ahora agrándala», «ponle fondo blanco»)
+            if (message.length > 160 || !ImageEditCommand.mentionsImage(message)) return false
+            // «Créame una imagen de…» es una imagen nueva, no editar la anterior
+            if (runCatching { wantsCreateImage(message) || isCreationRequest(message) }.getOrDefault(false)) return false
+            listOfNotNull(lastChatImage())
+        }
+        if (images.isEmpty()) return false
+        val steps = ImageEditCommand.parse(message, images.size) ?: return false
+        // Sin imagen adjunta, una pregunta («¿qué fondo…?») no se toma como orden: sigue la conversación normal
+        if (usingLastImage && steps.all { it.kind == ImageEditCommand.Kind.ASK_BACKGROUND || it.kind == ImageEditCommand.Kind.ASK_SECOND_IMAGE }) return false
+        // 4) Falta algo: se pregunta
+        if (steps.any { it.kind == ImageEditCommand.Kind.ASK_SECOND_IMAGE }) {
+            replyInBubble(thinkingIndex, "🔄 Para cambiar a la persona necesito las dos fotos en el mismo mensaje: toca ➕ → Imagen y elige " +
+                "primero la foto donde está la persona que quieres cambiar y después la foto de la persona nueva.\n\n" +
+                "Luego escribe «cambia a la persona por la de la otra foto».")
+            return true
+        }
+        if (steps.any { it.kind == ImageEditCommand.Kind.ASK_BACKGROUND }) {
+            replyInBubble(thinkingIndex, "🎨 ¿Qué fondo le pongo? Puedes decirme un color («ponle fondo blanco»), «quítale el fondo» " +
+                "(queda transparente), «fondo borroso», o mandarme las dos fotos juntas (➕ → Imagen: primero tu foto y después " +
+                "el fondo nuevo) y escribir «ponle de fondo la otra foto».")
+            return true
+        }
+        val wantsVariation = steps.any { it.kind == ImageEditCommand.Kind.VARIATION }
+        // 🛡️ Nada de desnudos ni contenido sexual (igual que al crear imágenes)
+        if (wantsVariation && refuseUnsafeImage(message, thinkingIndex, "esa versión")) return true
+        // 5) La primera vez, la IA de imágenes (grande) se descarga solo si dices que sí
+        if (wantsVariation && ImageGenNative.available && !ImageAiModels.isReady(this, ImageAiModels.IMAGE_GEN)) {
+            val kept: List<File> = if (attachedImages.isNotEmpty()) {
+                val paths = persistAttachments(attachments)
+                if (userMessageIndex in chatMessages.indices && chatMessages[userMessageIndex].isUser) {
+                    chatMessages[userMessageIndex] = chatMessages[userMessageIndex].copy(attachments = paths)
+                    chatAdapter?.notifyItemChanged(userMessageIndex)
+                }
+                paths.map { File(it) }
+            } else images
+            pendingImageEdit = PendingImageEdit(message, kept, System.currentTimeMillis())
+            replyInBubble(thinkingIndex, "🪄 Para crear versiones nuevas de tus imágenes necesito descargar una IA de imágenes de " +
+                "${ImageAiModels.IMAGE_GEN.sizeMb} MB (una sola vez: queda dentro de la app y después funciona sin internet). " +
+                "Te recomiendo usar Wi-Fi.\n\n¿La descargo? Responde «sí» o «no».")
+            return true
+        }
+        runImageEditor(steps, images, if (attachedImages.isNotEmpty()) attachments else emptyList(), thinkingIndex, userMessageIndex, message)
+        return true
+    }
+
+    private fun imageStepLabel(s: ImageEditCommand.Step): String = when (s.kind) {
+        ImageEditCommand.Kind.CROP -> "✂️ recortar"
+        ImageEditCommand.Kind.UPSCALE -> "📈 subir la resolución con IA"
+        ImageEditCommand.Kind.DOWNSCALE -> "📉 bajar la resolución"
+        ImageEditCommand.Kind.BACKGROUND -> "🎨 cambiar el fondo"
+        ImageEditCommand.Kind.REMOVE_PERSON -> "🧽 quitar a la persona"
+        ImageEditCommand.Kind.REPLACE_PERSON -> "🔄 cambiar a la persona"
+        ImageEditCommand.Kind.VARIATION -> "🪄 versión nueva" + (if (s.what.isNotBlank()) " (${s.what})" else "")
+        else -> ""
+    }
+
+    /** Hace los pasos en segundo plano y deja el resultado en la burbuja (se puede detener con ⏹️). */
+    private fun runImageEditor(steps: List<ImageEditCommand.Step>, images: List<File>, attachedFiles: List<File>, thinkingIndex: Int,
+                               userMessageIndex: Int, message: String) {
+        isAiBusy = true
+        stopRequested = false
+        updateSendButtonIcon()
+        val engine = ImageEngine.fromBackend(spinnerBackend?.selectedItem?.toString() ?: getSavedBackend())
+        val wantsVariation = steps.any { it.kind == ImageEditCommand.Kind.VARIATION }
+        val what = steps.map { imageStepLabel(it) }.filter { it.isNotBlank() }.joinToString(" → ")
+        AiActivity.start(thinkingIndex, if (wantsVariation) AiActivity.CREATING else AiActivity.ANALYZING)
+        AiActivity.log("🖼️ Editor de imágenes: $what", "Motor elegido: ${engine.name}" +
+            (if (wantsVariation) " (la versión nueva usa la CPU)" else ""))
+        chatAdapter?.notifyItemChanged(thinkingIndex)
+        rvChatMessages?.scrollToPosition(thinkingIndex)
+        // 🩺 Si la app se cerrara, el informe dirá qué estaba haciendo
+        runCatching {
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putString("busy_what", "Editando una imagen con IA: $what · motor ${engine.name}").commit()
+        }
+        thread {
+            val start = System.currentTimeMillis()
+            var text: String
+            var tokens = ""
+            var uri: Uri? = null
+            var outFile: File? = null
+            var mime = "image/jpeg"
+            var base: android.graphics.Bitmap? = null
+            var second: android.graphics.Bitmap? = null
+            try {
+                base = ImageEditor.loadUpright(images[0]) ?: throw ImageEditor.NeedsInfo("⚠️ No pude abrir esa imagen.")
+                second = images.getOrNull(1)?.let { ImageEditor.loadUpright(it, 3072) }
+                // Tus fotos se guardan con el chat (igual que siempre)
+                var sources = images
+                if (attachedFiles.isNotEmpty()) {
+                    val kept = runCatching { persistAttachments(attachedFiles) }.getOrNull()
+                    if (kept != null) {
+                        sources = kept.map { File(it) }.filter { attachmentKind(it) == AttachKind.IMAGE }.take(2)
+                        runOnUiThread {
+                            if (userMessageIndex in chatMessages.indices && chatMessages[userMessageIndex].isUser) {
+                                chatMessages[userMessageIndex] = chatMessages[userMessageIndex].copy(attachments = kept)
+                                chatAdapter?.notifyItemChanged(userMessageIndex)
+                            }
+                        }
+                    }
+                }
+                // «otra» repetirá esta versión nueva con las mismas fotos
+                if (wantsVariation && sources.size == images.size) {
+                    val req = PendingImageEdit(message, sources, System.currentTimeMillis())
+                    runOnUiThread { lastVariationRequest = req }
+                }
+                val editor = ImageEditor(this, engine,
+                    onProgress = { p -> AiActivity.log(p) },
+                    isCancelled = { stopRequested })
+                val outcome = editor.process(steps, base, second)
+                val png = outcome.transparent
+                val name = imgName("editada").let { if (png) it.removeSuffix(".jpg") + ".png" else it }
+                val f = File(deliveriesDir(), name)
+                f.outputStream().use { outcome.bitmap.compress(if (png) android.graphics.Bitmap.CompressFormat.PNG else android.graphics.Bitmap.CompressFormat.JPEG, if (png) 100 else 95, it) }
+                if (outcome.bitmap !== base) outcome.bitmap.recycle()
+                if (f.exists() && f.length() > 0) {
+                    outFile = f
+                    uri = runCatching { privateUri(f) }.getOrNull()
+                    mime = if (png) "image/png" else "image/jpeg"
+                }
+                val secs = (System.currentTimeMillis() - start) / 1000.0
+                text = if (outFile != null) outcome.summary.joinToString("\n") else "⚠️ No pude guardar la imagen editada (¿falta espacio?)."
+                tokens = "🖼️ Editor de imágenes · ${String.format(Locale.US, "%.1f", secs)} s" +
+                    (if (outcome.tech.isNotEmpty()) "\n⚙️ " + outcome.tech.joinToString(" · ") else "")
+            } catch (c: ImageEditor.Cancelled) {
+                text = "⏹️ Detenido: no terminé de editar la imagen."
+            } catch (n: ImageEditor.NeedsInfo) {
+                text = n.message ?: "⚠️ No pude editar la imagen."
+            } catch (oom: OutOfMemoryError) {
+                text = "⚠️ La imagen es demasiado grande para editarla en el teléfono. Prueba con una más chica o pídeme primero «bájale la resolución»."
+            } catch (t: Throwable) {
+                text = friendlyErrorText(t)
+            } finally {
+                runCatching { base?.recycle() }
+                runCatching { second?.recycle() }
+                clearVisionWork()
+            }
+            val finalText = text; val finalTokens = tokens; val finalUri = uri; val finalFile = outFile; val finalMime = mime
+            runOnUiThread { showImageResult(thinkingIndex, finalText, finalTokens, finalUri, finalFile, finalMime) }
+        }
+    }
+
+
+    // ========================================================================
+    // 📷 CÁMARA EN VIVO: la IA mira tu entorno cuando le preguntas (y busca en internet si se lo pides)
+    // ========================================================================
+    private var cameraLiveActive = false
+    private var cameraOverlay: android.widget.FrameLayout? = null
+    private var cameraTexture: android.view.TextureView? = null
+    private var cameraDevice: android.hardware.camera2.CameraDevice? = null
+    private var cameraSession: android.hardware.camera2.CameraCaptureSession? = null
+    private var cameraThread: android.os.HandlerThread? = null
+    private var cameraAnswerView: TextView? = null
+    private var cameraInput: EditText? = null
+    // 🎙️ Cámara: su propio micrófono (aparte del de voz a voz y del de la barra del chat), su pregunta a la vista
+    //    y su botón que se vuelve ■ mientras la IA piensa o habla
+    private var cameraQuestionView: TextView? = null
+    private var cameraShotView: android.widget.ImageView? = null   // 🖼️ la foto que tomó para responderte
+    private var cameraSendBtn: TextView? = null
+    private var cameraMicBtn: ImageButton? = null
+    private var cameraRecognizer: SpeechRecognizer? = null
+    private var cameraListening = false
+    private var cameraMicOn = false          // 🎙️ interruptor: encendido = escucha todo el rato (hasta que lo apagues)
+    private var cameraMicResumeAt = 0L       // vuelve a escuchar un momento después de que la IA termina de hablar
+    private var cameraAskedAt = 0L
+    private var cameraPausedVoice = false
+    private var skipNextCameraCapture = false
+    private var pendingCameraSearch: String? = null
+    private var cameraLastShownIdx = -1
+    private var cameraLastSpokenText = ""
+    private val cameraWatcher = android.os.Handler(android.os.Looper.getMainLooper())
+    // 🎥 La imagen nunca se queda congelada: si dejan de llegar cuadros, la cámara se vuelve a abrir sola
+    @Volatile private var cameraLastFrameAt = 0L
+    private var cameraLastRestartAt = 0L
+    private var cameraRestartDelay = 3000L
+    @Volatile private var cameraGen = 0
+    private var cameraLastCheckAt = 0L
+
+    private fun wantsCameraWebSearch(prompt: String): Boolean =
+        Regex("(?i)\\b(b[uú]sca(lo|la|me|r)?|investiga(lo)?|en internet|en google|cu[aá]nto cuesta|precio|d[oó]nde (lo )?compro|d[oó]nde comprar|m[aá]s informaci[oó]n)\\b").containsMatchIn(prompt)
+
+    private fun openCameraLive() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), TAKE_PHOTO_REQUEST)
+            cumulusToast(this, "Da permiso de cámara y vuelve a tocar Cámara en vivo", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (cameraLiveActive) return
+        val d = resources.displayMetrics.density
+        val root = findViewById<android.view.ViewGroup>(android.R.id.content)
+        val overlay = android.widget.FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            isClickable = true
+            layoutParams = android.view.ViewGroup.LayoutParams(-1, -1)
+        }
+        val texture = android.view.TextureView(this)
+        overlay.addView(texture, android.widget.FrameLayout.LayoutParams(-1, -1))
+
+        // ✕ cerrar
+        overlay.addView(TextView(this).apply {
+            text = "✕"; textSize = 22f; setTextColor(Color.WHITE); gravity = android.view.Gravity.CENTER
+            background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Color.parseColor("#99000000")) }
+            setOnClickListener { closeCameraLive() }
+        }, android.widget.FrameLayout.LayoutParams((48 * d).toInt(), (48 * d).toInt(), android.view.Gravity.TOP or android.view.Gravity.END).apply {
+            topMargin = (40 * d).toInt(); rightMargin = (16 * d).toInt()
+        })
+        overlay.addView(TextView(this).apply {
+            text = "📷 Cámara en vivo"; textSize = 15f; setTextColor(Color.WHITE)
+            setPadding((14 * d).toInt(), (8 * d).toInt(), (14 * d).toInt(), (8 * d).toInt())
+            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 18 * d; setColor(Color.parseColor("#99000000")) }
+        }, android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP or android.view.Gravity.START).apply {
+            topMargin = (46 * d).toInt(); leftMargin = (16 * d).toInt()
+        })
+
+        // Panel inferior: respuesta + barra para preguntar
+        val bottom = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((12 * d).toInt(), 0, (12 * d).toInt(), (24 * d).toInt())
+        }
+        val answer = TextView(this).apply {
+            textSize = 15f; setTextColor(Color.WHITE); maxLines = 8
+            isVerticalScrollBarEnabled = true
+            movementMethod = android.text.method.ScrollingMovementMethod()
+            setPadding((14 * d).toInt(), (10 * d).toInt(), (14 * d).toInt(), (10 * d).toInt())
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 18 * d; setColor(Color.parseColor("#CC000000")); setStroke((1 * d).toInt(), Color.parseColor("#3D5AFE"))
+            }
+            text = "Apunta a algo y pregúntame: «¿qué es esto?», «¿qué dice ahí?»… o «búscalo en internet»."
+        }
+        // 🗣️ Tu pregunta (escrita o dicha) a la vista, como en el chat
+        val question = TextView(this).apply {
+            textSize = 14f; setTextColor(Color.WHITE); maxLines = 3; visibility = View.GONE
+            setPadding((14 * d).toInt(), (8 * d).toInt(), (14 * d).toInt(), (8 * d).toInt())
+            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 18 * d; setColor(Color.parseColor("#CC3D5AFE")) }
+        }
+        // 🖼️ La foto que tomó para responder: se muestra junto a tu pregunta
+        val shot = android.widget.ImageView(this).apply {
+            visibility = View.GONE
+            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+            contentDescription = "Foto que miró la IA"
+            clipToOutline = true
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, 14 * d) }
+            }
+        }
+        bottom.addView(shot, LinearLayout.LayoutParams((84 * d).toInt(), (126 * d).toInt()).apply {
+            gravity = android.view.Gravity.END; bottomMargin = (6 * d).toInt()
+        })
+        bottom.addView(question, LinearLayout.LayoutParams(-2, -2).apply {
+            gravity = android.view.Gravity.END; bottomMargin = (6 * d).toInt()
+        })
+        bottom.addView(answer, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = (10 * d).toInt() })
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding((14 * d).toInt(), (4 * d).toInt(), (6 * d).toInt(), (4 * d).toInt())
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 28 * d; setColor(Color.parseColor("#E61C1C1E")); setStroke((1 * d).toInt(), Color.parseColor("#48484A"))
+            }
+        }
+        val input = EditText(this).apply {
+            hint = "Pregunta sobre lo que ves..."; setHintTextColor(Color.parseColor("#8E8E93")); setTextColor(Color.WHITE)
+            background = null; textSize = 15f; maxLines = 3
+        }
+        bar.addView(input, LinearLayout.LayoutParams(0, -2, 1f))
+        fun roundBtn(label: String, color: String, onClick: () -> Unit) = TextView(this).apply {
+            text = label; textSize = 18f; gravity = android.view.Gravity.CENTER; setTextColor(Color.WHITE)
+            background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Color.parseColor(color)) }
+            setOnClickListener { onClick() }
+        }
+        // 🎙️ Micrófono PROPIO de la cámara (no usa el de voz a voz ni el de la barra del chat).
+        //    Mismo aspecto que el de la barra del chat: ícono gris, y azul mientras está encendido.
+        val mic = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_mic)
+            background = null
+            setColorFilter(Color.parseColor("#808080"))
+            contentDescription = "Micrófono"
+            setOnClickListener { toggleCameraMic() }
+        }
+        bar.addView(mic, LinearLayout.LayoutParams((40 * d).toInt(), (40 * d).toInt()).apply { marginEnd = (6 * d).toInt() })
+        // ➤ Enviar · se vuelve ■ (detener) mientras la IA piensa o habla, igual que en el chat
+        val send = roundBtn("➤", "#3D5AFE") { onCameraSendPressed() }
+        bar.addView(send, LinearLayout.LayoutParams((44 * d).toInt(), (44 * d).toInt()))
+        bottom.addView(bar, LinearLayout.LayoutParams(-1, -2))
+        overlay.addView(bottom, android.widget.FrameLayout.LayoutParams(-1, -2, android.view.Gravity.BOTTOM))
+
+        root.addView(overlay)
+        cameraOverlay = overlay; cameraTexture = texture; cameraAnswerView = answer; cameraInput = input
+        cameraQuestionView = question; cameraSendBtn = send; cameraMicBtn = mic; cameraListening = false; cameraMicOn = false
+        cameraShotView = shot
+        cameraLiveActive = true
+        cameraLastShownIdx = chatMessages.size - 1
+        cameraLastSpokenText = ""
+
+        cameraLastFrameAt = android.os.SystemClock.uptimeMillis()
+        cameraLastRestartAt = cameraLastFrameAt
+        cameraRestartDelay = 3000L
+        texture.surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, w: Int, h: Int) = startCameraPreview(texture)
+            override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) = fitPreview(texture)
+            override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture) = true
+            // Cada cuadro nuevo que llega: la cámara está viva
+            override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) {
+                cameraLastFrameAt = android.os.SystemClock.uptimeMillis()
+                cameraRestartDelay = 3000L
+            }
+        }
+        if (texture.isAvailable) startCameraPreview(texture)
+        startCameraWatcher()
+        // 🎙️ La cámara usa SU micrófono (botón 🎙️): si voz a voz estaba encendido se pausa para que no
+        //    se peleen el micrófono, y vuelve al cerrar la cámara
+        if (isVoiceConversationActive) { cameraPausedVoice = true; setVoiceConversation(false) }
+        // ⏳ Si el modelo todavía se está cargando, se espera (antes decía que faltaba el mmproj aunque sí estaba)
+        cameraWaitingModel = false
+        if (isModelLoading) {
+            answer.text = "⏳ Cargando el modelo... En un momento puedo mirar lo que ves."
+            cameraWaitingModel = true
+        } else if (!(activeModelHasVision())) {
+            answer.text = cameraNoVisionText()
+        }
+    }
+
+    /** Por qué la cámara no puede ver: el motivo real del motor elegido, o que falta un modelo con mmproj. */
+    private fun cameraNoVisionText(): String {
+        val gxReason = runCatching {
+            val m = getActiveModelFile()
+            if (m != null && GenieXEngineManager.isLoaded(m.absolutePath)) GenieXEngineManager.visionSkippedReason() else null
+        }.getOrNull()
+        return gxReason?.let { "⚠️ $it" }
+            ?: ("⚠️ Para entender lo que ves necesito un modelo que lea imágenes (por ejemplo Qwen3-VL-2B) con su mmproj. " +
+                "Puedes abrir la cámara igual, pero no podré describir la imagen hasta que lo cargues.")
+    }
+
+    private fun activeModelHasVision(): Boolean = runCatching { GenieXEngineManager.hasVision() || (nativeIsModelLoaded() && nativeHasVision()) }.getOrDefault(false)
+
+    private var previewW = 1920; private var previewH = 1080
+
+    // Ajusta la imagen de la cámara para que llene la pantalla sin estirarse
+    private fun fitPreview(texture: android.view.TextureView) {
+        val vw = texture.width.toFloat(); val vh = texture.height.toFloat()
+        if (vw == 0f || vh == 0f) return
+        val portrait = vh > vw
+        val bufW = if (portrait) previewH.toFloat() else previewW.toFloat()
+        val bufH = if (portrait) previewW.toFloat() else previewH.toFloat()
+        val scale = maxOf(vw / bufW, vh / bufH)
+        val m = android.graphics.Matrix()
+        m.setScale(bufW * scale / vw, bufH * scale / vh, vw / 2f, vh / 2f)
+        texture.setTransform(m)
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun startCameraPreview(texture: android.view.TextureView) {
+        val manager = getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+        val camId = manager.cameraIdList.firstOrNull {
+            manager.getCameraCharacteristics(it).get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) ==
+                android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
+        } ?: manager.cameraIdList.firstOrNull() ?: run { cumulusToast(this, "No encontré cámara", Toast.LENGTH_SHORT).show(); return }
+        val map = manager.getCameraCharacteristics(camId).get(android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val sizes = map?.getOutputSizes(android.graphics.SurfaceTexture::class.java).orEmpty()
+        val best = sizes.filter { it.width <= 1920 && it.height <= 1080 && it.width * 9 == it.height * 16 }.maxByOrNull { it.width }
+            ?: sizes.filter { it.width <= 1920 }.maxByOrNull { it.width * it.height }
+        if (best != null) { previewW = best.width; previewH = best.height }
+        val th = android.os.HandlerThread("camara").apply { start() }
+        cameraThread = th
+        val handler = android.os.Handler(th.looper)
+        val gen = ++cameraGen   // si la cámara se reabre, los avisos de la anterior se ignoran
+        runCatching {
+            manager.openCamera(camId, object : android.hardware.camera2.CameraDevice.StateCallback() {
+                override fun onOpened(device: android.hardware.camera2.CameraDevice) {
+                    if (gen != cameraGen || !cameraLiveActive) { runCatching { device.close() }; return }
+                    cameraDevice = device
+                    val st = texture.surfaceTexture ?: run { runCatching { device.close() }; cameraDevice = null; return }
+                    st.setDefaultBufferSize(previewW, previewH)
+                    val surface = android.view.Surface(st)
+                    val req = device.createCaptureRequest(android.hardware.camera2.CameraDevice.TEMPLATE_PREVIEW).apply {
+                        addTarget(surface)
+                        set(android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE, android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                    }
+                    @Suppress("DEPRECATION")
+                    device.createCaptureSession(listOf(surface), object : android.hardware.camera2.CameraCaptureSession.StateCallback() {
+                        override fun onConfigured(session: android.hardware.camera2.CameraCaptureSession) {
+                            if (gen != cameraGen) { runCatching { session.close() }; return }
+                            cameraSession = session
+                            runCatching { session.setRepeatingRequest(req.build(), null, handler) }
+                            runOnUiThread { fitPreview(texture) }
+                        }
+                        override fun onConfigureFailed(session: android.hardware.camera2.CameraCaptureSession) {
+                            runOnUiThread { cumulusToast(this@MainActivity, "No se pudo iniciar la cámara", Toast.LENGTH_SHORT).show() }
+                        }
+                    }, handler)
+                }
+                // Si Android corta la cámara (por ejemplo mientras la IA procesa la imagen), se reabre sola
+                override fun onDisconnected(device: android.hardware.camera2.CameraDevice) {
+                    runCatching { device.close() }
+                    if (gen == cameraGen) { cameraDevice = null; cameraLastFrameAt = 0L }
+                }
+                override fun onError(device: android.hardware.camera2.CameraDevice, error: Int) {
+                    runCatching { device.close() }
+                    if (gen == cameraGen) { cameraDevice = null; cameraLastFrameAt = 0L }
+                }
+            }, handler)
+        }.onFailure { cumulusToast(this, "No se pudo abrir la cámara: ${it.message}", Toast.LENGTH_LONG).show() }
+    }
+
+    /** Cierra la cámara y la vuelve a abrir sobre la misma pantalla (sin salir de Cámara en vivo). */
+    private fun restartCameraPreview() {
+        val texture = cameraTexture ?: return
+        if (!cameraLiveActive || !texture.isAvailable) return
+        Log.w(TAG, "📷 La imagen de la cámara se detuvo: se vuelve a abrir")
+        cameraGen++
+        runCatching { cameraSession?.close() }; cameraSession = null
+        runCatching { cameraDevice?.close() }; cameraDevice = null
+        runCatching { cameraThread?.quitSafely() }; cameraThread = null
+        startCameraPreview(texture)
+    }
+
+    /** Revisa que sigan llegando cuadros; si no, reabre la cámara (cada vez espera un poco más, hasta 10 s). */
+    private fun checkCameraAlive() {
+        if (!cameraLiveActive) return
+        val now = android.os.SystemClock.uptimeMillis()
+        // Si la pantalla estuvo ocupada un momento, los cuadros no se pudieron contar: se da margen
+        if (now - cameraLastCheckAt > 1500 && cameraLastFrameAt != 0L) cameraLastFrameAt = maxOf(cameraLastFrameAt, now - 1000)
+        cameraLastCheckAt = now
+        // 🧊 Mientras la IA mira la foto NO se reabre la cámara: reabrirla con el teléfono a tope (una y otra vez)
+        //    trababa la pantalla y a veces cerraba la app. Si la imagen se detuvo, se reabre apenas termina.
+        if (isAiBusy) return
+        val quiet = now - cameraLastFrameAt
+        val limit = 2500L
+        if (quiet > limit && now - cameraLastRestartAt > cameraRestartDelay) {
+            cameraLastRestartAt = now
+            cameraRestartDelay = (cameraRestartDelay * 2).coerceAtMost(10_000L)
+            restartCameraPreview()
+        }
+    }
+
+    private var cameraStartedVoice = false
+    private var cameraWaitingModel = false   // ⏳ la cámara se abrió mientras el modelo se cargaba
+
+    private fun closeCameraLive() {
+        cameraLiveActive = false
+        cameraGen++
+        if (cameraStartedVoice) { cameraStartedVoice = false; if (isVoiceConversationActive) setVoiceConversation(false) }
+        runCatching { cameraRecognizer?.cancel() }
+        runCatching { cameraRecognizer?.destroy() }
+        cameraRecognizer = null; cameraListening = false; cameraMicOn = false
+        if (cameraPausedVoice) { cameraPausedVoice = false; if (!isVoiceConversationActive) setVoiceConversation(true) }
+        pendingCameraSearch = null
+        cameraWatcher.removeCallbacksAndMessages(null)
+        runCatching { cameraSession?.close() }; cameraSession = null
+        runCatching { cameraDevice?.close() }; cameraDevice = null
+        runCatching { cameraThread?.quitSafely() }; cameraThread = null
+        cameraOverlay?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+        cameraOverlay = null; cameraTexture = null; cameraAnswerView = null; cameraInput = null
+        cameraQuestionView = null; cameraSendBtn = null; cameraMicBtn = null; cameraShotView = null
+    }
+
+    /** ➤ / ■ de la cámara: envía tu pregunta con una foto de lo que se ve, o detiene a la IA si está pensando o hablando. */
+    private fun onCameraSendPressed() {
+        val q = cameraInput?.text?.toString()?.trim().orEmpty()
+        val speaking = isTtsSpeaking || replyTtsActive
+        if (isAiBusy || (speaking && q.isEmpty())) {
+            stopAiNow()
+            cameraAnswerView?.text = "⏹️ Detenido. Pregúntame otra cosa sobre lo que ves."
+            updateCameraButtons()
+            return
+        }
+        if (q.isEmpty()) {
+            cameraAnswerView?.text = "✍️ Escribe tu pregunta o toca 🎙️ para decírmela."
+            return
+        }
+        // Escribiste algo nuevo mientras la IA hablaba: se calla y va lo tuyo
+        if (speaking) { markAiCutForMic(); runCatching { chatTtsEngine?.stop() }; isTtsSpeaking = false; replyTtsActive = false }
+        sendCameraQuestion(q)
+    }
+
+    /** Envía la pregunta (con la foto de ahora) y la deja a la vista en la cámara. */
+    private fun sendCameraQuestion(q: String) {
+        cameraInput?.text?.clear()
+        hideKeyboardAndRestoreChat()
+        cameraQuestionView?.apply { text = "🗣️ " + q; visibility = View.VISIBLE }
+        cameraAskedAt = android.os.SystemClock.uptimeMillis()
+        etChatInput?.setText(q)
+        btnSend?.performClick()
+        updateCameraButtons()
+    }
+
+    /** ■ mientras la IA piensa o habla (como el botón del chat) · 🎙️ azul mientras el micrófono está encendido. */
+    private fun updateCameraButtons() {
+        val d = resources.displayMetrics.density
+        val busy = isAiBusy || ((isTtsSpeaking || replyTtsActive) && cameraInput?.text.isNullOrBlank())
+        cameraSendBtn?.let { b ->
+            val want = if (busy) "■" else "➤"
+            if (b.text.toString() != want) {
+                b.text = want
+                b.setTextColor(Color.parseColor(if (busy) "#9A9A9A" else "#FFFFFF"))
+                b.background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(Color.parseColor(if (busy) "#2A2A2A" else "#3D5AFE"))
+                    if (busy) setStroke((1.5f * d).toInt(), Color.parseColor("#9A9A9A"))
+                }
+                b.contentDescription = if (busy) "Detener" else "Enviar"
+            }
+        }
+        cameraMicBtn?.let { m ->
+            val color = if (cameraMicOn) "#3D5AFE" else "#808080"   // 🔵 azul encendido · gris apagado (como el del chat)
+            if (m.tag != color) {
+                m.tag = color
+                m.setColorFilter(Color.parseColor(color))
+            }
+        }
+    }
+
+    /**
+     * 🎙️ Micrófono de la cámara: es un INTERRUPTOR. Encendido (azul) te escucha todo el rato: cada cosa que dices
+     * se manda sola con una foto de lo que se ve en ese momento, y después de la respuesta vuelve a escucharte.
+     * Mientras la IA piensa o habla no escucha (así no se oye a sí misma). Apagado (gris) no escucha nada.
+     */
+    private fun toggleCameraMic() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_CODE)
+            return
+        }
+        if (cameraMicOn) {
+            cameraMicOn = false
+            runCatching { cameraRecognizer?.cancel() }
+            cameraListening = false
+            cameraInput?.hint = "Pregunta sobre lo que ves..."
+            updateCameraButtons()
+            return
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            cameraAnswerView?.text = "⚠️ El reconocimiento de voz no está disponible en este teléfono."
+            return
+        }
+        cameraMicOn = true
+        // Si la IA está hablando, se calla para escucharte
+        if (!isAiBusy && (isTtsSpeaking || replyTtsActive)) {
+            runCatching { chatTtsEngine?.stop() }; isTtsSpeaking = false; replyTtsActive = false
+        }
+        cameraMicResumeAt = 0L
+        if (!isAiBusy) startCameraListening()
+        updateCameraButtons()
+    }
+
+    /** El vigilante de la cámara lo llama: con el micrófono encendido y la IA en silencio, vuelve a escuchar. */
+    private fun keepCameraMicListening() {
+        if (!cameraMicOn || !cameraLiveActive) return
+        val now = android.os.SystemClock.uptimeMillis()
+        if (isAiBusy || isTtsSpeaking || replyTtsActive) { cameraMicResumeAt = now + 700; return }
+        if (!cameraListening && now >= cameraMicResumeAt) startCameraListening()
+    }
+
+    private fun startCameraListening() {
+        if (!cameraMicOn || !cameraLiveActive || cameraListening) return
+        val r = cameraRecognizer ?: SpeechRecognizer.createSpeechRecognizer(this).also { cameraRecognizer = it }
+        r.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                if (cameraLiveActive) cameraInput?.hint = "🎙️ Te escucho..."
+            }
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onError(error: Int) {
+                cameraListening = false
+                cameraInput?.hint = "Pregunta sobre lo que ves..."
+                if (!cameraMicOn || !cameraLiveActive) return
+                val now = android.os.SystemClock.uptimeMillis()
+                when (error) {
+                    // Silencio o no entendió: sigue escuchando sin molestar
+                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> cameraMicResumeAt = now + 300
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> cameraMicResumeAt = now + 1000
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
+                        cameraMicOn = false
+                        cameraAnswerView?.text = "⚠️ Falta el permiso del micrófono. Dalo en Ajustes del teléfono y vuelve a tocar 🎙️."
+                    }
+                    else -> {
+                        cameraMicResumeAt = now + 1500
+                        if (!isAiBusy) cameraAnswerView?.text = "⚠️ El micrófono tuvo un problema (error $error). Sigo intentando..."
+                    }
+                }
+                updateCameraButtons()
+            }
+            override fun onResults(results: Bundle?) {
+                cameraListening = false
+                cameraInput?.hint = "Pregunta sobre lo que ves..."
+                if (!cameraLiveActive) return
+                val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty().trim()
+                cameraMicResumeAt = android.os.SystemClock.uptimeMillis() + 300
+                if (heard.isEmpty()) return
+                if (isAiBusy) cameraInput?.setText(heard) else sendCameraQuestion(heard)
+            }
+            override fun onPartialResults(partialResults: Bundle?) {
+                partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                    ?.takeIf { it.isNotBlank() }?.let { cameraInput?.setText(it) }
+            }
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+        cameraListening = true
+        runCatching {
+            r.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, LanguageManager.getSelectedLanguage(this@MainActivity))
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            })
+        }.onFailure {
+            cameraListening = false
+            cameraMicResumeAt = android.os.SystemClock.uptimeMillis() + 1500
+            cameraAnswerView?.text = "⚠️ No pude encender el micrófono: ${it.message}"
+        }
+        updateCameraButtons()
+    }
+
+    /**
+     * Foto de lo que se ve ahora mismo (reducida para que la IA la lea rápido).
+     * 📷 Unos 150.000 píxeles (como 390×390; en vertical queda ~263×570). Antes era el lado mayor a 896 px
+     *    (~370.000 píxeles): la IA miraba más del doble de «trocitos» de imagen y muchos modelos con mmproj
+     *    trababan la cámara o cerraban la app. Ahora responde varias veces más rápido y con mucha menos memoria.
+     *    Se pide a la cámara directo en ese tamaño (no se crea la foto grande de pantalla completa).
+     */
+    private fun captureCameraFrame(): File? = runCatching {
+        val tv = cameraTexture ?: return@runCatching null
+        val vw = tv.width; val vh = tv.height
+        if (vw <= 0 || vh <= 0) return@runCatching null
+        val f = minOf(1f, kotlin.math.sqrt(150_000f / (vw.toFloat() * vh.toFloat())))
+        val bmp = tv.getBitmap((vw * f).toInt().coerceAtLeast(64), (vh * f).toInt().coerceAtLeast(64)) ?: return@runCatching null
+        val dir = File(filesDir, "chat_images").apply { mkdirs() }
+        val file = File(dir, "camara_${System.currentTimeMillis()}.jpg")
+        file.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, it) }
+        bmp.recycle()
+        file
+    }.getOrNull()
+
+    // Muestra en la cámara la respuesta que va escribiendo la IA y la lee en voz alta al terminar
+    private fun startCameraWatcher() {
+        cameraWatcher.removeCallbacksAndMessages(null)
+        cameraWatcher.post(object : Runnable {
+            override fun run() {
+                if (!cameraLiveActive) return
+                // ⏳ Terminó de cargarse el modelo: se avisa si ya puede mirar (o por qué no)
+                if (cameraWaitingModel && !isModelLoading) {
+                    cameraWaitingModel = false
+                    cameraAnswerView?.text = if (activeModelHasVision()) "✅ Listo: apunta a algo y pregúntame lo que quieras."
+                        else cameraNoVisionText()
+                }
+                runCatching { checkCameraAlive() }
+                runCatching { updateCameraButtons() }
+                runCatching { keepCameraMicListening() }
+                val last = chatMessages.lastOrNull()
+                if (last != null && !last.isUser && chatMessages.size - 1 > cameraLastShownIdx) {
+                    val t = stripMarkdownSymbols(removeThinking(last.text))
+                    if (t.isNotBlank()) {
+                        cameraAnswerView?.text = when {
+                            !t.startsWith("Pensando") -> t
+                            pendingCameraSearch != null -> "👀 Reconociendo lo que ves..." + cameraThinkingTime()
+                            else -> "⏳ Pensando..." + cameraThinkingTime()
+                        }
+                        if (!isAiBusy && !t.startsWith("Pensando") && t != cameraLastSpokenText && pendingCameraSearch == null) {
+                            cameraLastSpokenText = t
+                            // 🎙️ Si la conversación por voz ya la está diciendo, no se repite encima
+                            //    (antes se cortaba y volvía a empezar, y al terminar no seguía bien la conversación)
+                            if (!isVocalResponseActive && !(isVoiceConversationActive && isTtsSpeaking)) {
+                                if (chatTtsEngine == null) chatTtsEngine = TtsEngineManager(this@MainActivity)
+                                replyTtsActive = true
+                                if (isVoiceConversationActive) { isTtsSpeaking = true; currentSpokenReply = textForSpeech(t) }
+                                chatTtsEngine?.speak(textForSpeech(t)) {
+                                    replyTtsActive = false
+                                    if (isTtsSpeaking) { isTtsSpeaking = false; ttsFinishedAt = System.currentTimeMillis() }
+                                }
+                            }
+                        }
+                    }
+                }
+                cameraWatcher.postDelayed(this, 400)
+            }
+        })
+    }
+
+    /** Cuánto lleva pensando (para que se vea que sigue trabajando) y con qué motor. */
+    private fun cameraThinkingTime(): String {
+        if (cameraAskedAt == 0L || !isAiBusy) return ""
+        val secs = (android.os.SystemClock.uptimeMillis() - cameraAskedAt) / 1000
+        if (secs < 3) return ""
+        val engine = runCatching {
+            val m = getActiveModelFile()
+            if (m != null && GenieXEngineManager.isLoaded(m.absolutePath)) GenieXEngineManager.engineInfo() else "💻 CPU"
+        }.getOrDefault("")
+        return " " + secs + " s · " + engine + (if (secs >= 45) "\n(Si tarda mucho, toca ■ para detener)" else "")
+    }
+
+    /** Después de reconocer el objeto, busca en internet lo que la IA identificó. */
+    private fun continueCameraSearch(identified: String) {
+        val original = pendingCameraSearch ?: return
+        pendingCameraSearch = null
+        val name = stripMarkdownSymbols(removeThinking(identified)).lineSequence().firstOrNull { it.isNotBlank() }.orEmpty()
+            .replace(Regex("^(es |esto es |se trata de |veo )", RegexOption.IGNORE_CASE), "").trim().trimEnd('.').take(120)
+        if (name.isBlank()) return
+        cameraAnswerView?.text = "🔎 Buscando en internet: $name..."
+        markAiCutForMic()
+        chatTtsEngine?.stop(); replyTtsActive = false; isTtsSpeaking = false
+        skipNextCameraCapture = true
+        etChatInput?.setText("Busca en internet $name. Pregunta del usuario: $original")
+        btnSend?.performClick()
+    }
+
+    // ========================================================================
+    // 🖼️ IMÁGENES PARA NOTICIAS Y CLIMA
+    // ========================================================================
+    private val replyImages = java.util.Collections.synchronizedList(mutableListOf<String>())
+
+    private fun saveReplyBitmap(bmp: android.graphics.Bitmap, tag: String): String? = runCatching {
+        val dir = File(filesDir, "chat_images").apply { mkdirs() }
+        val f = File(dir, "${tag}_${System.currentTimeMillis()}_${(0..9999).random()}.jpg")
+        f.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, it) }
+        f.absolutePath
+    }.getOrNull()
+
+    /** Fotos de noticias desde Bing Noticias (trae miniaturas); se agregan debajo de la respuesta. */
+    private fun fetchNewsImages(query: String, gl: String, max: Int = 4): List<Pair<String, String>> {
+        val mkt = "es-" + gl
+        val url = "https://www.bing.com/news/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&format=rss&setlang=es&mkt=$mkt"
+        val (_, xml) = httpGetText(url) ?: return emptyList()
+        val out = mutableListOf<Pair<String, String>>()
+        Regex("<item>(.*?)</item>", RegexOption.DOT_MATCHES_ALL).findAll(xml).forEach { m ->
+            if (out.size >= max) return@forEach
+            val item = m.groupValues[1]
+            val title = Regex("<title>(.*?)</title>", RegexOption.DOT_MATCHES_ALL).find(item)?.groupValues?.get(1)?.let { xmlUnescape(it) } ?: return@forEach
+            var img = Regex("<News:Image>(.*?)</News:Image>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)).find(item)?.groupValues?.get(1)?.let { xmlUnescape(it) }
+                ?: Regex("<media:content[^>]*url=\"([^\"]+)\"").find(item)?.groupValues?.get(1)?.let { xmlUnescape(it) }
+                ?: return@forEach
+            if (img.startsWith("//")) img = "https:$img"
+            if (img.contains("bing.com/th") && !img.contains("&w=")) img += "&w=640&h=360&c=7"
+            val bmp = downloadImage(img) ?: return@forEach
+            val path = saveReplyBitmap(bmp, "noticia")
+            bmp.recycle()
+            if (path != null) out += title to path
+        }
+        // Si Bing Noticias no trajo fotos, se buscan en Bing Imágenes (fotos de prensa del tema)
+        if (out.isEmpty()) out += runCatching { fetchSearchImages("$query hoy", max) }.getOrDefault(emptyList())
+        Log.i(TAG, "Fotos de noticias: ${out.size} para «$query»")
+        return out
+    }
+
+    /**
+     * Respaldo: fotos desde Bing Imágenes (enlaces "murl" de la página de resultados).
+     * recent = solo fotos de las últimas 24 h (noticias). Para portadas y afiches se busca sin ese filtro.
+     */
+    private fun fetchSearchImages(query: String, max: Int, recent: Boolean = true, tag: String = "noticia"): List<Pair<String, String>> {
+        val (_, html) = httpGetText("https://www.bing.com/images/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}" +
+            (if (recent) "&qft=+filterui:age-lt1440" else "") + "&setlang=es")
+            ?: return emptyList()
+        val out = mutableListOf<Pair<String, String>>()
+        val urls = Regex("murl&quot;:&quot;(https?://[^&]+?)&quot;").findAll(html).map { it.groupValues[1] }.distinct().take(max * 3).toList()
+        val titles = Regex("t&quot;:&quot;(.*?)&quot;").findAll(html).map { xmlUnescape(it.groupValues[1]) }.toList()
+        for ((i, u) in urls.withIndex()) {
+            if (out.size >= max) break
+            val bmp = downloadImage(u) ?: continue
+            if (bmp.width < 200 || bmp.height < 120) { bmp.recycle(); continue }
+            val path = saveReplyBitmap(bmp, tag)
+            bmp.recycle()
+            if (path != null) out += (titles.getOrNull(i) ?: query) to path
+        }
+        return out
+    }
+
+    private fun weatherEmoji(code: Int): String = when (code) {
+        0 -> "☀️"; 1 -> "🌤️"; 2 -> "⛅"; 3 -> "☁️"; 45, 48 -> "🌫️"
+        51, 53, 55, 56, 57 -> "🌦️"; 61, 63, 65, 66, 67, 80, 81, 82 -> "🌧️"
+        71, 73, 75, 77, 85, 86 -> "🌨️"; 95, 96, 99 -> "⛈️"; else -> "🌡️"
+    }
+
+    /** Dibuja una tarjeta del clima (ahora + próximos días) como imagen. */
+    private fun renderWeatherCard(place: String, nowTemp: Double, feels: Double, nowCode: Int, hum: Int, wind: Double,
+                                  days: List<String>, codes: List<Int>, mins: List<Double>, maxs: List<Double>, rain: List<Int>): String? = runCatching {
+        val w = 1080; val rows = days.size.coerceAtMost(7); val h = 560 + rows * 120 + 40
+        val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bmp)
+        val night = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY).let { it < 7 || it >= 20 }
+        val grad = android.graphics.LinearGradient(0f, 0f, 0f, h.toFloat(),
+            if (night) Color.parseColor("#0B1A3A") else Color.parseColor("#2F6BFF"),
+            if (night) Color.parseColor("#1E2A55") else Color.parseColor("#7FB2FF"), android.graphics.Shader.TileMode.CLAMP)
+        c.drawRoundRect(android.graphics.RectF(0f, 0f, w.toFloat(), h.toFloat()), 60f, 60f, android.graphics.Paint().apply { shader = grad; isAntiAlias = true })
+        val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        p.textSize = 52f; p.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        c.drawText("📍 " + place.take(32), 60f, 100f, p)
+        p.textSize = 180f
+        c.drawText(weatherEmoji(nowCode), 60f, 320f, p)
+        p.textSize = 170f
+        c.drawText("${Math.round(nowTemp)}°", 330f, 310f, p)
+        p.typeface = android.graphics.Typeface.DEFAULT; p.textSize = 46f
+        c.drawText(weatherCodeEs(nowCode).replaceFirstChar { it.uppercase() }, 60f, 410f, p)
+        p.color = Color.parseColor("#E6FFFFFF"); p.textSize = 38f
+        c.drawText("Sensación ${Math.round(feels)}°  ·  💧 $hum%  ·  💨 ${Math.round(wind)} km/h", 60f, 470f, p)
+        val line = android.graphics.Paint().apply { color = Color.parseColor("#55FFFFFF"); strokeWidth = 2f }
+        c.drawLine(60f, 520f, (w - 60).toFloat(), 520f, line)
+        for (i in 0 until rows) {
+            val y = 600f + i * 120
+            p.color = Color.WHITE; p.textSize = 44f; p.typeface = android.graphics.Typeface.DEFAULT_BOLD
+            c.drawText(days[i], 60f, y, p)
+            p.typeface = android.graphics.Typeface.DEFAULT; p.textSize = 60f
+            c.drawText(weatherEmoji(codes.getOrElse(i) { 0 }), 470f, y + 6, p)
+            p.textSize = 40f; p.color = Color.parseColor("#CCFFFFFF")
+            c.drawText("💧${rain.getOrElse(i) { 0 }}%", 590f, y, p)
+            p.color = Color.WHITE; p.textSize = 44f
+            val mm = "${Math.round(mins.getOrElse(i) { 0.0 })}° / ${Math.round(maxs.getOrElse(i) { 0.0 })}°"
+            c.drawText(mm, w - 60f - p.measureText(mm), y, p)
+        }
+        val path = saveReplyBitmap(bmp, "clima")
+        bmp.recycle()
+        path
+    }.getOrNull()
+
+    // ========================================================================
+    // 📚 APRENDER DE INTERNET: "actualízate en Kotlin" → notas guardadas que la IA usa después
+    // ========================================================================
+    @Volatile private var pendingLearnTopic: String? = null
+
+    private fun knowledgeDir() = File(filesDir, "conocimiento").apply { mkdirs() }
+
+    private fun learnTopic(prompt: String): String? {
+        val m = Regex("(?i)\\b(actual[ií]zate|ponte al d[ií]a|aprende|estudia|inf[oó]rmate|investiga y aprende)\\b\\s*(en|sobre|de|acerca de|lo [uú]ltimo de|lo nuevo de|las novedades de)?\\s+(.{2,60})")
+            .find(prompt) ?: return null
+        return m.groupValues[3].trim().trimEnd('.', '!', '?')
+            .replace(Regex("(?i)^(lo [uú]ltimo de|lo nuevo de|las novedades de|la [uú]ltima versi[oó]n de)\\s+"), "").ifBlank { null }
+    }
+
+    private fun knowledgeSlug(topic: String) = java.text.Normalizer.normalize(topic.lowercase(Locale.ROOT), java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}+"), "").replace(Regex("[^a-z0-9+#.]+"), "_").trim('_').take(40)
+
+    private fun knowledgeTopics(): List<Pair<String, File>> = knowledgeDir().listFiles { f -> f.name.endsWith(".txt") }.orEmpty()
+        .sortedByDescending { it.lastModified() }
+        .map { f -> (f.readLines().firstOrNull()?.removePrefix("TEMA: ")?.trim() ?: f.nameWithoutExtension) to f }
+
+    /** Datos de internet para aprender un tema (varias búsquedas sobre lo más nuevo). */
+    private fun learnContext(topic: String): String? {
+        val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        val queries = listOf(
+            "$topic última versión novedades $year",
+            "$topic what's new latest release $year",
+            "$topic documentación oficial cambios importantes"
+        )
+        // 💻 «Actualízate en Kotlin…»: en la documentación oficial y las páginas de programación de tu idioma
+        val parts = queries.mapNotNull { q -> runCatching { fetchWebContext(q, code = true) }.getOrNull() }
+        if (parts.isEmpty()) return null
+        return "Información de internet obtenida ahora sobre «$topic»:\n\n" + parts.joinToString("\n\n---\n\n").take(9000) +
+            "\n\nInstrucción: con SOLO esa información escribe NOTAS TÉCNICAS actualizadas sobre «$topic» para usarlas después al programar. " +
+            "Incluye: 1) versión más reciente y fecha si aparece, 2) novedades y cambios importantes, 3) cosas que quedaron obsoletas o cambiaron de nombre, " +
+            "4) ejemplos cortos de código con la forma nueva de hacerlo, 5) fuentes. Usa listas con guiones, sé preciso y no inventes nada que no esté en la información."
+    }
+
+    private fun saveKnowledge(topic: String, notes: String) {
+        val clean = stripMarkdownSymbols(removeThinking(notes)).trim()
+        if (clean.length < 80) return
+        val date = java.text.SimpleDateFormat("d 'de' MMMM yyyy", Locale("es", "ES")).format(java.util.Date())
+        runCatching { File(knowledgeDir(), knowledgeSlug(topic) + ".txt").writeText("TEMA: $topic\nAPRENDIDO: $date\n\n$clean") }
+    }
+
+    /** Notas aprendidas que tienen que ver con la pregunta (se pegan al mensaje para la IA). */
+    private fun knowledgeFor(prompt: String): String {
+        val p = java.text.Normalizer.normalize(prompt.lowercase(Locale.ROOT), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
+        val hits = knowledgeTopics().filter { (topic, _) ->
+            val words = knowledgeSlug(topic).split('_').filter { it.length >= 2 }
+            words.isNotEmpty() && words.all { w -> Regex("(^|[^a-z0-9])" + Regex.escape(w) + "([^a-z0-9]|$)").containsMatchIn(p) }
+        }.take(2)
+        if (hits.isEmpty()) return ""
+        val per = 3500 / hits.size
+        return hits.joinToString("\n") { (topic, f) ->
+            "[Conocimiento ACTUALIZADO que aprendiste de internet sobre $topic (úsalo antes que tu memoria):\n" + f.readText().take(per) + "]"
+        } + "\n"
+    }
+
+    /** Respuestas directas: qué aprendió / olvidar un tema. */
+    private fun knowledgeCommand(prompt: String): String? {
+        val p = prompt.lowercase(Locale.ROOT).trim()
+        if (Regex("\\b(qu[eé] (has aprendido|aprendiste|temas sabes)|en qu[eé] te (has )?actualizado|lista de (lo )?aprendido)\\b").containsMatchIn(p)) {
+            val t = knowledgeTopics()
+            return if (t.isEmpty()) "📚 Todavía no he aprendido nada de internet. Pídeme, por ejemplo: «actualízate en Kotlin»."
+            else "📚 Temas que aprendí de internet:\n" + t.joinToString("\n") { (topic, f) ->
+                "• $topic (" + (f.readLines().getOrNull(1)?.removePrefix("APRENDIDO: ") ?: "") + ")"
+            } + "\n\nPara borrar uno di: «olvida <tema>»."
+        }
+        Regex("^(olvida|borra lo aprendido de|elimina lo aprendido de)\\s+(.+)$").find(p)?.let { m ->
+            val topic = m.groupValues[2].trim().trimEnd('.', '!')
+            val f = File(knowledgeDir(), knowledgeSlug(topic) + ".txt")
+            return if (f.exists() && f.delete()) "🗑️ Listo, olvidé lo aprendido sobre «$topic»." else "No tengo notas guardadas sobre «$topic»."
+        }
+        return null
+    }
+
+    // ========================================================================
+    // 🎬 VER VIDEOS: cuadros repartidos en el tiempo para que la IA entienda lo que pasa
+    // ========================================================================
+    /** Devuelve hasta 6 cuadros del video (y un texto que explica en qué segundo va cada uno). */
+    private fun extractVideoFrames(video: File, maxFrames: Int = 6): Pair<List<File>, String> {
+        val r = android.media.MediaMetadataRetriever()
+        return try {
+            r.setDataSource(video.absolutePath)
+            val durMs = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            if (durMs <= 0) return emptyList<File>() to ""
+            // Un cuadro cada ~2 s en videos cortos; en largos se reparten los 6
+            val count = ((durMs / 2000L).toInt() + 1).coerceIn(2, maxFrames)
+            val dir = File(cacheDir, "video_frames").apply { mkdirs() }
+            val times = mutableListOf<String>()
+            val files = (0 until count).mapNotNull { i ->
+                val tMs = (durMs * (i + 0.5) / count).toLong()
+                val bmp = runCatching {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1)
+                        r.getScaledFrameAtTime(tMs * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 640, 640)
+                    else r.getFrameAtTime(tMs * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                }.getOrNull() ?: return@mapNotNull null
+                val f = File(dir, "cuadro_${System.currentTimeMillis()}_$i.jpg")
+                runCatching { f.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it) } }
+                bmp.recycle()
+                times += String.format(Locale.US, "%.1f s", tMs / 1000.0)
+                f.takeIf { it.exists() && it.length() > 0 }
+            }
+            val desc = "[Video «${video.name.substringAfter('_')}» de ${String.format(Locale.US, "%.1f", durMs / 1000.0)} segundos. " +
+                "Te paso ${files.size} cuadros en orden, tomados en: ${times.joinToString(", ")}. " +
+                "No tienes el audio del video, solo las imágenes.]"
+            files to desc
+        } catch (t: Throwable) {
+            Log.e(TAG, "No se pudieron sacar cuadros del video: ${t.message}")
+            emptyList<File>() to ""
+        } finally {
+            runCatching { r.release() }
+        }
+    }
+
+    /**
+     * Convierte cualquier imagen a JPG derecho y de tamaño razonable antes de dársela a la IA.
+     * Así el motor (que solo entiende bien JPG/PNG) puede leer WEBP, HEIC, AVIF, GIF, BMP, ICO y fotos RAW (DNG...).
+     */
+    private fun normalizeImageForModel(src: File): File = runCatching {
+        val maxSide = 1024
+        val bmp = android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(src)) { decoder, info, _ ->
+            decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
+            val w = info.size.width; val h = info.size.height
+            val f = minOf(1f, maxSide.toFloat() / maxOf(w, h))
+            if (f < 1f) decoder.setTargetSize((w * f).toInt().coerceAtLeast(1), (h * f).toInt().coerceAtLeast(1))
+        }
+        // Fondo blanco para imágenes con transparencia (PNG, WEBP, ICO)
+        val out = android.graphics.Bitmap.createBitmap(bmp.width, bmp.height, android.graphics.Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(out).apply { drawColor(Color.WHITE); drawBitmap(bmp, 0f, 0f, null) }
+        bmp.recycle()
+        val dir = File(cacheDir, "img_ia").apply { mkdirs() }
+        val f = File(dir, src.nameWithoutExtension.take(40) + "_${System.currentTimeMillis()}.jpg")
+        f.outputStream().use { out.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, it) }
+        out.recycle()
+        f
+    }.getOrElse {
+        Log.w(TAG, "No se pudo convertir ${src.name}: ${it.message}")
+        src
+    }
+
+    // ========================================================================
+    // 📦 ENTREGA AL USUARIO: todo lo que la IA crea o modifica aparece en el chat como tarjeta
+    //    (tocar = abrir · mantener presionado = compartir)
+    // ========================================================================
+    private fun deliveryTag(thumb: String?, uri: Uri, mime: String, name: String) =
+        "deliver:${thumb.orEmpty()}|$uri|$mime|${name.replace("|", "_")}"
+
+    private fun videoThumb(video: File): String? = runCatching {
+        val r = android.media.MediaMetadataRetriever()
+        try {
+            r.setDataSource(video.absolutePath)
+            val bmp = r.getScaledFrameAtTime(500_000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 720, 720)
+                ?: return@runCatching null
+            saveReplyBitmap(bmp, "video").also { bmp.recycle() }
+        } finally { r.release() }
+    }.getOrNull()
+
+    /** Agrega al chat un mensaje de la IA con el archivo listo para abrir o compartir. */
+    private fun postDeliveredFile(text: String, tag: String) {
+        chatMessages.add(ChatMessage(text = text, isUser = false, sender = "Cumulus", tokens = "📦 Archivo entregado",
+            attachments = listOf(tag)))
+        chatAdapter?.notifyItemInserted(chatMessages.lastIndex)
+        rvChatMessages?.scrollToPosition(chatMessages.lastIndex)
+        saveCurrentChat()
+    }
+
+    // ========================================================================
+    // 🔒 Lo que crea la IA se guarda PRIVADO dentro de la app (no en tu galería).
+    //    Solo va a tu teléfono si tocas la flecha ⬇️ de descarga.
+    // ========================================================================
+    private fun deliveriesDir() = File(filesDir, "entregas").apply { mkdirs() }
+
+    private fun privateUri(f: File): Uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
+
+    // ========================================================================
+    // 🗣️ NARRACIÓN DE VIDEOS con la voz de ElevenLabs
+    // ========================================================================
+    private val narrationRate = 24000   // ElevenLabs PCM 24 kHz mono
+
+    // 🎙️ Audio → texto para NPU/GPU (GenieX no escucha audio): ElevenLabs Scribe v2 y, si no hay
+    //    clave o falla, el reconocedor de voz del teléfono (sin internet, Android 13+).
+    private val AUDIO_EXTS = setOf("wav", "mp3", "flac", "m4a", "ogg", "aac", "opus", "3gp", "amr", "webm")
+
+    private fun audiosToText(files: List<File>): String {
+        val sb = StringBuilder()
+        for (f in files) {
+            AiActivity.analyzing("🎙️ Escuchando el audio «${f.name.substringAfter('_')}»", "Paso el audio a texto (ElevenLabs Scribe o el teléfono)")
+            val t = runCatching { transcribeWithEleven(f) }.getOrNull()?.takeIf { it.isNotBlank() }
+                ?: runCatching { transcribeOnDevice(f) }.getOrNull()?.takeIf { it.isNotBlank() }
+            AiActivity.log(if (t != null) "📝 Audio pasado a texto" else "⚠️ No se pudo pasar el audio a texto", t?.take(200).orEmpty())
+            sb.append("\n\n[Audio adjunto «").append(f.name).append("» — transcripción]:\n")
+                .append(t ?: "(no se pudo transcribir este audio)")
+        }
+        return sb.toString()
+    }
+
+    private fun transcribeWithEleven(f: File): String? {
+        val key = elevenKey()?.first ?: return null
+        val boundary = "Boundary-" + System.currentTimeMillis()
+        val conn = (URL("https://api.elevenlabs.io/v1/speech-to-text").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"; doOutput = true; doInput = true; useCaches = false
+            connectTimeout = 20000; readTimeout = 180000
+            setRequestProperty("xi-api-key", key)
+            setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        }
+        BufferedOutputStream(conn.outputStream).use { out ->
+            fun field(name: String, value: String) {
+                out.write("--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n".toByteArray())
+            }
+            field("model_id", "scribe_v2")
+            field("tag_audio_events", "false")
+            out.write(("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"${f.name}\"\r\n" +
+                "Content-Type: application/octet-stream\r\n\r\n").toByteArray())
+            FileInputStream(f).use { it.copyTo(out) }
+            out.write("\r\n--$boundary--\r\n".toByteArray())
+        }
+        if (conn.responseCode !in 200..299) {
+            Log.w("CumulusAudio", "Scribe HTTP ${conn.responseCode}: " +
+                runCatching { conn.errorStream?.bufferedReader()?.readText() }.getOrNull()?.take(300))
+            conn.disconnect(); return null
+        }
+        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        conn.disconnect()
+        return org.json.JSONObject(body).optString("text").trim()
+    }
+
+    /** Decodifica cualquier audio a PCM 16 bits, mono, 16 kHz (lo que pide el reconocedor del teléfono). */
+    private fun decodeToPcm16kMono(f: File): ByteArray? {
+        val ex = android.media.MediaExtractor()
+        try {
+            ex.setDataSource(f.absolutePath)
+            val track = (0 until ex.trackCount).firstOrNull {
+                ex.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+            } ?: return null
+            ex.selectTrack(track)
+            val fmt = ex.getTrackFormat(track)
+            val codec = android.media.MediaCodec.createDecoderByType(fmt.getString(android.media.MediaFormat.KEY_MIME)!!)
+            codec.configure(fmt, null, null, 0); codec.start()
+            var rate = fmt.getInteger(android.media.MediaFormat.KEY_SAMPLE_RATE)
+            var ch = fmt.getInteger(android.media.MediaFormat.KEY_CHANNEL_COUNT)
+            val mono = java.io.ByteArrayOutputStream()
+            val info = android.media.MediaCodec.BufferInfo()
+            var inDone = false; var outDone = false; var pos = 0.0
+            while (!outDone) {
+                if (!inDone) {
+                    val ii = codec.dequeueInputBuffer(10000)
+                    if (ii >= 0) {
+                        val n = ex.readSampleData(codec.getInputBuffer(ii)!!, 0)
+                        if (n < 0) { codec.queueInputBuffer(ii, 0, 0, 0, android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM); inDone = true }
+                        else { codec.queueInputBuffer(ii, 0, n, ex.sampleTime, 0); ex.advance() }
+                    }
+                }
+                val oi = codec.dequeueOutputBuffer(info, 10000)
+                if (oi == android.media.MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    rate = codec.outputFormat.getInteger(android.media.MediaFormat.KEY_SAMPLE_RATE)
+                    ch = codec.outputFormat.getInteger(android.media.MediaFormat.KEY_CHANNEL_COUNT)
+                } else if (oi >= 0) {
+                    val buf = codec.getOutputBuffer(oi)!!.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    buf.position(info.offset); buf.limit(info.offset + info.size)
+                    val sh = buf.asShortBuffer()
+                    val frames = sh.remaining() / ch.coerceAtLeast(1)
+                    val step = rate / 16000.0
+                    // Mezcla a mono y baja a 16 kHz (vecino más cercano: suficiente para voz)
+                    while (pos < frames) {
+                        val fi = pos.toInt(); var sum = 0
+                        for (c in 0 until ch) sum += sh.get(fi * ch + c)
+                        val v = (sum / ch).toShort()
+                        mono.write(v.toInt() and 0xFF); mono.write((v.toInt() shr 8) and 0xFF)
+                        pos += step
+                    }
+                    pos -= frames
+                    codec.releaseOutputBuffer(oi, false)
+                    if (info.flags and android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outDone = true
+                }
+            }
+            codec.stop(); codec.release()
+            return mono.toByteArray().takeIf { it.isNotEmpty() }
+        } catch (t: Throwable) {
+            Log.w("CumulusAudio", "No se pudo decodificar ${f.name}", t); return null
+        } finally { ex.release() }
+    }
+
+    /** Reconocedor de voz del teléfono leyendo el archivo (Android 13+, sin internet). */
+    private fun transcribeOnDevice(f: File): String? {
+        if (Build.VERSION.SDK_INT < 33) return null
+        if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) return null
+        val pcm = decodeToPcm16kMono(f) ?: return null
+        val pipe = android.os.ParcelFileDescriptor.createPipe()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val text = StringBuilder()
+        var rec: SpeechRecognizer? = null
+        fun take(b: Bundle?) {
+            b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let {
+                if (it.isNotBlank()) text.append(if (text.isEmpty()) "" else " ").append(it.trim())
+            }
+        }
+        runOnUiThread {
+            try {
+                rec = SpeechRecognizer.createOnDeviceSpeechRecognizer(this).apply {
+                    setRecognitionListener(object : RecognitionListener {
+                        override fun onReadyForSpeech(params: Bundle?) {}
+                        override fun onBeginningOfSpeech() {}
+                        override fun onRmsChanged(rmsdB: Float) {}
+                        override fun onBufferReceived(buffer: ByteArray?) {}
+                        override fun onEndOfSpeech() {}
+                        override fun onPartialResults(partialResults: Bundle?) {}
+                        override fun onEvent(eventType: Int, params: Bundle?) {}
+                        override fun onSegmentResults(segmentResults: Bundle) { take(segmentResults) }
+                        override fun onEndOfSegmentedSession() { latch.countDown() }
+                        override fun onResults(results: Bundle?) { take(results); latch.countDown() }
+                        override fun onError(error: Int) { latch.countDown() }
+                    })
+                    startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, java.util.Locale.getDefault().toLanguageTag())
+                        putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipe[0])
+                        putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+                        putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, android.media.AudioFormat.ENCODING_PCM_16BIT)
+                        putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, 16000)
+                        // Sesión por segmentos: transcribe el audio completo, no solo la primera frase
+                        putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE)
+                    })
+                }
+            } catch (t: Throwable) { Log.w("CumulusAudio", "Reconocedor no disponible", t); latch.countDown() }
+        }
+        thread {
+            runCatching { android.os.ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { it.write(pcm) } }
+        }
+        latch.await(pcm.size / 32000L + 60, java.util.concurrent.TimeUnit.SECONDS)
+        runOnUiThread { runCatching { rec?.destroy() } }
+        runCatching { pipe[0].close() }
+        return text.toString().trim()
+    }
+
+    private fun elevenKey(): Pair<String, String>? {
+        val p = getSharedPreferences("TtsPrefs", Context.MODE_PRIVATE)
+        val key = p.getString("elevenlabs_api_key", "").orEmpty()
+        if (key.isBlank()) return null
+        return key to (p.getString("elevenlabs_voice_id", "21m00Tcm4TlvDq8ikWAM") ?: "21m00Tcm4TlvDq8ikWAM")
+    }
+
+    /** Una frase corta por escena: la escribe la IA si hay un modelo cargado; si no, se usa una plantilla. */
+    private fun narrationLines(subject: String, n: Int, lang: String = "es"): List<String> {
+        // 🌍 La narración va en el idioma de quien pidió el video (inglés, portugués, alemán, chino, árabe…)
+        val langName = runCatching { CreateMedia.languageName(lang) }.getOrDefault("español")
+        val ask = "Escribe la narración de un video corto sobre: $subject. Son $n escenas: 1) plano general, 2) plano medio, " +
+            "3) detalle de cerca, 4) final. Escribe EXACTAMENTE $n frases en $langName, una por línea, sin números ni comillas, " +
+            "cada una de 8 a 16 palabras, con tono cinematográfico y emotivo. Solo las frases."
+        val sys = "Eres un guionista de videos cortos. Respondes solo con las frases pedidas."
+        val raw = runCatching {
+            val model = getActiveModelFile()
+            when {
+                GenieXEngineManager.isLoaded(model?.absolutePath) ->
+                    runBlocking { GenieXEngineManager.generate(sys, listOf("user"), listOf(ask), 220, 0.8f) }
+                nativeIsModelLoaded() -> {
+                    cpuSetChatMode(sys, 220)
+                    cpuRunChat(arrayOf("user"), arrayOf(ask))
+                }
+                else -> ""
+            }
+        }.getOrDefault("")
+        val lines = stripMarkdownSymbols(removeThinking(raw)).lines()
+            .map { it.trim().trimStart('-', '•', '*', ' ').replace(Regex("^\\d+[).:-]\\s*"), "").trim('"', '«', '»', ' ') }
+            // (chino, japonés y tailandés no separan las palabras con espacios: ahí cuenta el largo)
+            .filter { it.split(" ").size >= 4 || (lang in setOf("zh", "ja", "th", "ko") && it.length >= 8) }
+        if (lines.size >= n) return lines.take(n)
+        val s = subject.replaceFirstChar { it.uppercase() }
+        if (lang != "es") return listOf(
+            "$s.", "Every detail tells a story worth discovering.", "Up close, everything comes to life.", "And this moment stays with us forever."
+        ).take(n)
+        return listOf(
+            "$s. Una escena que nos invita a detenernos y mirar.",
+            "Cada detalle cuenta una historia que vale la pena descubrir.",
+            "De cerca, todo cobra una nueva vida.",
+            "Y así, este momento queda grabado para siempre."
+        ).take(n)
+    }
+
+    /** Pide a ElevenLabs la frase como audio PCM (16 bits, 24 kHz, mono). */
+    private fun elevenPcm(text: String, key: String, voice: String): ShortArray? =
+        elevenPcmModel(text, key, voice, "eleven_v4")   // solo el modelo más nuevo
+
+    private fun elevenPcmModel(text: String, key: String, voice: String, model: String): ShortArray? = runCatching {
+        val conn = (URL("https://api.elevenlabs.io/v1/text-to-speech/$voice?output_format=pcm_$narrationRate").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"; doOutput = true; connectTimeout = 20000; readTimeout = 60000
+            setRequestProperty("xi-api-key", key)
+            setRequestProperty("Content-Type", "application/json")
+        }
+        conn.outputStream.use {
+            it.write(JSONObject().put("text", text).put("model_id", model)
+                .put("voice_settings", JSONObject().put("stability", 0.4).put("similarity_boost", 0.95)).toString().toByteArray())
+        }
+        if (conn.responseCode !in 200..299) { Log.e(TAG, "ElevenLabs narración: ${conn.responseCode}"); return@runCatching null }
+        val bytes = conn.inputStream.use { it.readBytes() }
+        conn.disconnect()
+        val out = ShortArray(bytes.size / 2)
+        java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(out)
+        out
+    }.getOrNull()
+
+    /** Codifica el audio PCM a AAC (.m4a) para poder ponerlo dentro del MP4. */
+    private fun encodePcmToM4a(pcm: ShortArray, out: File) {
+        val rate = narrationRate
+        val fmt = android.media.MediaFormat.createAudioFormat(android.media.MediaFormat.MIMETYPE_AUDIO_AAC, rate, 1).apply {
+            setInteger(android.media.MediaFormat.KEY_AAC_PROFILE, android.media.MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+            setInteger(android.media.MediaFormat.KEY_BIT_RATE, 96_000)
+            setInteger(android.media.MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
+        }
+        val codec = android.media.MediaCodec.createEncoderByType(android.media.MediaFormat.MIMETYPE_AUDIO_AAC)
+        codec.configure(fmt, null, null, android.media.MediaCodec.CONFIGURE_FLAG_ENCODE)
+        codec.start()
+        val muxer = android.media.MediaMuxer(out.absolutePath, android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        var track = -1; var started = false
+        val info = android.media.MediaCodec.BufferInfo()
+        var pos = 0; var inputDone = false
+        try {
+            while (true) {
+                if (!inputDone) {
+                    val inIdx = codec.dequeueInputBuffer(10_000)
+                    if (inIdx >= 0) {
+                        val buf = codec.getInputBuffer(inIdx)!!
+                        buf.clear()
+                        val count = minOf((buf.capacity() / 2), pcm.size - pos, 4096)
+                        if (count <= 0) {
+                            codec.queueInputBuffer(inIdx, 0, 0, pos * 1_000_000L / rate, android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputDone = true
+                        } else {
+                            val bb = java.nio.ByteBuffer.allocate(count * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                            bb.asShortBuffer().put(pcm, pos, count)
+                            buf.put(bb)
+                            codec.queueInputBuffer(inIdx, 0, count * 2, pos * 1_000_000L / rate, 0)
+                            pos += count
+                        }
+                    }
+                }
+                val outIdx = codec.dequeueOutputBuffer(info, 10_000)
+                when {
+                    outIdx == android.media.MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        track = muxer.addTrack(codec.outputFormat); muxer.start(); started = true
+                    }
+                    outIdx >= 0 -> {
+                        val ob = codec.getOutputBuffer(outIdx)!!
+                        if (info.flags and android.media.MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) info.size = 0
+                        if (info.size > 0 && started) {
+                            ob.position(info.offset); ob.limit(info.offset + info.size)
+                            muxer.writeSampleData(track, ob, info)
+                        }
+                        codec.releaseOutputBuffer(outIdx, false)
+                        if (info.flags and android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
+                    }
+                }
+            }
+        } finally {
+            runCatching { codec.stop() }; runCatching { codec.release() }
+            runCatching { if (started) muxer.stop() }; runCatching { muxer.release() }
+        }
+    }
+
+    /** Junta el video (sin sonido) con el audio de la narración en un solo MP4. */
+    private fun muxVideoAudio(video: File, audio: File, out: File) {
+        val muxer = android.media.MediaMuxer(out.absolutePath, android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        val vEx = android.media.MediaExtractor().apply { setDataSource(video.absolutePath) }
+        val aEx = android.media.MediaExtractor().apply { setDataSource(audio.absolutePath) }
+        try {
+            val vIdx = (0 until vEx.trackCount).first { vEx.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME)!!.startsWith("video/") }
+            val aIdx = (0 until aEx.trackCount).first { aEx.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME)!!.startsWith("audio/") }
+            vEx.selectTrack(vIdx); aEx.selectTrack(aIdx)
+            val vt = muxer.addTrack(vEx.getTrackFormat(vIdx)); val at = muxer.addTrack(aEx.getTrackFormat(aIdx))
+            muxer.start()
+            val buf = java.nio.ByteBuffer.allocate(4 * 1024 * 1024)
+            val info = android.media.MediaCodec.BufferInfo()
+            for ((ex, t) in listOf(vEx to vt, aEx to at)) {
+                while (true) {
+                    info.offset = 0
+                    info.size = ex.readSampleData(buf, 0)
+                    if (info.size < 0) break
+                    info.presentationTimeUs = ex.sampleTime
+                    info.flags = if (ex.sampleFlags and android.media.MediaExtractor.SAMPLE_FLAG_SYNC != 0) android.media.MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+                    muxer.writeSampleData(t, buf, info)
+                    ex.advance()
+                }
+            }
+        } finally {
+            runCatching { muxer.stop() }; runCatching { muxer.release() }
+            vEx.release(); aEx.release()
+        }
+    }
+
+    // ========================================================================
+    // 🎵 MÚSICA DE FONDO: se compone dentro del teléfono (sin derechos de autor)
+    // ========================================================================
+    private fun composeMusic(samples: Int, subject: String): FloatArray {
+        val sr = narrationRate.toFloat()
+        val t = subject.lowercase(Locale.ROOT)
+        val epic = Regex("drag[oó]n|batalla|guerra|acci[oó]n|carrera|[eé]pic|h[eé]roe|fuego|tormenta|monstruo|espacio|cohete").containsMatchIn(t)
+        val sad = Regex("noche|triste|lluvia|misterio|terror|oscur|soledad|niebla|invierno|fantasma").containsMatchIn(t)
+        fun hz(midi: Int) = 440f * Math.pow(2.0, (midi - 69) / 12.0).toFloat()
+        // Progresiones de acordes (notas MIDI)
+        val chords = when {
+            epic -> listOf(listOf(45, 52, 57, 60), listOf(41, 48, 53, 57), listOf(43, 50, 55, 59), listOf(40, 47, 52, 56))   // Am F G E
+            sad -> listOf(listOf(45, 52, 57, 60), listOf(41, 48, 53, 57), listOf(38, 45, 50, 53), listOf(40, 47, 52, 55))    // Am F Dm Em
+            else -> listOf(listOf(48, 55, 60, 64), listOf(43, 50, 55, 59), listOf(45, 52, 57, 60), listOf(41, 48, 53, 57))   // C G Am F
+        }
+        val barSecs = if (epic) 2.0f else 3.0f
+        val barLen = (barSecs * sr).toInt()
+        val out = FloatArray(samples)
+        val twoPi = (2 * Math.PI).toFloat()
+        for (i in 0 until samples) {
+            val bar = i / barLen
+            val inBar = (i % barLen) / sr
+            val chord = chords[bar % chords.size]
+            val time = i / sr
+            // Colchón suave (pad) con entrada y salida lenta en cada acorde
+            val env = minOf(1f, inBar / 0.6f) * minOf(1f, (barSecs - inBar) / 0.6f)
+            var v = 0f
+            for (n in chord) {
+                val f = hz(n)
+                v += (kotlin.math.sin(twoPi * f * time) + 0.25f * kotlin.math.sin(twoPi * 2 * f * time)) * 0.09f * env
+            }
+            // Arpegio delicado (una nota cada 1/4 o 1/2 compás)
+            val step = if (epic) 0.25f else 0.5f
+            val k = (inBar / step).toInt()
+            val since = inBar - k * step
+            val arpNote = chord[(k % (chord.size - 1)) + 1] + 12
+            v += kotlin.math.sin(twoPi * hz(arpNote) * time) * 0.07f * kotlin.math.exp(-since * 5f)
+            // Pulso grave para escenas épicas
+            if (epic) {
+                val beat = (time % 0.5f)
+                v += kotlin.math.sin(twoPi * 55f * beat) * 0.18f * kotlin.math.exp(-beat * 12f)
+            }
+            out[i] = v
+        }
+        // Entrada y salida suave de toda la música
+        val fadeIn = (1.0f * sr).toInt(); val fadeOut = (1.8f * sr).toInt()
+        for (i in 0 until minOf(fadeIn, samples)) out[i] *= i / fadeIn.toFloat()
+        for (i in 0 until minOf(fadeOut, samples)) out[samples - 1 - i] *= i / fadeOut.toFloat()
+        val peak = out.maxOf { kotlin.math.abs(it) }.coerceAtLeast(0.001f)
+        for (i in out.indices) out[i] = out[i] / peak * 0.45f
+        return out
+    }
+
+    /** Mezcla voz + música: cuando habla la voz, la música baja sola para que se entienda. */
+    private fun mixVoiceAndMusic(voice: FloatArray, music: FloatArray?, hasVoice: Boolean): ShortArray {
+        val n = voice.size
+        val out = ShortArray(n)
+        var level = 0f
+        val attack = 1f / (0.05f * narrationRate); val release = 1f / (0.5f * narrationRate)
+        for (i in 0 until n) {
+            val a = kotlin.math.abs(voice[i])
+            level = if (a > level) level + (a - level) * attack * 40 else maxOf(0f, level - release)
+            val duck = if (hasVoice) (1f - minOf(1f, level * 6f) * 0.7f) else 1f
+            val m = (music?.getOrNull(i) ?: 0f) * (if (hasVoice) 0.55f else 1f) * duck
+            out[i] = ((voice[i] + m).coerceIn(-1f, 1f) * 32767).toInt().toShort()
+        }
+        return out
+    }
+
+    /**
+     * 🛟 ¿El modelo dice que no puede buscar o no tiene internet? («no tengo la capacidad de buscar vuelos en tiempo real»,
+     * «no tengo acceso a internet», «como modelo de lenguaje…»). Solo se mira el comienzo de la respuesta.
+     */
+    private fun modelRefusesWeb(text: String): Boolean = Regex(
+        "(?iu)(no tengo (la )?(capacidad|posibilidad|acceso)|no puedo (buscar|consultar|acceder|navegar|revisar|ver) |" +
+            "no dispongo de (acceso|informaci[oó]n)|no cuento con (acceso|informaci[oó]n)|como (un )?(modelo|asistente) de (lenguaje|ia)|" +
+            "no tengo informaci[oó]n (actualizada|en tiempo real|sobre|de|acerca)|no tengo (conocimiento|conocimientos|datos)|no conozco|desconozco|" +
+            "no estoy (familiarizad|al tanto)|no s[eé] (nada )?(sobre|de|acerca)|no tengo idea|i (can'?t|cannot|don'?t have) (browse|access|search)|i don'?t know)"
+    ).containsMatchIn(text.take(400))
+
+    // 😄 Chistes de la colección: los tipos del último pedido (para «otro») y el texto que se mostró
+    @Volatile private var lastJokeKinds: List<JokeBank.Kind> = emptyList()
+    @Volatile private var lastJokeReply = ""
+
+    private fun usedJokes(): Set<String> =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("jokes_used", "").orEmpty()
+            .split(',').filter { it.isNotBlank() }.toSet()
+
+    private fun rememberJokes(ids: List<String>) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val list = prefs.getString("jokes_used", "").orEmpty().split(',').filter { it.isNotBlank() }.toMutableList()
+        ids.forEach { id -> list.remove(id); list += id }
+        prefs.edit().putString("jokes_used", list.takeLast(400).joinToString(",")).apply()
+    }
+
+    /**
+     * 😄 CHISTES DE LA COLECCIÓN (ver ai/JokeBank.kt): chistes chilenos, argentinos, mexicanos, de EE. UU., China, Japón,
+     * Corea, Portugal y Brasil, payas, adivinanzas, trabalenguas, colmos, «¿qué le dijo…?» y «toc toc».
+     * Nunca repite (recuerda los que ya contó), los presenta con una sonrisa y se ríe al final.
+     * Si pides un tema que no tiene (o ya contó todos y hay internet), responde la IA buscando en internet.
+     */
+    private fun jokeReply(prompt: String, history: List<Pair<String, String>>): AiReply? {
+        val modeKey = currentChatMode().key
+        if (modeKey == "codigo" || modeKey == "traduccion") return null
+        val humor = modeKey == "humor"
+        if (userTellsJoke(prompt)) return null   // 🎤 lo cuenta el usuario: la IA se ríe y responde
+        // 🌐 «Quiero un chiste de internet»: se busca en internet. Si internet está apagado, se avisa y va uno de la colección
+        val fromInternet = JokeBank.wantsInternet(prompt)
+        if (fromInternet && isInternetEnabled()) {
+            AiActivity.log("🌐 Me pediste un chiste de internet: lo busco")
+            return null
+        }
+        val lastAssistant = history.lastOrNull { it.first == "assistant" }?.second.orEmpty().trim()
+        val afterBankJoke = lastJokeReply.isNotBlank() && lastAssistant.take(40) == lastJokeReply.trim().take(40)
+        // «sí», «dale», «ya po» después de «¿Te cuento otro?» también es pedir otro
+        val yes = afterBankJoke && Regex("^(s[ií]+|dale|ya|bueno|ok|okey|obvio|claro|por favor|porfa|sip|yes)([,!. ]+(po|porfa|por favor|dale|cu[eé]ntame|otr[oa]))*[!. ]*$")
+            .matches(JokeBank.norm(prompt.trim()))
+        val another = JokeBank.asksAnother(prompt) || yes
+        // «otro chileno», «uno de parejas», «otra paya» (sin decir «chiste»): en el modo humor o después de un chiste
+        val anotherOf = if (humor || afterBankJoke) JokeBank.anotherOfKinds(prompt) else null
+        val kinds = when {
+            anotherOf != null -> anotherOf
+            another && afterBankJoke && lastJokeKinds.isNotEmpty() -> lastJokeKinds
+            another && humor -> listOf(JokeBank.Kind.GENERAL, JokeBank.Kind.QUE_LE_DIJO, JokeBank.Kind.COLMO, JokeBank.Kind.CHILE)
+            else -> JokeBank.requestedKinds(prompt)
+        }
+        if (kinds.isEmpty()) return null
+        // Fuera del modo humor, solo pedidos cortos y claros («cuéntame un chiste», «una adivinanza»)
+        if (!humor && prompt.length > 80) return null
+        val topic = if (another || anotherOf != null) null else JokeBank.topic(prompt)
+        // Con o sin internet: siempre de la colección y sin repetir (al terminar una ronda, empieza otra en distinto orden)
+        val usedOrder = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("jokes_used", "").orEmpty().split(',').filter { it.isNotBlank() }
+        // 🗣️ Por voz, las adivinanzas van de a una (para esperar tu respuesta)
+        val howMany = if (isVoiceConversationActive && JokeBank.Kind.ADIVINANZA in kinds) 1 else JokeBank.howMany(prompt)
+        val picked = JokeBank.pick(kinds, howMany, usedOrder.toSet(), topic, canSearch = isInternetEnabled(), usedOrder = usedOrder) ?: run {
+            AiActivity.log("😄 No tengo chistes de eso en mi colección (o ya te los conté todos): los busca la IA")
+            return null
+        }
+        rememberJokes(picked.map { it.id })
+        if (topic == null) lastJokeKinds = kinds
+        // 🤔 Voz a voz: la adivinanza sin la respuesta; la app espera lo que digas
+        val riddle = if (isVoiceConversationActive) picked.firstOrNull { it.answer.isNotBlank() } else null
+        pendingRiddle = riddle; riddleTries = 0
+        val text = (if (fromInternet) "🌐 Internet está apagado, así que no puedo buscar chistes ahora (actívalo en ➕ → Internet). " +
+            "Mientras, te cuento uno de mi colección:\n\n" else "") + JokeBank.format(picked, hideAnswers = riddle != null)
+        lastJokeReply = text
+        AiActivity.log("😄 Chiste de la colección de Cumulus", picked.joinToString(" · ") { it.kind.label })
+        return AiReply(text, "😄 de la colección de chistes de Cumulus (sin repetir)")
+    }
+
+    // 🤔 Adivinanza por voz esperando respuesta
+    @Volatile private var pendingRiddle: JokeBank.Joke? = null
+    @Volatile private var riddleTries = 0
+
+    /**
+     * 🤔 VOZ A VOZ: después de una adivinanza, la app espera tu respuesta.
+     * Si aciertas → «¡Correcto!» · si dices «no sé», «me rindo», «dime» → te dice la respuesta ·
+     * si te equivocas → «¡Casi! Inténtalo otra vez» (al segundo intento te la dice). Si hablas de otra cosa, se olvida.
+     */
+    private fun riddleTurn(prompt: String): AiReply? {
+        val r = pendingRiddle ?: return null
+        if (!isVoiceConversationActive) { pendingRiddle = null; return null }
+        val p = JokeBank.norm(prompt)
+        val keys = JokeBank.answerKeys(r)
+        val giveUp = Regex("no (se|lo se|la se|tengo idea|me acuerdo|caigo)|me rindo|dime|dimela|dilo|cual es|que es|la respuesta|ni idea|no la cacho|no cacho|paso").containsMatchIn(p)
+        val reply = when {
+            keys.any { k -> Regex("(?<![a-z])${k.dropLast(if (k.length > 4) 1 else 0)}").containsMatchIn(p) } -> {
+                pendingRiddle = null
+                "¡Correcto! 🎉 ¡Jajaja, muy bien! Era: ${r.answer}. ¿Te hago otra adivinanza? 😄"
+            }
+            giveUp -> {
+                pendingRiddle = null
+                "¡Jajaja! 😄 La respuesta es: ${r.answer}. ¿Te hago otra adivinanza?"
+            }
+            p.split(Regex("\\s+")).size > 8 -> { pendingRiddle = null; return null }   // habla de otra cosa
+            else -> {
+                riddleTries++
+                if (riddleTries >= 2) { pendingRiddle = null; "¡Jajaja, no! 😆 Era: ${r.answer}. ¿Te hago otra?" }
+                else "¡Jejeje, casi! 😁 Inténtalo otra vez… o dime «me rindo» y te la digo."
+            }
+        }
+        lastJokeReply = reply
+        return AiReply(reply, "🤔 adivinanza por voz")
+    }
+
+    /**
+     * 😄 Modo humor: la respuesta de la IA siempre con sonrisa. Si el usuario contó un chiste, empieza riéndose;
+     * si la IA contó uno, termina riéndose. Saca el «¡Claro! Aquí tienes un chiste para ti:» sin gracia.
+     */
+    private fun humorize(text: String, question: String): String {
+        if (text.isBlank() || text.contains("```")) return text
+        var t = text.trim().replace(Regex("(?iu)^¡?claro!?[,.]?\\s*aqu[ií] tienes (un|unos|algunos) chistes?( para ti)?[.!:]?\\s*"), "¡Atento, que este es bueno! 😁\n\n")
+        val head = t.take(80).lowercase()
+        val laughs = Regex("j[aeiou]j[aeiou]|😂|🤣|😄|😁|😆|😃|😊|🤭").containsMatchIn(head)
+        // 😁 ANTES: empieza riéndose
+        if (userTellsJoke(question) && !Regex("^¡?j[aeiou]j").containsMatchIn(t.lowercase())) t = "¡Jajajaja! 😂 ¡Qué bueno!\n\n$t"
+        else if (!laughs) t = "¡Jajaja! 😄 $t"
+        if (humorJokeAsk(question)) {
+            // 🤭 DURANTE: una risita justo antes del remate (la última línea del chiste)
+            val lines = t.trimEnd().lines().toMutableList()
+            val last = lines.indexOfLast { it.isNotBlank() }
+            if (last >= 2 && !Regex("(?iu)\\((je|ji|ja)").containsMatchIn(t)) {
+                lines.add(last, listOf("(jejeje… 🤭)", "(jijiji… 😆)", "(ay, ya me estoy riendo… 😂)").random())
+                t = lines.joinToString("\n")
+            }
+            // 🤣 DESPUÉS: termina riéndose
+            if (!Regex("(?iu)j[aeiou]j[aeiou]").containsMatchIn(t.takeLast(120))) t = t.trimEnd() + "\n¡Jajajaja! 🤣"
+        }
+        return t
+    }
+
+    /**
+     * 🛡️ Máximo de tokens de respuesta que caben en el contexto elegido (barra «Contexto»), según lo que ya ocupa
+     * el texto que se le manda al modelo (≈ 3 letras por token en español). Nunca menos de 160 ni más de lo pedido.
+     */
+    /** Letras de chat anterior que todavía caben, dejando ~400 tokens para la respuesta. */
+    private fun contextRoomChars(usedChars: Int): Int {
+        val ctx = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt("ai_context", 2048).coerceIn(2048, 15000)
+        return ((ctx - 400 - 96) * 3 - usedChars).coerceAtLeast(0)
+    }
+
+    /**
+     * Si el mensaje (pregunta + datos de internet) no cabe junto a las instrucciones, se acorta por el medio:
+     * se conserva el comienzo y el final (donde va la pregunta y lo que hay que hacer).
+     */
+    private fun fitToContext(prompt: String, systemChars: Int): String {
+        val ctx = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt("ai_context", 2048).coerceIn(2048, 15000)
+        val allowed = (ctx - 300 - 96) * 3 - systemChars
+        if (allowed <= 1200 || prompt.length <= allowed) return prompt
+        AiActivity.log("🛡️ Acorto los datos para que quepan en el contexto ($ctx)")
+        val tail = 900
+        return prompt.take(allowed - tail - 10).substringBeforeLast('\n') + "\n…\n" + prompt.takeLast(tail)
+    }
+
+    private fun safeMaxTokens(promptChars: Int, wanted: Int): Int {
+        val ctx = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt("ai_context", 2048).coerceIn(2048, 15000)
+        val used = promptChars / 3 + 96   // + plantilla de chat
+        val room = ctx - used - 32
+        val out = minOf(wanted, room).coerceAtLeast(160)
+        if (out < wanted) AiActivity.log("🛡️ Respuesta de hasta $out tokens para que quepa en el contexto ($ctx)")
+        return out
+    }
+
+    /** 😄 ¿Pide un chiste, una paya, una adivinanza…? (modo Buen humor y chistes) */
+    private fun humorJokeAsk(prompt: String): Boolean =
+        (Regex("(?iu)chistes?|payas?|adivinanzas?|trabalenguas|toc[ -]?toc|el colmo|qu[eé] le dijo|piadas?|knock").containsMatchIn(prompt) ||
+            // 🌍 «tell me a joke», «uma piada», «une blague», «einen Witz», «анекдот», «笑话», «농담», «ジョーク»…
+            runCatching { WebSearchRules.asksHumorAnyLanguage(prompt) }.getOrDefault(false)) &&
+            // 🎤 Si el que cuenta el chiste eres tú («te cuento un chiste…»), la IA se ríe y responde: no se busca nada
+            !userTellsJoke(prompt)
+
+    /** «te cuento un chiste», «escucha este chiste», «¿sabes el de…?», o el chiste ya escrito (largo, con remate). */
+    private fun userTellsJoke(prompt: String): Boolean =
+        Regex("(?iu)te (cuento|voy a contar|tengo|traigo|s[eé]) (un|uno|una|este|esta)|esc[uú]cha(me)? (este|esta|uno)|" +
+            "(sabes|conoces) (el|este|la|esta) (chiste|de)|aqu[ií] va (uno|un chiste)|ah[ií] va (uno|un chiste)|mi chiste").containsMatchIn(prompt) ||
+            (prompt.length > 140 && prompt.contains('\n').not() && Regex("(?iu)[?¿].+[.!]|—|-\\s").containsMatchIn(prompt) &&
+                !Regex("(?iu)^\\s*(cu[eé]ntame|dame|dime|hazme|busca|quiero|necesito)").containsMatchIn(prompt))
+
+    /** «cuéntame un chiste chileno» → «chistes chilenos cortos»; «hazme una paya» → «payas chilenas cortas». */
+    private fun humorSearchQuery(prompt: String): String {
+        // 🌍 Chiste pedido en otro idioma: se busca en ese idioma, sin agregar palabras en español
+        if (runCatching { WebSearchRules.humorLanguage(prompt, newsCountry()) != "es" }.getOrDefault(false)) {
+            return (runCatching { WebSearchRules.internetSearch(prompt) }.getOrNull() ?: prompt)
+                .replace(Regex("(?iu)\\b(from|on|in) (the )?internet\\b|\\bonline\\b|da internet|na internet|sur internet|im internet|su internet|из интернета|в интернете|网上|인터넷|ネットの?|" +
+                    "dari internet|di internet|trên mạng|từ internet|จากอินเทอร์เน็ต|ในเน็ต|من الإنترنت|من الانترنت|من النت"), " ")
+                .replace(Regex("\\s+"), " ").trim().take(120)
+        }
+        var q = WebSearchRules.stripRequestWords(cleanSearchQuery(prompt.replace(Regex("(?iu)(?:de|en|por|desde|con)\\s+(?:el\\s+)?internet|de la web|de google|en google|b[uú]sca(?:me|nos|r)?"), " ")))
+            .replace(Regex("(?iu)^(cu[eé]ntame|hazme|haz|cuenta|tira(me)?|dime|dame|otro|otra)\\s+"), "")
+            .replace(Regex("(?iu)\\b(un|una|alg[uú]n|alguna|otro|otra)\\s+(chiste|paya|adivinanza|piada)\\b")) { m -> m.groupValues[2] + "s" }
+            .replace(Regex("(?iu)\\bchiste\\b"), "chistes").replace(Regex("(?iu)\\bpaya\\b"), "payas")
+            .replace(Regex("\\s+"), " ").trim()
+        if (Regex("(?iu)payas?").containsMatchIn(q) && !Regex("(?iu)chilen").containsMatchIn(q)) q += " chilenas"
+        if (Regex("(?iu)toc[ -]?toc|knock").containsMatchIn(q) && !Regex("(?iu)chistes").containsMatchIn(q))
+            q = "chistes de toc toc" + q.replace(Regex("(?iu)^(un |una )?(toc[ -]?toc|knock knock)"), "")
+        if (!Regex("(?iu)cort[oa]s").containsMatchIn(q) && Regex("(?iu)chistes|payas|adivinanzas|trabalenguas").containsMatchIn(q))
+            q += if (Regex("(?iu)payas|adivinanzas").containsMatchIn(q)) " cortas" else " cortos"
+        // 🌎 En México, Argentina, Perú, Colombia, España… si no dijo de dónde, los chistes de su país («chistes mexicanos»)
+        if (Regex("(?iu)\\bchistes\\b").containsMatchIn(q) &&
+            !Regex("(?iu)chilen|argentin|mexican|peruan|colombian|venezolan|bolivian|ecuatorian|uruguay|paraguay|espa[ñn]ol|gallego|cuban|" +
+                "norteamerican|gringo|chin[oa]s|japones|corean|portugu|brasile|pareja|ni[ñn]os|colmo|toc|le dijo|jaimito").containsMatchIn(q))
+            runCatching { WebSearchRules.humorDemonym(newsCountry()) }.getOrNull()?.let { q = q.replace(Regex("(?iu)\\bchistes\\b"), "chistes $it") }
+        if (!Regex("(?iu)ni[ñn]os|todo p[uú]blico|sanos").containsMatchIn(q) && Regex("(?iu)chistes").containsMatchIn(q)) q += " buenos"
+        return q.take(120)
+    }
+
+    /** 🛟 Arma la respuesta con lo que trajo internet: título, un resumen corto y el enlace de cada resultado. */
+    private fun webResultsFallback(web: String, cat: WebSearchRules.Category?, question: String, place: String): String {
+        val items = web.split(Regex("(?m)^### ")).mapNotNull { block ->
+            val lines = block.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            val title = lines.firstOrNull()?.takeIf { it.isNotBlank() && !it.startsWith("Otros resultados") } ?: return@mapNotNull null
+            val url = lines.firstOrNull { it.startsWith("Fuente: ") }?.removePrefix("Fuente: ")?.trim().orEmpty()
+            val text = lines.drop(1).filterNot { it.startsWith("Fuente: ") }.joinToString(" ")
+                .replace(Regex("\\s+"), " ").trim()
+            val summary = if (text.length > 220) text.take(220).substringBeforeLast(' ') + "…" else text
+            buildString {
+                append("• ").append(title)
+                if (summary.isNotBlank()) append("\n  ").append(summary)
+                if (url.isNotBlank()) append("\n  🔗 ").append(url)
+            }
+        }.take(5)
+        val sb = StringBuilder("🔎 Esto encontré en internet ahora mismo:")
+        if (items.isEmpty()) sb.append("\n\n").append(dailyFallback(web).substringAfter("\n\n").take(1500))
+        else sb.append("\n\n").append(items.joinToString("\n\n"))
+        // (Los enlaces a Google se agregan al final de toda respuesta: aquí no se repiten)
+        return sb.toString()
+    }
+
+    /** Convierte los datos que trajo la app (noticias, clima, búsqueda) en una respuesta legible, sin el modelo. */
+    private fun dailyFallback(data: String): String {
+        val body = data.substringBefore("\n\nInstrucción:").substringBefore("\nInstrucción:")
+            .substringBefore("[CONTEXTO EN TIEMPO REAL]").substringBefore("[AHORA]")
+            .replace(Regex("(?m)^Noticias con foto.*$"), "📸 Con foto:")
+            .replace("Resultados de internet obtenidos ahora para", "🔎 Esto encontré en internet sobre")
+            .trim()
+        return "Aquí tienes lo que encontré ahora mismo:\n\n$body"
+    }
+
+    /** 🥇 Va al final de cada mensaje con datos: entregar lo que trajo la app es lo primero (nada de disculpas). */
+    private val DELIVER_DATA_RULE = "Tu prioridad es entregar estos datos: NO pidas disculpas ni digas que no puedes buscar o que no tienes " +
+        "internet (la app ya buscó por ti). Si falta un dato puntual, escribe «sin dato» en esa parte y entrega todo lo demás."
+
+    // El antiguo modo agente (el modelo decide qué buscar) se deja apagado
+    private val WEB_AGENT_MODE = false
+
+    /** ¿Este mensaje necesita internet? (como LLM Hub: no se busca para saludos, cálculos ni textos creativos) */
+    /**
+     * 🧵 ¿El mensaje sigue el tema anterior? («ok expándelo», «agrégale la lógica», «y ahora el botón»,
+     * «hazlo en Kotlin», «sigue», «corrígelo»…). Si es así, la IA debe continuar sobre su respuesta anterior.
+     */
+    private fun isFollowUp(prompt: String): Boolean {
+        val p = prompt.lowercase(Locale.ROOT).trim()
+        if (p.isEmpty() || p.split(Regex("\\s+")).size > 14) return false
+        // 📖 «explícame qué son los UAPs», «háblame de la inteligencia artificial»: es un tema nuevo, se busca
+        if (runCatching { WebSearchRules.asksKnowledge(p) }.getOrDefault(false)) return false
+        val starts = Regex("^(ok|okay|vale|s[ií]|dale|bueno|perfecto|listo|ya|y|e|ahora|entonces|tambi[eé]n|pero|adem[aá]s|igual|otra vez|de nuevo)\\b").containsMatchIn(p)
+        val verb = Regex("\\b(ag?r[eé]g|a[ñn]ad|implement|complet|contin[uú]|sigue|segu[ií]|termin|haz|hac(?!ia)|corrig|arregl|modific|cambi|mejor|optimiz|explic|repit|muestr|env[ií]|dame|d[aá]mel|p[aá]sa(?!je)|escrib|pon|quit|elimin|borr|us[aá]|prueb|revis|exp[aá]nd|ampl[ií]|extiend|desarroll|detall|profundiz|actualiz|ajust|integr|incluy|conviert|tradu[cz]|resum|simplific|reduc|separ|un[ei]|junt|continu|termin)\\p{L}*").containsMatchIn(p)
+        // 🎬 «película», «artículo», «título», «vehículo» no son «agrégala/explícalo»: antes «muéstrame película del cine»
+        //    se tomaba como «sigue con lo anterior», no se buscaba y la IA repetía las películas de YouTube del chat
+        val pronoun = Regex("\\p{L}*[áéíóú]\\p{L}*(?<!u)(lo|la|los|las|le|les)(?!\\p{L})|\\b(hazlo|hazla|ponlo|ponla|dilo|dila|esto|eso|lo anterior|el c[oó]digo|la app|la l[oó]gica|lo mismo)\\b").containsMatchIn(p)
+        val factual = Regex("\\b(noticias?|clima|precio|d[oó]lar|busca|google|internet|partido|resultados?|qui[eé]n es|cu[aá]ndo|d[oó]nde|qu[eé] pas[aó]|hoy|actual(es)?|[uú]ltim[oa]s?)\\b").containsMatchIn(p)
+        // 🌐 Nombra algo que se busca en internet (vuelos, pasajes, comida, hoteles, empleos…): es un pedido nuevo
+        val topic = runCatching { WebSearchRules.detect(p) != WebSearchRules.GENERAL }.getOrDefault(false)
+        if (topic && !pronoun) return false
+        return !factual && (pronoun || (verb && (starts || p.split(Regex("\\s+")).size <= 8)))
+    }
+
+    private fun needsWebSearch(prompt: String): Boolean {
+        val p = prompt.lowercase(Locale.ROOT).trim()
+        // 🌍 Pidió buscar en internet (en cualquier idioma y de cualquier forma): siempre se busca
+        if (runCatching { WebSearchRules.internetSearch(prompt) != null }.getOrDefault(false)) return true
+        if (isFollowUp(p)) return false
+        if (p.length < 4) return false
+        if (Regex("^(hola|holi|buenas|buenos d[ií]as|buenas (tardes|noches)|gracias|ok|okay|vale|chao|adi[oó]s|jaja\\S*|s[ií]|no|bien|genial|perfecto)[!.?\\s]*$").containsMatchIn(p)) return false
+        if (Regex("^[\\d\\s+\\-*/().,=x^%]+\\??$").matches(p)) return false
+        // 🗣️ «dame / muéstrame / búscame / necesito / tienes…» + un tema de la lista (vuelos, micros, empleos, autos…):
+        //    es un pedido nuevo para buscar en internet, no «sigue con lo anterior»
+        val topicAsked = runCatching { WebSearchRules.stripRequestWords(p) }.getOrDefault(p).let { core ->
+            core != p && runCatching { WebSearchRules.detect(core) != WebSearchRules.GENERAL }.getOrDefault(false)
+        }
+        // 🧵 Continuar la conversación («ok agrégala», «hazlo», «sigue», «corrígelo», «agrega la lógica»…)
+        //    no es una búsqueda: buscar borraba el historial y la IA repetía su respuesta anterior
+        val knowledge = runCatching { WebSearchRules.asksKnowledge(p) }.getOrDefault(false)
+        if (!topicAsked && !knowledge && Regex("^(ok|okay|vale|s[ií]|dale|bueno|perfecto|listo|ya|y|ahora|entonces|tambi[eé]n)?[,\\s]*(ag?r[eé]ga|a[ñn]ade|implementa|completa|contin[uú]a|sigue|termina|haz|hace|corrige|arregla|modifica|cambia|mejora|optimiza|explica|repite|muestra|env[ií]a|dame|p[aá]same|escribe|crea|genera|pon|quita|elimina|borra|usa|prueba|revisa|exp[aá]nd|ampl[ií]a|extiende|desarrolla|detalla|profundiza|actualiza|ajusta|integra|incluye|convierte|traduce|resume|simplifica|reduce|separa|une|junta)\\w*").containsMatchIn(p) &&
+            !Regex("\\b(noticias?|clima|tiempo|precio|d[oó]lar|hoy|actual|[uú]ltim[oa]s?|internet|busca|google|partido|resultados?|marcador|f[uú]tbol|qui[eé]n|cu[aá]ndo|d[oó]nde)\\b").containsMatchIn(p)) return false
+        if (!topicAsked && !knowledge && p.split(Regex("\\s+")).size <= 6 && Regex("(\\p{L}*[áéíóú]\\p{L}*(?<!u)(lo|la|los|las|le|les)(?!\\p{L})|\\b(hazlo|hazla|ponlo|ponla|dilo|dila|sigue|contin[uú]a)\\b)").containsMatchIn(p) &&
+            !Regex("\\b(noticias?|clima|precio|d[oó]lar|busca|google|internet)\\b").containsMatchIn(p)) return false
+        if (Regex("\\b(c[oó]digo|app|aplicaci[oó]n|funci[oó]n|clase|l[oó]gica|kotlin|java|python|html|css|javascript|script|programa|bot[oó]n|pantalla|archivo)\\b").containsMatchIn(p) &&
+            !Regex("\\b(busca|investiga|en internet|google|qu[eé] es|novedades|[uú]ltima versi[oó]n)\\b").containsMatchIn(p)) return false
+        if (Regex("\\b(escribe|esc[rí]beme|redacta|inventa|crea(me)? un (poema|cuento|chiste|texto|correo|mensaje)|cu[eé]ntame un (chiste|cuento)|trad[uú]ce|corrige|resume este|resume el|reescribe|mejora (este|el) texto|c[oó]mo te llamas|qui[eé]n eres|c[oó]mo est[aá]s)\\b").containsMatchIn(p)) return false
+        return true
+    }
+
+    /** Deja solo lo que hay que buscar (quita "por favor", "dime", "búscame", etc.) */
+    private fun cleanSearchQuery(prompt: String): String {
+        val first = prompt.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty()
+        // 🗣️ «oye, dame…», «quiero que me des…», «me puedes dar…», «yo necesito…», «tienes…», «muéstrame…», «ellos…»
+        val cleaned = runCatching { WebSearchRules.stripRequestWords(first) }.getOrDefault(first)
+            .replace(Regex("(?i)^(oye|hola|por favor|porfa)[,\\s]+"), "")
+            .replace(Regex("(?i)\\b(por favor|porfa|me puedes|puedes|podr[ií]as|quiero saber|necesito saber|dime|cu[eé]ntame|b[uú]sca(me)?( en internet| en google)?|investiga|averigua|inf[oó]rmame( sobre)?)\\b"), " ")
+            .replace(Regex("[¿?¡!]"), " ")
+            .replace(Regex("\\s+"), " ").trim()
+        return cleaned.ifBlank { first }.take(200)
+    }
+
+    /** ▶️ Búsqueda en YouTube de las noticias pedidas: «noticias internacionales» → «noticias internacionales hoy»,
+     *  «noticias» → «noticias Chile hoy» (tu país), «noticias de fútbol» → «noticias de fútbol hoy». */
+    private fun newsYoutubeLink(prompt: String): String {
+        // 🌍 Usuario de otro país o que escribe en otro idioma: se busca en su idioma («news United States», «新闻 中国»)
+        val lang = runCatching { WebSearchRules.replyLanguage(prompt, newsCountry()) }.getOrDefault("es")
+        if (lang != "es") {
+            var fq = prompt.replace(Regex("[¿?¡!.,]"), " ").replace(Regex("\\s+"), " ").trim()
+            if (fq.split(' ').size <= 2) fq += " " + Locale("", newsCountry()).getDisplayCountry(Locale(lang))
+            return "https://www.youtube.com/results?search_query=" + java.net.URLEncoder.encode(fq.trim(), "UTF-8")
+        }
+        var q = runCatching { WebSearchRules.stripRequestWords(cleanSearchQuery(prompt)) }.getOrDefault(prompt)
+            .replace(Regex("[¿?¡!.,]"), " ").replace(Regex("\\s+"), " ").trim()
+        if (!Regex("(?iu)noticia").containsMatchIn(q)) q = "noticias $q".trim()
+        // 🌎 Sin tema ni país («noticias», «las noticias de hoy»): las de tu país
+        val generic = Regex("(?iu)^(las |los )?(noticias|[uú]ltimas noticias)( de| del)?( hoy| d[ií]a| ahora| nacionales)?$").matches(q)
+        if (generic && countryInPrompt(prompt) == null && !Regex("(?iu)internacional|mundo|mundial|extranjer").containsMatchIn(q))
+            q += " " + Locale("", newsCountry()).getDisplayCountry(Locale("es"))
+        if (!Regex("(?iu)\\bhoy\\b").containsMatchIn(q)) q += " hoy"
+        return "https://www.youtube.com/results?search_query=" + java.net.URLEncoder.encode(q, "UTF-8")
+    }
+
+    /** Clave para reconocer la misma noticia aunque cambie el medio, las mayúsculas o los signos. */
+    private fun newsKey(title: String): String = java.text.Normalizer.normalize(
+        title.lowercase(Locale.ROOT).substringBefore(" (").replace(Regex("^[•\\-\\d.)\\s]+"), ""),
+        java.text.Normalizer.Form.NFD
+    ).replace(Regex("\\p{M}+"), "").replace(Regex("[^a-z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim().take(60)
+
+    /**
+     * 🔁 Quita lo que el modelo repite: líneas o párrafos iguales (o casi iguales) que ya dijo antes
+     * en la misma respuesta. No toca los bloques de código.
+     */
+    private fun removeRepeatedLines(text: String): String {
+        if (text.contains("```")) return text
+        val seen = HashSet<String>()
+        val out = StringBuilder()
+        for (line in text.lines()) {
+            val key = java.text.Normalizer.normalize(line.lowercase(Locale.ROOT).replace(Regex("^\\s*\\d{1,2}[.)]\\s+"), ""), java.text.Normalizer.Form.NFD)
+                .replace(Regex("\\p{M}+"), "").replace(Regex("[^a-z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
+            // Líneas cortas (títulos, viñetas vacías, separadores) se dejan siempre
+            if (key.length >= 25 && !seen.add(key)) continue
+            out.append(line).append('\n')
+        }
+        // Sin líneas en blanco de más donde se quitó algo
+        return out.toString().replace(Regex("\n{3,}"), "\n\n").trimEnd()
+    }
+
+    private fun agentToolInstructions(codeMode: Boolean): String =
+        " HERRAMIENTAS DE INTERNET: puedes usar internet tú mismo. " +
+            "Si la pregunta necesita información actual o que no sabes con seguridad (noticias, precios, clima, " +
+            "resultados deportivos, personas, fechas, datos recientes, versiones o documentación), escribe solo esto y detente: " +
+            "<buscar>palabras clave de búsqueda</buscar>. La app te devolverá los resultados con títulos, resúmenes y enlaces. " +
+            "Para leer una página completa escribe: <abrir>https://enlace-completo</abrir>. " +
+            "Puedes buscar o abrir hasta $maxAgentActions veces; si los resultados no sirven, busca con otras palabras. " +
+            "Escribe búsquedas cortas y precisas, no copies la pregunta entera. " +
+            "No anuncies que vas a buscar ni hables de tus búsquedas: escribe directamente la etiqueta <buscar>. " +
+            "Si los resultados traen titulares o resúmenes con la información, úsalos para responder aunque no abras la página. " +
+            (if (codeMode) "En temas de programación busca en la documentación oficial, Stack Overflow o GitHub. " else "") +
+            "Cuando tengas la información, responde al usuario de forma completa y menciona las fuentes (nombre del sitio). " +
+            "Si la pregunta no necesita internet (saludos, charla, opiniones o conocimiento general estable), responde directo sin buscar. " +
+            "Nunca inventes resultados de búsqueda."
+
+    private fun setStreamingStatus(text: String) {
+        AiActivity.analyzing(text)   // ✦ también queda en la ventana de actividad
+        val idx = streamingIndex
+        if (idx < 0) return
+        runOnUiThread {
+            if (streamingIndex == idx && idx in chatMessages.indices && !chatMessages[idx].isUser) {
+                chatMessages[idx] = chatMessages[idx].copy(text = text)
+                chatAdapter?.notifyItemChanged(idx)
+                rvChatMessages?.scrollToPosition(idx)
+            }
+        }
+    }
+
+    private fun agentPageBudget(): Int {
+        val ctx = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt("ai_context", 2048).coerceIn(2048, 15000)
+        return (((ctx - 1500) * 2.5) / 4).toInt().coerceIn(1200, 3500)
+    }
+
+    private fun agentSearch(query: String): String {
+        val results = searchWeb(query).take(6)
+        if (results.isEmpty()) return "[Resultados de «$query»: no se encontró nada. Prueba con otras palabras.]"
+        val list = results.mapIndexed { i, r ->
+            "${i + 1}. ${r.title}\n   ${r.snippet.take(300)}\n   Enlace: ${r.url}"
+        }.joinToString("\n")
+        return "[Resultados de búsqueda para «$query»]\n$list"
+    }
+
+    private fun agentOpen(url: String, question: String): String {
+        val clean = url.trim().trimEnd('.', ',', ')', ']')
+        if (!clean.startsWith("http")) return "[No se pudo abrir «$clean»: el enlace debe empezar con https://]"
+        val got = httpGetText(clean) ?: return "[No se pudo abrir $clean. Prueba con otro enlace de los resultados.]"
+        val title = pageTitle(got.second).ifBlank { clean }
+        val text = bestPassages(htmlToReadableText(got.second), question, agentPageBudget())
+        if (text.isBlank()) return "[La página $clean no tiene texto legible. Prueba con otro enlace.]"
+        return "[Contenido de la página «$title» (${got.first})]\n$text"
+    }
+
+    // Bucle: la IA pide búsquedas/páginas hasta tener la información y luego responde
+    private fun runWebAgent(
+        roles: MutableList<String>,
+        contents: MutableList<String>,
+        question: String,
+        gen: (List<String>, List<String>) -> String = { r, c -> cpuRunChat(r.toTypedArray(), c.toTypedArray()) }
+    ): Pair<String, Int> {
+        var actions = 0
+        while (true) {
+            val raw = gen(roles, contents)
+            if (stopRequested) return agentToolRegex.replace(raw, "").trim() to actions
+            val m = agentToolRegex.find(raw) ?: return raw to actions
+            val call = raw.substring(0, m.range.last + 1)
+            roles.add("assistant"); contents.add(call)
+            if (actions >= maxAgentActions) {
+                roles.add("user")
+                contents.add("[Ya no puedes usar más <buscar> ni <abrir>. Responde ahora al usuario con la información que ya tienes y menciona las fuentes.]")
+                val last = gen(roles, contents)
+                return agentToolRegex.replace(last, "").trim() to actions
+            }
+            actions++
+            val kind = m.groupValues[1].lowercase()
+            val arg = m.groupValues[2].trim().take(300)
+            val result = if (kind == "buscar") {
+                setStreamingStatus("🔎 Buscando: $arg")
+                agentSearch(arg)
+            } else {
+                setStreamingStatus("📄 Leyendo: " + (runCatching { java.net.URI(arg.trim()).host }.getOrNull() ?: arg))
+                agentOpen(arg, question)
+            }
+            Log.d(TAG, "🌐 Agente $kind «$arg» → ${result.length} caracteres")
+            val left = maxAgentActions - actions
+            roles.add("user")
+            contents.add(
+                result + "\n\n[Pregunta original: $question]\n" +
+                    (if (left > 0) "[Si necesitas más, usa otra vez <buscar> o <abrir> (te quedan $left). " +
+                        "Si ya tienes la información, responde al usuario y menciona las fuentes.]"
+                    else "[Ya no puedes buscar más: responde ahora al usuario con esta información y menciona las fuentes.]")
+            )
+        }
+    }
+
+    // ⚡ STREAMING: el motor envía el texto mientras lo escribe
+    @Volatile private var streamingIndex = -1
+    @Volatile private var lastStreamUpdate = 0L
+
+    @androidx.annotation.Keep
+    fun onNativeToken(bytes: ByteArray) {
+        val idx = streamingIndex
+        if (idx < 0) return
+        val now = System.currentTimeMillis()
+        if (now - lastStreamUpdate < 120) return
+        lastStreamUpdate = now
+        val partial = String(bytes, Charsets.UTF_8)
+        checkRepetitionLoop(partial)
+        AiActivity.reportGeneratedChars(partial.length)   // 🏃 el monito corre según la velocidad de escritura
+        AiActivity.live(partial)   // 👁️ lo que escribe la IA se ve en vivo en la ventana «Analizando...»
+        // 🖥️ Código que la IA va escribiendo: se puede ver armándose en la vista previa
+        if (liveCodeActive) updateLiveDraft(liveDraftPrefix + partial)
+        // Mientras razona dentro de <pensamiento> se muestra "Pensando…"
+        val open = Regex("<(pensamiento|think|thinking)>", RegexOption.IGNORE_CASE).findAll(partial).count()
+        val close = Regex("</(pensamiento|think|thinking)>", RegexOption.IGNORE_CASE).findAll(partial).count()
+        val tool = Regex("<(buscar|abrir)>", RegexOption.IGNORE_CASE).containsMatchIn(partial)
+        // Sin texto en vivo: se mantiene "Pensando" hasta tener la respuesta completa
+        if (!tool) return
+        val shown = "🔎 Buscando en internet…"
+        runOnUiThread {
+            if (streamingIndex == idx && idx in chatMessages.indices && !chatMessages[idx].isUser) {
+                chatMessages[idx] = chatMessages[idx].copy(text = shown)
+                chatAdapter?.notifyItemChanged(idx)
+                rvChatMessages?.scrollToPosition(idx)
+            }
+        }
+    }
+
+    /** 🔁 La IA se quedó repitiendo lo mismo y se cortó (para no esperar 2 minutos de «sin dato — sin dato…»). */
+    @Volatile private var loopCut = false
+
+    private fun checkRepetitionLoop(text: String) {
+        if (loopCut || stopRequested || text.length < 300) return
+        // 💻 Programando (modo código o vista previa armándose) no se corta: el código repite líneas parecidas a propósito
+        if (liveCodeActive || runCatching { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("chat_mode", "") == "codigo" }.getOrDefault(false)) return
+        if (runCatching { WebSearchRules.isLooping(text) }.getOrDefault(false)) {
+            loopCut = true
+            AiActivity.log("🔁 La IA se quedó repitiendo lo mismo: la detengo para no hacerte esperar")
+            runCatching { nativeSetStop(true) }
+            thread { runCatching { GenieXEngineManager.requestStop() } }
+        }
+    }
+
+    private fun removeThinking(text: String): String {
+        var t = text.replace(Regex("<(pensamiento|think|thinking)>.*?</\\1>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)), "")
+        // Si el modelo abrió la etiqueta y no la cerró, se deja lo que escribió sin la etiqueta
+        t = t.replace(Regex("</?(pensamiento|think|thinking)>", RegexOption.IGNORE_CASE), "")
+        return t.trim().ifBlank { text.replace(Regex("</?(pensamiento|think|thinking)>", RegexOption.IGNORE_CASE), "").trim() }
+    }
+
+    // ========================================================================
+    // 🧠 MEMORIA DE CONVERSACIONES (se guardan en el teléfono)
+    // ========================================================================
+    private var currentChatId: String = ""
+    private val greetingText get() = LanguageManager.text(this, "¡Hola! ¿En qué te puedo ayudar?")
+
+    private fun chatsDir() = File(filesDir, "chats").apply { mkdirs() }
+    private fun chatMediaDir(id: String) = File(filesDir, "chat_media/$id")
+
+    // Caracteres de historial que caben según el CONTEXTO (deja lugar para la respuesta)
+    private fun historyCharBudget(): Int {
+        val ctx = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt("ai_context", 2048).coerceIn(2048, 15000)
+        // ⚡ Tope de historial: con contexto grande no se relee una conversación gigante en cada mensaje
+        return ((ctx - 1500) * 2.5).toInt().coerceIn(1500, 16000)
+    }
+
+    // Mensajes anteriores en formato (rol, texto). Se omiten el saludo y "Pensando".
+    // 🧭 Opción A: la antigua «guía de pedidos diarios» (DAILY_GUIDE, más de 1.500 tokens en cada mensaje) se quitó.
+    //    Ahora cada modo lleva instrucciones cortas (buildSystemPrompt) y la app entrega directo noticias, clima y divisas.
+    private fun buildHistoryForModel(): List<Pair<String, String>> {
+        val out = mutableListOf<Pair<String, String>>()
+        var seenUser = false
+        for (m in chatMessages) {
+            if (m.isUser) seenUser = true
+            if (!seenUser) continue
+            if (!m.isUser && (m.text == "Pensando" || m.text.isBlank())) continue
+            val text = if (m.isUser && m.attachments.isNotEmpty()) {
+                val names = m.attachments.joinToString(", ") { File(it).name.substringAfter('_') }
+                (if (m.text.isNotBlank()) m.text + "\n" else "") + "[Adjuntó: $names]"
+            } else m.text
+            // 🔁 Respuestas repetidas no se vuelven a mostrar al modelo: así no las copia otra vez
+            if (!m.isUser) {
+                val norm = text.replace("⏹️ (detenida)", "").trim().lowercase(Locale.ROOT)
+                if (out.any { it.first == "assistant" && it.second.replace("⏹️ (detenida)", "").trim().lowercase(Locale.ROOT) == norm }) {
+                    if (out.isNotEmpty() && out.last().first == "user") out.removeAt(out.lastIndex)
+                    continue
+                }
+            }
+            out.add((if (m.isUser) "user" else "assistant") to text)
+        }
+        return out
+    }
+
+    // Deja solo los mensajes más recientes que caben en el presupuesto
+    private fun trimHistory(history: List<Pair<String, String>>, budget: Int): List<Pair<String, String>> {
+        var total = 0
+        val kept = ArrayDeque<Pair<String, String>>()
+        for (item in history.asReversed()) {
+            val cost = item.second.length + 20
+            if (total + cost > budget) {
+                // 🧵 Antes, si la última respuesta era larga (ej. un código), se borraba TODO el historial
+                //    y la IA perdía el hilo. Ahora el último intercambio siempre se conserva (recortado si hace falta).
+                if (kept.size < 2) {
+                    val room = (budget - total - 20).coerceAtLeast(600)
+                    val t = item.second
+                    val cut = if (t.length <= room) t
+                        else t.take(room / 2) + "\n[… parte omitida por espacio …]\n" + t.takeLast(room / 2)
+                    kept.addFirst(item.first to cut)
+                    total += cut.length + 20
+                    continue
+                }
+                break
+            }
+            total += cost
+            kept.addFirst(item)
+        }
+        // El historial debe empezar con un mensaje del usuario
+        while (kept.isNotEmpty() && kept.first().first != "user") kept.removeFirst()
+        return kept.toList()
+    }
+
+    private fun saveCurrentChat() {
+        if (currentChatId.isEmpty()) return
+        val saved = chatMessages.dropWhile { !it.isUser }.filter { !(it.text == "Pensando" && !it.isUser) }
+        if (saved.isEmpty()) return
+        runCatching {
+            val arr = JSONArray()
+            saved.forEach { m ->
+                arr.put(JSONObject().apply {
+                    put("user", m.isUser)
+                    put("text", m.text)
+                    put("tokens", m.tokens)
+                    put("time", m.timestamp)
+                    put("attachments", JSONArray(m.attachments))
+                })
+            }
+            val title = saved.firstOrNull { it.isUser && it.text.isNotBlank() }?.text?.take(40)
+                ?: "Chat con adjuntos"
+            val json = JSONObject().apply {
+                put("id", currentChatId)
+                put("title", title)
+                put("updated", System.currentTimeMillis())
+                put("messages", arr)
+            }
+            File(chatsDir(), "$currentChatId.json").writeText(json.toString())
+        }.onFailure { Log.e(TAG, "No se pudo guardar el chat: ${it.message}") }
+    }
+
+    private fun loadChat(id: String?) {
+        chatMessages.clear()
+        chatMessages.add(ChatMessage(text = greetingText, isUser = false, sender = "Cumulus", tokens = ""))
+        val file = id?.let { File(chatsDir(), "$it.json") }
+        if (id != null && file != null && file.exists()) {
+            currentChatId = id
+            runCatching {
+                val arr = JSONObject(file.readText()).getJSONArray("messages")
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val atts = o.optJSONArray("attachments")
+                    chatMessages.add(
+                        ChatMessage(
+                            text = o.optString("text"),
+                            isUser = o.optBoolean("user"),
+                            timestamp = o.optLong("time", System.currentTimeMillis()),
+                            sender = if (o.optBoolean("user")) "Tú" else "Cumulus",
+                            tokens = o.optString("tokens"),
+                            attachments = (0 until (atts?.length() ?: 0)).map { atts!!.getString(it) }
+                        )
+                    )
+                }
+            }.onFailure { Log.e(TAG, "No se pudo abrir el chat: ${it.message}") }
+        } else {
+            currentChatId = "chat_${System.currentTimeMillis()}"
+        }
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString("current_chat_id", currentChatId).apply()
+        chatAdapter?.notifyDataSetChanged()
+        rvChatMessages?.post { rvChatMessages?.scrollToPosition(chatMessages.lastIndex) }
+        // La memoria del motor corresponde a otra conversación: se reinicia
+        thread { runCatching { nativeResetChatMemory() } }
+    }
+
+    private fun startNewChat() {
+        if (isAiBusy) {
+            cumulusToast(this, "Espera a que termine la respuesta", Toast.LENGTH_SHORT).show()
+            return
+        }
+        saveCurrentChat()
+        clearAttachments(deleteFiles = true)
+        loadChat(null)
+        cumulusToast(this, "Nuevo chat", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showChatHistoryDialog() {
+        saveCurrentChat()
+        val chats = chatsDir().listFiles { f -> f.name.endsWith(".json") }.orEmpty()
+            .mapNotNull { f ->
+                runCatching {
+                    val o = JSONObject(f.readText())
+                    Triple(o.getString("id"), o.optString("title", "Chat"), o.optLong("updated", f.lastModified()))
+                }.getOrNull()
+            }
+            .sortedByDescending { it.third }
+        if (chats.isEmpty()) {
+            cumulusToast(this, "Todavía no hay chats guardados", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val fmt = java.text.SimpleDateFormat("dd/MM HH:mm", Locale.getDefault())
+        val labels = chats.map { (id, title, time) ->
+            (if (id == currentChatId) "● " else "") + title + "\n" + fmt.format(java.util.Date(time))
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Chats guardados")
+            .setItems(labels) { _, which ->
+                val (id, title, time) = chats[which]
+                // 🖤 Igual que «Chats anteriores»: fondo negro, esquinas curvas, borde gris y botones azules
+                AlertDialog.Builder(this)
+                    .setTitle(title)
+                    .setMessage("Guardado el " + fmt.format(java.util.Date(time)) + "\n¿Qué quieres hacer con este chat?")
+                    .setPositiveButton("Abrir") { _, _ ->
+                        if (isAiBusy) {
+                            cumulusToast(this, "Espera a que termine la respuesta", Toast.LENGTH_SHORT).show()
+                        } else {
+                            loadChat(id)
+                            drawerLayout?.closeDrawers()
+                        }
+                    }
+                    .setNegativeButton("Eliminar") { _, _ -> deleteChat(id) }
+                    .show().also { styleGrayDialog(it) }
+            }
+            .setNegativeButton("Cerrar", null)
+            .show().also { styleGrayDialog(it) }   // 🩶 fondo gris de los botones, sin línea, «Cerrar» en blanco
+    }
+
+    private fun deleteChat(id: String) {
+        File(chatsDir(), "$id.json").delete()
+        chatMediaDir(id).deleteRecursively()
+        if (id == currentChatId) loadChat(null)
+        cumulusToast(this, "Chat eliminado", Toast.LENGTH_SHORT).show()
+    }
+
+    // Imágenes y archivos se guardan con el chat (máx. 2 MB; las fotos grandes se comprimen).
+    // Los videos se borran enseguida.
+    private fun persistAttachments(files: List<File>): List<String> {
+        val maxBytes = 2L * 1024 * 1024
+        val dir = chatMediaDir(currentChatId).apply { mkdirs() }
+        return files.mapNotNull { f ->
+            if (!f.exists()) return@mapNotNull null
+            val dest = File(dir, f.name)
+            when (attachmentKind(f)) {
+                AttachKind.VIDEO -> { f.delete(); null }
+                AttachKind.IMAGE -> {
+                    val ok = if (f.length() <= maxBytes) f.renameTo(dest) || runCatching { f.copyTo(dest, true); f.delete() }.isSuccess
+                    else compressImageTo(f, File(dir, f.nameWithoutExtension + ".jpg"), maxBytes)
+                    f.delete()
+                    val out = if (dest.exists()) dest else File(dir, f.nameWithoutExtension + ".jpg")
+                    if (ok && out.exists()) out.absolutePath else null
+                }
+                else -> {
+                    if (f.length() <= maxBytes) {
+                        val ok = f.renameTo(dest) || runCatching { f.copyTo(dest, true); f.delete() }.isSuccess
+                        if (ok) dest.absolutePath else null
+                    } else { f.delete(); null }
+                }
+            }
+        }
+    }
+
+    private fun compressImageTo(src: File, dest: File, maxBytes: Long): Boolean = runCatching {
+        var bmp = android.graphics.BitmapFactory.decodeFile(src.absolutePath) ?: return@runCatching false
+        var quality = 90
+        while (true) {
+            dest.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, it) }
+            if (dest.length() <= maxBytes) return@runCatching true
+            if (quality > 50) quality -= 10
+            else bmp = android.graphics.Bitmap.createScaledBitmap(bmp, (bmp.width * 0.8f).toInt().coerceAtLeast(64),
+                (bmp.height * 0.8f).toInt().coerceAtLeast(64), true)
+            if (bmp.width <= 64) return@runCatching dest.length() <= maxBytes
+        }
+        false
+    }.getOrDefault(false)
+
+    // Si el modelo igual escribe **negritas** o # títulos, se quitan los símbolos
+    // (los bloques de código ``` se dejan intactos)
+    private fun stripMarkdownSymbols(text: String): String {
+        val parts = text.split("```")
+        return parts.mapIndexed { i, part ->
+            if (i % 2 == 1) part   // dentro de un bloque de código
+            else part
+                // 🖼️ Imágenes en formato Markdown que escribe la IA («![título](https://...jpg)»): se veían como enlaces largos
+                //    que abrían solo una foto. Las imágenes reales las pone la app debajo de la respuesta.
+                .replace(Regex("!\\[([^\\]\\n]*)\\]\\(\\s*https?://[^)\\s]*\\s*\\)"), "")
+                .replace(Regex("(?m)^[ \\t]+$"), "")
+                .replace(Regex("\\*\\*(.+?)\\*\\*"), "$1")
+                .replace(Regex("__(.+?)__"), "$1")
+                .replace(Regex("(?<![\\w*])\\*(?!\\s)(.+?)(?<!\\s)\\*(?![\\w*])"), "$1")
+                .replace(Regex("(?m)^\\s*#{1,6}\\s+"), "")
+                .replace(Regex("(?m)^(\\s*)[*+]\\s+"), "$1- ")
+                .replace("**", "")
+        }.joinToString("```")
+    }
+
+    // ========================================================================
+    // 🌓 MODO CLARO / OSCURO
+    // La app usa colores fijos oscuros; el modo claro los cambia en pantalla
+    // por sus equivalentes claros (y al revés), sin reiniciar la app.
+    // ========================================================================
+    private val bgDarkToLight = mapOf(
+        "#0D0D0D" to "#F2F2F7", "#1C1C1E" to "#FFFFFF", "#2A2A2A" to "#E5E5EA",
+        "#2C2C2E" to "#E8E8ED", "#3A3A3C" to "#D1D1D6", "#1E2A5A" to "#DDE3FF", "#1E1E1E" to "#FAFAFA",
+        "#262628" to "#E6E6EB"   // tarjetas de descarga
+    ).map { (d, l) -> Color.parseColor(d) to Color.parseColor(l) }.toMap()
+    private val textDarkToLight = mapOf(
+        "#FFFFFF" to "#1C1C1E", "#D0D0D0" to "#3A3A3C", "#B0B0B0" to "#555555", "#8C9EFF" to "#2F45C8"
+    ).map { (d, l) -> Color.parseColor(d) to Color.parseColor(l) }.toMap()
+    private val bgLightToDark = bgDarkToLight.entries.associate { (k, v) -> v to k }
+    private val textLightToDark = textDarkToLight.entries.associate { (k, v) -> v to k }
+    // #3949AB: el azul más oscuro y opaco de los botones (en modo claro su texto sigue blanco)
+    private val accentColors = setOf(Color.parseColor("#3D5AFE"), Color.parseColor("#3949AB"), Color.parseColor("#C62828"), Color.parseColor("#00E676"))
+    private var themeObserverInstalled = false
+
+    private fun isLightMode(): Boolean =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("light_mode", false)
+
+    private fun setupThemeSwitch() {
+        val sw = findViewById<com.google.android.material.switchmaterial.SwitchMaterial>(R.id.switch_theme)
+        val light = isLightMode()
+        sw?.isChecked = !light
+        sw?.text = if (light) "☀️ Modo claro" else "🌙 Modo oscuro"
+        sw?.setOnCheckedChangeListener { view, darkChecked ->
+            val wasLight = isLightMode()
+            val nowLight = !darkChecked
+            if (wasLight == nowLight) return@setOnCheckedChangeListener
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean("light_mode", nowLight).apply()
+            (view as? TextView)?.text = if (nowLight) "☀️ Modo claro" else "🌙 Modo oscuro"
+            applyThemeToScreen(nowLight)
+        }
+        installThemeObserver()
+        installThemeLayoutListener()
+        installEdgeToEdge()
+        installSectionBoxes()
+        if (light) applyThemeToScreen(true) else applySystemBars(false)
+    }
+
+    // Los mensajes del chat se crean después: se recolorean al aparecer
+    private fun installThemeObserver() {
+        if (themeObserverInstalled) return
+        val rv = rvChatMessages ?: return
+        themeObserverInstalled = true
+        rv.addOnChildAttachStateChangeListener(object : RecyclerView.OnChildAttachStateChangeListener {
+            override fun onChildViewAttachedToWindow(view: View) {
+                if (isLightMode()) recolorTree(view, true)
+                applyTapRipple(view)   // 💧 copiar, compartir, descargar… con destello azul
+            }
+            override fun onChildViewDetachedFromWindow(view: View) = Unit
+        })
+        chatAdapter?.registerAdapterDataObserver(object : RecyclerView.AdapterDataObserver() {
+            override fun onChanged() = refreshChatColors()
+            override fun onItemRangeChanged(positionStart: Int, itemCount: Int) = refreshChatColors()
+            override fun onItemRangeChanged(positionStart: Int, itemCount: Int, payload: Any?) = refreshChatColors()
+            override fun onItemRangeInserted(positionStart: Int, itemCount: Int) = refreshChatColors()
+        })
+    }
+
+    private fun refreshChatColors() {
+        if (!isLightMode()) return
+        rvChatMessages?.post {
+            val rv = rvChatMessages ?: return@post
+            for (i in 0 until rv.childCount) recolorTree(rv.getChildAt(i), true)
+        }
+    }
+
+    private fun applyThemeToScreen(light: Boolean) {
+        val root = window.decorView
+        recolorTree(root, light)
+        applySystemBars(light)
+        updateSectionBoxColors(light)
+        styleLanguageButtons(light)
+        // Al volver a oscuro, los mensajes se redibujan con sus colores originales
+        if (!light) chatAdapter?.notifyDataSetChanged()
+    }
+
+    // ========================================================================
+    // 📱 BARRAS DEL SISTEMA (hora/batería arriba y la línea de gestos abajo)
+    // La app se dibuja detrás de las barras y les pone su mismo color de fondo.
+    // ========================================================================
+    private var edgeToEdgeInstalled = false
+    // Franjas que cubren la barra de estado y la de gestos con el color del panel lateral
+    private var topBarOverlay: View? = null
+    private var bottomBarOverlay: View? = null
+
+    private fun installEdgeToEdge() {
+        if (edgeToEdgeInstalled) return
+        edgeToEdgeInstalled = true
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false   // sin franja gris en la línea de gestos
+            window.isStatusBarContrastEnforced = false
+        }
+        // Se aplica al contenedor principal (el DrawerLayout ignora el padding,
+        // por eso antes la barra del chat quedaba tapada por el teclado)
+        val root = findViewById<View>(android.R.id.content) ?: return
+        val drawer = findViewById<android.view.ViewGroup>(R.id.drawer_layout)
+        (root as? android.widget.FrameLayout)?.let { frame ->
+            fun overlay(gravity: Int) = View(this).apply {
+                alpha = 0f
+                isClickable = false
+                isFocusable = false
+                layoutParams = android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT, 0, gravity
+                )
+            }
+            topBarOverlay = overlay(android.view.Gravity.TOP).also { frame.addView(it) }
+            bottomBarOverlay = overlay(android.view.Gravity.BOTTOM).also { frame.addView(it) }
+        }
+        // Espacio de arriba (hora/batería) y de abajo (teclado o línea de gestos) para el chat y los paneles laterales
+        fun applyChatPadding(bars: androidx.core.graphics.Insets, bottom: Int) {
+            if (drawer == null) return
+            for (i in 0 until drawer.childCount) {
+                val child = drawer.getChildAt(i)
+                @Suppress("UNCHECKED_CAST")
+                val orig = (child.getTag(R.id.drawer_layout) as? IntArray)
+                    ?: intArrayOf(child.paddingLeft, child.paddingTop, child.paddingRight, child.paddingBottom)
+                        .also { child.setTag(R.id.drawer_layout, it) }
+                child.setPadding(orig[0], orig[1] + bars.top, orig[2], orig[3] + bottom)
+            }
+        }
+        // ⌨️ true mientras el teclado sube o baja: la barra de escritura lo acompaña cuadro a cuadro
+        var imeAnimating = false
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
+            v.setPadding(bars.left, 0, bars.right, 0)
+            topBarOverlay?.layoutParams?.let { it.height = bars.top; topBarOverlay?.layoutParams = it }
+            bottomBarOverlay?.layoutParams?.let {
+                it.height = if (ime.bottom > 0) 0 else bars.bottom
+                bottomBarOverlay?.layoutParams = it
+            }
+            // Cada parte recibe su espacio por separado: la pantalla del chat y
+            // los dos paneles laterales (así ninguno queda bajo la hora/batería).
+            // Chat y paneles laterales: abajo dejan lugar al teclado (o a la línea de gestos),
+            // así se puede escribir en cualquier campo sin que el teclado lo tape.
+            // Mientras el teclado se está moviendo, de abajo se encarga la animación (no salta de golpe).
+            if (!imeAnimating) applyChatPadding(bars, maxOf(bars.bottom, ime.bottom))
+            androidx.core.view.WindowInsetsCompat.CONSUMED
+        }
+        // ⌨️ La barra de escritura sube y baja AL COMPÁS del teclado (misma velocidad y curva), en vez de saltar
+        androidx.core.view.ViewCompat.setWindowInsetsAnimationCallback(root,
+            object : androidx.core.view.WindowInsetsAnimationCompat.Callback(
+                androidx.core.view.WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_STOP) {
+                private fun isIme(a: androidx.core.view.WindowInsetsAnimationCompat) =
+                    a.typeMask and androidx.core.view.WindowInsetsCompat.Type.ime() != 0
+
+                override fun onPrepare(animation: androidx.core.view.WindowInsetsAnimationCompat) {
+                    if (isIme(animation)) imeAnimating = true
+                }
+
+                override fun onProgress(
+                    insets: androidx.core.view.WindowInsetsCompat,
+                    runningAnimations: MutableList<androidx.core.view.WindowInsetsAnimationCompat>
+                ): androidx.core.view.WindowInsetsCompat {
+                    if (imeAnimating) {
+                        val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                        val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
+                        applyChatPadding(bars, maxOf(bars.bottom, ime.bottom))
+                    }
+                    return insets
+                }
+
+                override fun onEnd(animation: androidx.core.view.WindowInsetsAnimationCompat) {
+                    if (isIme(animation)) {
+                        imeAnimating = false
+                        androidx.core.view.ViewCompat.requestApplyInsets(root)   // posición final exacta
+                    }
+                }
+            })
+        androidx.core.view.ViewCompat.requestApplyInsets(root)
+    }
+
+    private fun applySystemBars(light: Boolean) {
+        // ⬛ Modo oscuro: fondo del chat (y barras de arriba y abajo) en negro puro
+        val barColor = Color.parseColor(if (light) "#F2F2F7" else "#000000")
+        // Fondo detrás de las barras = color de la app
+        findViewById<View>(R.id.drawer_layout)?.setBackgroundColor(barColor)
+        findViewById<View>(android.R.id.content)?.setBackgroundColor(barColor)
+        window.decorView.setBackgroundColor(barColor)
+        @Suppress("DEPRECATION")
+        window.statusBarColor = barColor
+        @Suppress("DEPRECATION")
+        window.navigationBarColor = barColor
+        androidx.core.view.WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = light       // íconos oscuros en modo claro
+            isAppearanceLightNavigationBars = light
+        }
+    }
+
+    // ========================================================================
+    // 🟦 RECUADROS AZULES: separan cada sección de los paneles laterales
+    // ========================================================================
+    private var sectionBoxesInstalled = false
+
+    private fun installSectionBoxes() {
+        if (sectionBoxesInstalled) return
+        sectionBoxesInstalled = true
+        val drawer = findViewById<android.view.ViewGroup>(R.id.drawer_layout) ?: return
+        // Panel izquierdo (Servicios y control)
+        for (i in 1 until drawer.childCount) {
+            val panel = drawer.getChildAt(i)
+            if (panel is android.widget.ScrollView) (panel.getChildAt(0) as? LinearLayout)?.let { boxSections(it, compact = true) }
+        }
+        // Panel derecho: página de Configuración principal
+        val flipper = findViewById<android.widget.ViewFlipper>(R.id.settings_page_flipper)
+        ((flipper?.getChildAt(0) as? android.widget.ScrollView)?.getChildAt(0) as? LinearLayout)?.let { boxSections(it) }
+        stylePillPanels(isLightMode())   // 💊 fondo negro y botones píldora
+        applyTapRipple(window.decorView)  // 💧 destello azul al tocar en toda la pantalla y los paneles
+    }
+
+    private val sectionBlue = Color.parseColor("#3D5AFE")
+    private val sectionBoxes = mutableListOf<android.graphics.drawable.GradientDrawable>()
+
+    // Sin líneas (ni azules ni grises): cada sección se separa solo por su título y el espacio.
+    private fun updateSectionBoxColors(light: Boolean) {
+        sectionBoxes.forEach {
+            it.setStroke(0, Color.TRANSPARENT)
+            it.setColor(if (light) Color.WHITE else Color.BLACK)   // ⬛ mismo fondo que el panel: negro (oscuro) / blanco (claro)
+        }
+        stylePillPanels(light)
+    }
+
+    // ========================================================================
+    // 💊 PANELES LATERALES: fondo negro y botones en forma de píldora.
+    //    Todos los botones quedan gris oscuro; los rojos (Eliminar, Borrar, MODELO ACTIVO,
+    //    API KEY GUARDADA, Parar) siguen rojos, también con forma de píldora.
+    //    Modo claro: fondo blanco y píldoras gris claro.
+    // ========================================================================
+    private val pillTagKey = R.id.settings_page_flipper          // marca: botón ya convertido en píldora
+    private val pillGrayDark = Color.parseColor("#1F1F1F")       // gris oscuro sobre fondo negro
+    private val pillGrayLight = Color.parseColor("#EDEDF0")      // gris claro sobre fondo blanco
+    private val pillTextDark = Color.parseColor("#1C1C1E")
+
+    private fun isRedColor(c: Int) = Color.red(c) > 150 && Color.green(c) < 90 && Color.blue(c) < 90
+
+    // ========================================================================
+    // 💧 TOQUE AZUL: al tocar cualquier botón aparece y se va el mismo destello azul suave
+    //    que tiene el botón «Solo chat» (botones, íconos, menús y ventanas)
+    // ========================================================================
+    private val tapRipple: ColorStateList by lazy {
+        btnChatMode?.rippleColor ?: ColorStateList.valueOf(Color.parseColor("#3D0084FF"))
+    }
+
+    private fun applyTapRipple(view: View) {
+        if (view !== btnChatMode) {
+            val bg = view.background
+            when {
+                view is MaterialButton -> view.rippleColor = tapRipple
+                bg is android.graphics.drawable.RippleDrawable ->
+                    (bg.mutate() as? android.graphics.drawable.RippleDrawable)?.setColor(tapRipple)
+                view is ImageButton && view.isClickable -> {
+                    if (bg == null) {
+                        view.background = android.graphics.drawable.RippleDrawable(tapRipple, null, null)   // círculo al tocar
+                    } else if (view.foreground !is android.graphics.drawable.RippleDrawable) {
+                        // El destello toma la forma del botón (redondo, píldora…)
+                        val mask = bg.constantState?.newDrawable()?.mutate()
+                        view.foreground = android.graphics.drawable.RippleDrawable(tapRipple, null, mask)
+                    }
+                }
+            }
+            (view.foreground as? android.graphics.drawable.RippleDrawable)?.setColor(tapRipple)
+            if (view is android.widget.AbsListView) (view.selector as? android.graphics.drawable.RippleDrawable)?.setColor(tapRipple)
+        }
+        if (view is ViewGroup) for (i in 0 until view.childCount) applyTapRipple(view.getChildAt(i))
+    }
+
+
+    private fun stylePillPanels(light: Boolean) {
+        val drawer = findViewById<android.view.ViewGroup>(R.id.drawer_layout) ?: return
+        for (i in 1 until drawer.childCount) {   // 0 = pantalla del chat; 1 y 2 = paneles laterales
+            val panel = drawer.getChildAt(i)
+            // Solo los paneles que se deslizan (izquierdo y derecho)
+            val gravity = (panel.layoutParams as? DrawerLayout.LayoutParams)?.gravity ?: continue
+            if (gravity == android.view.Gravity.NO_GRAVITY) continue
+            panel.setBackgroundColor(if (light) Color.WHITE else Color.BLACK)
+            stylePillsIn(panel, light)
+        }
+    }
+
+    private fun stylePillsIn(view: View, light: Boolean = isLightMode(), onCard: Boolean = false) {
+        when (view) {
+            is android.widget.CompoundButton -> Unit                 // interruptores: se quedan igual
+            is MaterialButton -> stylePill(view, light, onCard)
+            is ImageButton -> stylePillIcon(view, light, onCard)
+            // ⚪ Barras de Contexto, Temperatura, Top K y Top P: blancas (oscuras en modo claro)
+            is SeekBar -> {
+                val main = if (light) pillTextDark else Color.WHITE
+                view.progressTintList = ColorStateList.valueOf(main)
+                view.thumbTintList = ColorStateList.valueOf(main)
+                view.progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor(if (light) "#C7C7CC" else "#3A3A3C"))
+            }
+            // ⚪ Letras azules de los paneles (títulos de cada sección) → blancas (oscuras en modo claro)
+            is TextView -> if (view !is EditText && view.currentTextColor == sectionBlue) {
+                view.setTextColor(if (light) pillTextDark else Color.WHITE)
+            }
+        }
+        if (view is android.view.ViewGroup && view !is android.widget.AdapterView<*>) {
+            for (i in 0 until view.childCount) stylePillsIn(view.getChildAt(i), light, onCard)
+        }
+    }
+
+    /** Píldora gris (o roja si el botón es rojo). Se vuelve a llamar cuando un botón cambia de color. */
+    private fun stylePill(b: MaterialButton, light: Boolean = isLightMode(), onCard: Boolean = false) {
+        val card = (b.getTag(pillTagKey) as? Boolean) ?: onCard
+        b.setTag(pillTagKey, card)
+        // Si el modo claro le había puesto un fondo blanco, se le devuelve el suyo
+        (b.getTag(R.id.btn_send) as? android.graphics.drawable.Drawable)?.let {
+            b.background = it
+            b.setTag(R.id.btn_send, null); b.setTag(R.id.btn_mic, null)
+        }
+        val current = tintColorOf(b)
+        // 🔵 Solo «MODELO ACTIVO» lleva color: azul oscuro. Todos los demás botones van en gris.
+        val red = b.id == R.id.btn_load_model && current == modelActiveBlue
+        val langCode = languageButtonIds.firstOrNull { it.first == b.id }?.second
+        val selectedLang = langCode != null && langCode == LanguageManager.getSelectedLanguage(this)
+        val fill = when {
+            red -> current!!
+            selectedLang -> Color.parseColor(if (light) "#D1D1D6" else "#3A3A3C")   // idioma elegido: un gris más claro
+            light -> if (card) Color.WHITE else pillGrayLight
+            else -> pillGrayDark   // igual que los demás (también dentro de las tarjetas de descarga)
+        }
+        b.backgroundTintList = ColorStateList.valueOf(fill)
+        // El color del XML (android:backgroundTint) queda debajo del botón y asomaba como un borde rojo o azul
+        // muy fino: se pinta todo el fondo del mismo color para que no se note
+        runCatching { b.background?.mutate()?.setTintList(ColorStateList.valueOf(fill)) }
+        b.strokeWidth = 0
+        val cap = 26 * resources.displayMetrics.density   // extremos redondos; los botones altos no se deforman
+        runCatching {
+            b.shapeAppearanceModel = b.shapeAppearanceModel.toBuilder()
+                             .setAllCornerSizes(com.google.android.material.shape.CornerSize { r -> minOf(r.height() / 2f, cap) })
+                .build()
+        }
+        // Los idiomas ponen su texto en styleLanguageButtons (el elegido lleva ✓)
+        if (langCode == null) {
+            val textColor = if (red || !light) Color.WHITE else pillTextDark
+            // Números, ✓ y ✕ de «Nombre del modelo» y «mmproj»: del mismo color que el texto (antes azules)
+            b.compoundDrawablesRelative.forEach {
+                it?.colorFilter = android.graphics.PorterDuffColorFilter(textColor, android.graphics.PorterDuff.Mode.SRC_IN)
+            }
+            if (card) {
+                // Descargas: Pausar / Reanudar apagados se ven con el texto más tenue
+                val dim = Color.parseColor(if (light) "#A1A1A6" else "#6E6E73")
+                b.setTextColor(ColorStateList(
+                    arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
+                    intArrayOf(dim, textColor)
+                ))
+            } else b.setTextColor(textColor)
+        }
+    }
+
+    // Botón de volver (flecha) de las páginas de descargas: círculo gris
+    private fun stylePillIcon(v: ImageButton, light: Boolean, onCard: Boolean) {
+        if (v.getTag(pillTagKey) == null && v.background !is android.graphics.drawable.GradientDrawable) return
+        v.setTag(pillTagKey, onCard)
+        v.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 999 * resources.displayMetrics.density
+            setColor(if (light) pillGrayLight else pillGrayDark)
+        }
+    }
+
+    private fun isSectionTitle(v: View): Boolean =
+        v is TextView && v !is Button && v !is EditText &&
+            v !is androidx.appcompat.widget.SwitchCompat &&
+            v.currentTextColor == sectionBlue && v.text.isNotBlank() && v.text.toString() == v.text.toString().uppercase()
+
+    // Botones que van en su propio recuadro aunque no tengan título
+    private val standaloneSectionIds = setOf(R.id.btn_choose_voices)
+
+    /** @param compact panel de Servicios y control: las secciones van más juntas (menos espacio entre recuadros). */
+    private fun boxSections(container: LinearLayout, compact: Boolean = false) {
+        val dp = resources.displayMetrics.density
+        val boxTop = if (compact) 2 else 6          // espacio arriba del título de cada sección
+        val boxGap = if (compact) 6 else 12         // espacio entre una sección y la siguiente
+        val lastGap = if (compact) 2 else 8         // espacio bajo el último botón de la sección
+        val children = (0 until container.childCount).map { container.getChildAt(it) }
+        val groups = mutableListOf<MutableList<View>>()
+        var current: MutableList<View>? = null
+        for ((idx, child) in children.withIndex()) {
+            // El encabezado del panel ("SERVICIOS Y CONTROL") va fuera de los recuadros:
+            // es el primer título y le sigue directamente otro título
+            if (idx == 0 && isSectionTitle(child) && children.getOrNull(1)?.let { isSectionTitle(it) } == true) {
+                continue
+            }
+            val isTitle = isSectionTitle(child)
+            val standalone = child.id in standaloneSectionIds
+            // Títulos que no son azules (ej. "SERVICIOS Y CONTROL") quedan fuera de los recuadros
+            val isHeader = child is TextView && child !is Button && child !is EditText &&
+                child !is androidx.appcompat.widget.SwitchCompat && !isTitle &&
+                child.currentTextColor != Color.WHITE && current == null && groups.isEmpty() &&
+                child.text.toString() == child.text.toString().uppercase()
+            when {
+                isHeader -> { current = null }
+                isTitle || standalone -> {
+                    current = mutableListOf(child); groups.add(current)
+                    if (standalone) { current = null }
+                }
+                else -> {
+                    if (current == null) { current = mutableListOf(); groups.add(current) }
+                    current.add(child)
+                }
+            }
+        }
+        for (group in groups) {
+            if (group.isEmpty()) continue
+            val index = container.indexOfChild(group.first())
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                // Sin línea alrededor: los botones usan todo el ancho del panel
+                setPadding(0, (boxTop * dp).toInt(), 0, ((if (compact) 0 else 2) * dp).toInt())
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 16 * dp
+                    setStroke(0, Color.TRANSPARENT)
+                    setColor(if (isLightMode()) Color.WHITE else Color.BLACK)
+                    sectionBoxes.add(this)
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = (boxGap * dp).toInt() }
+            }
+            group.forEach { container.removeView(it) }
+            group.forEachIndexed { n, v ->
+                (v.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+                    if (n == 0) lp.topMargin = 0
+                    if (n == group.lastIndex) lp.bottomMargin = (lastGap * dp).toInt()
+                }
+                box.addView(v)
+            }
+            container.addView(box, index)
+        }
+    }
+
+    // Color real del fondo (estado "habilitado"), sirve también para MaterialButton
+    // Color real del fondo, tal como se ve (centro del botón)
+    private fun renderedBgColor(view: View): Int? = runCatching {
+        val bg = view.background ?: return@runCatching null
+        val bmp = android.graphics.Bitmap.createBitmap(view.width, view.height, android.graphics.Bitmap.Config.ARGB_8888)
+        val cv = android.graphics.Canvas(bmp)
+        bg.setBounds(0, 0, view.width, view.height)
+        bg.draw(cv)
+        val px = bmp.getPixel(view.width / 2, view.height / 2)
+        bmp.recycle()
+        if (Color.alpha(px) < 128) null else px
+    }.getOrNull()
+
+    // Fondo redondeado que no acepta "tint" (así el XML no lo vuelve a oscurecer)
+    private class NoTintRoundDrawable(fill: Int, stroke: Int, strokeW: Int, radius: Float) :
+        android.graphics.drawable.GradientDrawable() {
+        init { setColor(fill); setStroke(strokeW, stroke); cornerRadius = radius }
+        override fun setTintList(tint: android.content.res.ColorStateList?) {}
+        override fun setTint(tintColor: Int) {}
+        override fun setTintMode(tintMode: android.graphics.PorterDuff.Mode?) {}
+        override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {}
+    }
+
+    private fun setBgTint(view: View, color: Int) {
+        val csl = android.content.res.ColorStateList.valueOf(color)
+        androidx.core.view.ViewCompat.setBackgroundTintList(view, csl)
+        view.backgroundTintList = csl
+    }
+
+    private fun tintColorOf(view: View): Int? {
+        // ViewCompat lee también el color de los MaterialButton (android:backgroundTint en el XML)
+        val csl = androidx.core.view.ViewCompat.getBackgroundTintList(view) ?: view.backgroundTintList ?: return null
+        return csl.getColorForState(intArrayOf(android.R.attr.state_enabled), csl.defaultColor)
+    }
+
+    private var themeLayoutListenerInstalled = false
+
+    // Vuelve a pintar cuando aparecen vistas nuevas (descargas, botones que cambian, etc.)
+    private fun installThemeLayoutListener() {
+        if (themeLayoutListenerInstalled) return
+        themeLayoutListenerInstalled = true
+        var pending = false
+        window.decorView.viewTreeObserver.addOnGlobalLayoutListener {
+            if (!isLightMode() || pending) return@addOnGlobalLayoutListener
+            pending = true
+            window.decorView.postDelayed({
+                pending = false
+                if (isLightMode()) recolorTree(window.decorView, true)
+            }, 120)
+        }
+    }
+
+    private fun recolorTree(view: View, light: Boolean) {
+        val bgMap = if (light) bgDarkToLight else bgLightToDark
+        val textMap = if (light) textDarkToLight else textLightToDark
+        // 💊 Las píldoras de los paneles laterales tienen sus propios colores (stylePill)
+        if (view.getTag(pillTagKey) != null) {
+            if (view is ImageView) view.imageTintList?.defaultColor?.let { c ->
+                textMap[c]?.let { view.imageTintList = android.content.res.ColorStateList.valueOf(it) }
+            }
+            return
+        }
+
+        // Fondo
+        when (val bg = view.background) {
+            is android.graphics.drawable.ColorDrawable -> bgMap[bg.color]?.let { view.setBackgroundColor(it) }
+            is android.graphics.drawable.GradientDrawable -> {
+                val c = bg.color?.defaultColor
+                if (c != null && view.backgroundTintList == null) {
+                    bgMap[c]?.let { bg.mutate(); (bg as android.graphics.drawable.GradientDrawable).setColor(it) }
+                }
+            }
+            else -> Unit
+        }
+        tintColorOf(view)?.let { c ->
+            val darkButton = light && view is Button && Color.red(c) < 80 && Color.green(c) < 80 && Color.blue(c) < 80
+            if (!darkButton) bgMap[c]?.let { setBgTint(view, it) }
+        }
+        // ⬜ Botones oscuros en modo claro → fondo blanco, borde gris claro y texto oscuro.
+        //    El color se mide en pantalla (los MaterialButton esconden su color real), y el fondo
+        //    blanco ignora el "tint" del XML, así no vuelve a ponerse negro.
+        if (view is Button && view !is androidx.appcompat.widget.SwitchCompat) {
+            val keyBg = R.id.btn_send
+            val keyText = R.id.btn_mic
+            val savedBg = view.getTag(keyBg)
+            if (light) {
+                if (savedBg == null && view.width > 0 && view.height > 0) {
+                    val c = renderedBgColor(view)
+                    if (c != null && Color.red(c) < 80 && Color.green(c) < 80 && Color.blue(c) < 80) {
+                        view.setTag(keyBg, view.background ?: android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+                        view.setTag(keyText, view.currentTextColor)
+                        val d = resources.displayMetrics.density
+                        val radius = (view as? MaterialButton)?.cornerRadius?.toFloat()?.takeIf { it > 0 } ?: (10 * d)
+                        view.background = NoTintRoundDrawable(Color.WHITE, Color.parseColor("#C7C7CC"), (1.5f * d).toInt(), radius)
+                        view.setTextColor(Color.parseColor("#1C1C1E"))
+                    }
+                }
+                if (view.getTag(keyBg) != null) return
+            } else if (savedBg is android.graphics.drawable.Drawable) {
+                view.background = savedBg
+                (view.getTag(keyText) as? Int)?.let { view.setTextColor(it) }
+                view.setTag(keyBg, null); view.setTag(keyText, null)
+            }
+        }
+
+        // Texto (los botones de color azul/rojo mantienen su texto blanco)
+        if (view is TextView) {
+            val tint = tintColorOf(view)
+            val onAccent = tint != null && tint in accentColors
+            if (!onAccent) {
+                textMap[view.currentTextColor]?.let { view.setTextColor(it) }
+            }
+        }
+
+        // Íconos
+        if (view is ImageView && view.id != R.id.btn_send && view.id != R.id.iv_ai_avatar) {
+            view.imageTintList?.defaultColor?.let { c ->
+                textMap[c]?.let { view.imageTintList = android.content.res.ColorStateList.valueOf(it) }
+            }
+        }
+
+        if (view is android.view.ViewGroup) {
+            for (i in 0 until view.childCount) recolorTree(view.getChildAt(i), light)
+        }
+    }
+
+    // ========================================================================
+    // 🧭 MODOS DE CHAT (botón largo de abajo)
+    // ========================================================================
+    private data class ChatMode(
+        val key: String,
+        val label: String,
+        val systemPrompt: String,
+        val maxTokens: Int
+    )
+
+    // 🧭 Opción A: el ROL de cada modo en pocas líneas claras. Las reglas comunes (nombre, fecha, internet,
+    //    formato, tono) las agrega buildSystemPrompt() una sola vez, sin repetirse ni contradecirse.
+    //    Orden: el menú los muestra de abajo hacia arriba (Solo chat abajo, General en el medio, Traducción arriba).
+    private val chatModes = listOf(
+        ChatMode(
+            "solo_chat", "Solo chat",
+            "Eres Cumulus, un asistente conversacional, como un amigo experto: respondes de forma natural y útil, " +
+                "normalmente en 1 a 3 párrafos cortos, y puedes cerrar con una pregunta para seguir conversando.",
+            1536
+        ),
+        ChatMode(
+            "codigo", "Ingeniero de código",
+            "Eres Cumulus en modo Ingeniero de código: un ingeniero de software senior en todos los lenguajes.\n" +
+                "- Entrega el código COMPLETO y listo para copiar, en bloques ``` con el lenguaje; nunca «resto del código igual».\n" +
+                "- Si te pasan un archivo y piden un cambio, devuelve el archivo completo ya corregido.\n" +
+                "- Antes de cada bloque indica dónde va, por ejemplo: «📁 Va en: app/src/main/java/com/ejemplo/app/MainActivity.kt».\n" +
+                "- Si hay un error, explica la causa en 1 o 2 frases y luego da la solución; si algo no está claro, di qué supones.\n" +
+                "- Las apps que crees son MODERNAS. Lógica: Kotlin actual, ViewModel, corrutinas, código limpio y ordenado. " +
+                "Diseño Android: Material Design 3 en XML (MaterialCardView con esquinas redondeadas, MaterialButton, " +
+                "paleta de colores armónica en colors.xml, buen espaciado, textos claros, modo oscuro). " +
+                "Web: CSS moderno (flexbox/grid, sombras suaves, degradados, animaciones, adaptable al celular).",
+            4096
+        ),
+        ChatMode(
+            "general", "General",
+            "Eres Cumulus, un asistente que sabe de todo (ciencia, historia, tecnología, salud, cocina, finanzas, cultura y más): " +
+                "primero respondes exactamente lo que se pregunta y luego agregas los detalles útiles, bien ordenados.\n" +
+                "- Sirves para todo menos programar: puedes hablar de tecnología en general, pero no escribes, creas, corriges ni " +
+                "revisas código, apps ni páginas web. Si te lo piden, pide disculpas y explica que eso se hace en el modo " +
+                "«Ingeniero de código» (botón de modos, abajo).\n" +
+                "- Usas tu tono normal: la personalidad personalizada solo se usa en su propio modo.",
+            1536
+        ),
+        // 😄 Buen humor y chistes: se ríe, cuenta chistes de todo tipo (sanos y para todo público) y responde con alegría
+        ChatMode(
+            "humor", "Buen humor y chistes",
+            // ⚡ Corto a propósito: con contexto 2048, unas instrucciones largas + los chistes de internet no cabían
+            //    y el motor NPU se cerraba. Los chistes de cada país ya los trae la colección de la app (JokeBank).
+            "Eres Cumulus en modo Buen humor y chistes: un humorista chileno alegre, simpático y carismático.\n" +
+                "- Sonríes siempre (😄 😁 😂 🤣) y te ríes con naturalidad (jajaja, jeje).\n" +
+                "- Cuentas chistes cortos, con el remate al final, y te ríes de tu propio chiste. Cada vez uno distinto.\n" +
+                "- Si el usuario te cuenta un chiste: te ríes con ganas, lo celebras con cariño y le respondes con uno tuyo.\n" +
+                "- Si piden un país (Chile, Argentina, México, EE. UU., China, Japón, Corea, Portugal, Brasil), lo cuentas a su estilo, " +
+                "sin burlarte de su gente.\n" +
+                "- Humor sano y para todo público: sin burlas a personas, grupos, religiones ni al físico, sin groserías fuertes.\n" +
+                "- Si te preguntan algo en serio, respondes bien y con cariño; el humor va suave.",
+            600
+        ),
+        // 📚 Estudio: profesor experto en TODAS las materias y niveles (colegio, universidad, técnicos, idiomas, exámenes)
+        ChatMode(
+            "estudio", "Estudio",
+            "Eres Cumulus en modo Estudio: un profesor paciente y experto en todas las áreas y niveles: básica, media, " +
+                "universidad, institutos técnicos, oficios, idiomas, exámenes de admisión (PAES, SAT, ENEM, EBAU), oposiciones y " +
+                "certificaciones. Dominas matemáticas, física, química, biología, salud y medicina, historia, geografía, lenguaje y " +
+                "literatura, filosofía, economía, contabilidad, administración, derecho, psicología, educación, ingeniería, " +
+                "informática y programación, arte y música.\n" +
+                "- Adapta la explicación al nivel del estudiante; si no lo sabes, empieza simple y pregunta su curso o carrera.\n" +
+                "- Explica paso a paso con palabras sencillas, un ejemplo y, si ayuda, una analogía. Usa los términos correctos de la materia y define los nuevos.\n" +
+                "- En ejercicios muestra cada paso y comprueba el resultado. Escribe fórmulas en texto simple: x² + 3x = 10, √2, π, a/b.\n" +
+                "- No inventes datos, fechas, autores ni citas; si algo es discutido, muestra las posturas.\n" +
+                "- Cierra con un resumen de las ideas clave y una pregunta corta para practicar.\n" +
+                "- Si va a dar una prueba: ofrece un plan de estudio, preguntas tipo prueba con sus respuestas y técnicas (esquemas, mnemotecnias, repaso espaciado).\n" +
+                "- Si te muestra su respuesta o tarea, corrígela con amabilidad: qué está bien, qué falta y por qué.",
+            2048
+        ),
+        // 🌍 Traducción: traductor e intérprete experto en todos los idiomas, variantes y especialidades
+        ChatMode(
+            "traduccion", "Traducción",
+            "Eres Cumulus en modo Traducción: un traductor e intérprete experto y certificado en todos los idiomas y sus variantes " +
+                "(español de Chile, México o España; inglés de EE. UU. o Reino Unido; portugués de Brasil o Portugal, etc.) y en textos " +
+                "generales, legales, médicos, técnicos, comerciales, académicos, literarios, subtítulos y apps.\n" +
+                "- Traduce al idioma que pida el usuario; si no lo dice, del español al inglés y de cualquier otro idioma al español.\n" +
+                "- Traduce el sentido, no palabra por palabra: suena natural para un hablante nativo y respeta el tono y el trato " +
+                "(formal o informal, tú o usted). Los modismos y refranes van con su equivalente en el otro idioma.\n" +
+                "- Usa la terminología correcta de cada especialidad. Respeta nombres propios, marcas, cifras, fechas, unidades, " +
+                "enlaces, código, saltos de línea y listas.\n" +
+                "- Responde solo con la traducción. Si va a una escritura no latina (japonés, chino, coreano, árabe, ruso…), " +
+                "agrega debajo cómo se pronuncia en letras latinas.\n" +
+                "- Si una palabra tiene dos sentidos posibles o algo no se puede traducir igual, elige el más probable y agrega al final " +
+                "una nota corta entre paréntesis. Si te piden alternativas, explicar la gramática o corregir una traducción, hazlo.",
+            2048
+        )
+    )
+
+    /**
+     * 🧭 Opción A: instrucciones del sistema CORTAS (5–8 líneas) y sin contradicciones.
+     * No llevan la hora (solo el día): así no cambian cada minuto y el motor reutiliza su memoria.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    private fun buildSystemPrompt(rawMode: ChatMode, aiName: String, userName: String, today: String, personality: String): String {
+        val cfg = activeModelCfg
+        val base = buildSystemPromptBase(rawMode, aiName, userName, today, personality, cfg?.sizeClass ?: SizeClass.UNKNOWN)
+        val extra = cfg?.systemPrompt?.trim().orEmpty()
+        return if (extra.isEmpty()) base else "$base\nInstrucciones para este modelo: $extra"
+    }
+
+    /**
+     * 📏 Instrucciones según el tamaño del modelo:
+     *  - pequeño (1B-3B): cortas y directas (los modelos chicos se confunden con reglas largas)
+     *  - mediano / desconocido: como siempre
+     *  - grande (7B+): las mismas reglas, ordenadas en secciones (ROL, CONTEXTO, REGLAS)
+     */
+    private fun buildSystemPromptBase(rawMode: ChatMode, aiName: String, userName: String, today: String, personality: String,
+                                      size: SizeClass): String {
+        if (size == SizeClass.SMALL) return buildSmallSystemPrompt(rawMode, aiName, userName, today)
+        val lines = mutableListOf<String>()
+        lines += rawMode.systemPrompt.replace("Cumulus", aiName)
+        lines += "Te llamas $aiName." +
+            (if (userName.isNotEmpty()) " El usuario se llama $userName; llámalo por su nombre al saludar." else "") +
+            " Hoy es $today."
+        if (rawMode.key != "traduccion") {
+            lines += "Responde en el idioma del usuario y sigue el hilo: si se refiere a algo anterior, continúa sobre eso sin cambiar de tema."
+            // 🥇 PRIORIDAD 1: si la app entregó datos, se entregan SÍ o SÍ (nada de «no puedo buscar» ni disculpas)
+            lines += "PRIORIDAD NÚMERO 1: si el mensaje trae datos (de internet o de la app), entrégaselos al usuario completos, ordenados y " +
+                "tal cual vienen, sin inventar nada. Con datos en el mensaje está PROHIBIDO pedir disculpas o decir que no puedes buscar, " +
+                "que no tienes internet o que no tienes información en tiempo real: la app ya buscó por ti."
+            // 🙏 Solo si NO hay datos: si no sabe, no encontró o no puede, se disculpa y explica por qué
+            lines += "Solo si el mensaje NO trae datos, o dice que no se encontraron resultados: si no sabes algo, no lo encontraste o no puedes hacer lo que te piden, pide disculpas con amabilidad y explica en 1 o 2 " +
+                "frases por qué (no lo sabes con seguridad, tus datos pueden estar desactualizados, internet no trajo resultados, " +
+                "falta información o es algo que no puedes hacer) y, si se puede, ofrece una alternativa."
+            lines += if (isInternetEnabled()) "Tienes internet: la app busca por ti y te entrega los resultados dentro del mensaje."
+                else "Internet está apagado: si te piden algo actual, di que se activa en ➕ → Internet."
+            // 📚 Estudio: si no sabe algo o puede estar desactualizado, lo dice y sugiere buscarlo en internet
+            //    («busca en internet …» hace que la app busque, aunque la pregunta parezca una continuación)
+            if (rawMode.key == "estudio") lines += "Tus conocimientos tienen fecha y pueden estar desactualizados. Si no sabes algo de la materia " +
+                "o puede haber cambiado (leyes, temarios, fechas de exámenes, cifras o avances recientes)" +
+                (if (isInternetEnabled()) " y no viene en los datos de internet del mensaje, pide disculpas, explica por qué y sugiere escribir " +
+                    "«busca en internet» seguido del tema"
+                else ", pide disculpas, explica por qué y sugiere activar Internet en ➕ → Internet y escribir «busca en internet» seguido del tema") +
+                ", o revisar una fuente oficial (ministerio, universidad o libro de la materia). Nunca lo inventes."
+            lines += "Escribe en texto plano, sin asteriscos ni #; para listas usa números o guiones." +
+                (if (rawMode.key != "codigo") " Si escribes código, va en un bloque ``` con el lenguaje." else "")
+            if (rawMode.key != "codigo")
+                lines += "La app puede crear imágenes y videos y guardar tus respuestas en Word, PDF o txt (el usuario escribe «guárdalo en PDF»)."
+            // 🎭 Tu personalidad se usa SOLO cuando eliges «Personalidad personalizada» en el menú de modos
+            //    (ahí ya va en el rol). En Solo chat, General, Estudio, etc. la IA usa su tono normal.
+            if (rawMode.key != "personalizada" && rawMode.key != "humor") lines += "Tono: cálido, cercano y con buen humor, sin exagerar."
+        } else {
+            // 🙏 Traducción: si no puede traducir, se disculpa y dice por qué (si puede, solo la traducción)
+            lines += "Si no puedes traducir algo (idioma que no conoces, texto ilegible o incompleto), pide disculpas y explica en una frase por qué."
+        }
+        // 🎙️ Voz a voz: si lo que escuchó no tiene sentido (por ejemplo, dos personas hablando a la vez), pide que lo repitan
+        if (isVoiceConversationActive) lines += "Estás en una conversación por voz: el mensaje viene del micrófono y puede traer errores. " +
+            "Si la frase no tiene sentido, está cortada o parece mezclar a dos personas hablando a la vez, no adivines: " +
+            "pide con amabilidad que te lo repitan, una persona a la vez."
+        if (size == SizeClass.LARGE && lines.size >= 3) {
+            // ROL (lo que es en este modo) · CONTEXTO (nombre y fecha) · REGLAS (todo lo demás, en lista)
+            return "ROL:\n" + lines[0] + "\n\nCONTEXTO:\n" + lines[1] + "\n\nREGLAS:\n" +
+                lines.drop(2).joinToString("\n") { "- $it" }
+        }
+        return lines.joinToString("\n")
+    }
+
+    /** 🐣 Modelos pequeños (1B-3B): pocas reglas, cortas y claras. */
+    private fun buildSmallSystemPrompt(rawMode: ChatMode, aiName: String, userName: String, today: String): String {
+        val lines = mutableListOf<String>()
+        lines += rawMode.systemPrompt.replace("Cumulus", aiName)
+        lines += "Te llamas $aiName." + (if (userName.isNotEmpty()) " El usuario se llama $userName." else "") + " Hoy es $today."
+        if (rawMode.key == "traduccion") {
+            lines += "Si no puedes traducir algo, dilo en una frase."
+        } else {
+            lines += "Responde en el idioma del usuario, claro y directo."
+            lines += "Prioridad 1: si el mensaje trae datos de la app o de internet, entrégalos completos. Con datos, nunca pidas disculpas ni digas que no puedes buscar."
+            lines += "No inventes. Solo si el mensaje no trae datos y no sabes, dilo y pide disculpas."
+            lines += if (isInternetEnabled()) "La app busca en internet por ti y te da los resultados en el mensaje."
+                else "Sin internet: para algo actual, di que se activa en ➕ → Internet."
+            lines += "Texto plano, sin asteriscos ni #." + (if (rawMode.key != "codigo") " El código va en un bloque ```." else "")
+        }
+        if (isVoiceConversationActive) lines += "El mensaje viene del micrófono: si no tiene sentido, pide que lo repitan."
+        return lines.joinToString("\n")
+    }
+
+    private fun currentChatMode(): ChatMode {
+        val key = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString("chat_mode", "solo_chat")
+        // Si elegiste «Personalidad personalizada» y después la borraste, vuelve a «Solo chat»
+        return availableChatModes().firstOrNull { it.key == key } ?: chatModes.first { it.key == "solo_chat" }
+    }
+
+    /**
+     * 🎭 «Personalidad personalizada»: aparece en el menú de modos (arriba de Traducción) solo mientras
+     * tengas una personalidad guardada. Al borrarla con el botón rojo, desaparece del menú.
+     */
+    private fun customPersonalityMode(): ChatMode? {
+        val persona = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString("custom_personality", "")?.trim().orEmpty()
+        if (persona.isEmpty()) return null
+        return ChatMode(
+            "personalizada", "Personalidad personalizada",
+            "Eres Cumulus con la personalidad que eligió el usuario: $persona\n" +
+                "Habla y responde SIEMPRE con esa personalidad, de forma natural y útil.",
+            1536
+        )
+    }
+
+    /** Los modos del menú: los de siempre + «Personalidad personalizada» si hay una guardada. */
+    private fun availableChatModes(): List<ChatMode> = chatModes + listOfNotNull(customPersonalityMode())
+
+    // 🗂️ Menú con esquinas redondas y borde gris. Fondo negro en modo oscuro, blanco en modo claro.
+    /**
+     * Menú redondeado. [checked] ≥ 0: el ✓ va en su propia columna, así un nombre largo que ocupa
+     * 2 líneas queda alineado («Personalidad / personalizada»). [widthFrom]: el menú toma siempre el
+     * ancho que necesitan esos nombres (el mismo tamaño aunque aparezca una opción más larga).
+     */
+    private fun showRoundMenu(anchor: View, items: List<String>, above: Boolean, checked: Int = -1,
+                              widthFrom: List<String>? = null, icons: List<Int>? = null, onPick: (Int) -> Unit) {
+        val d = resources.displayMetrics.density
+        val dp = { v: Int -> (v * d).toInt() }
+        val light = isLightMode()
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 18 * d
+                setColor(Color.parseColor(if (light) "#FFFFFF" else "#141414"))
+                // Sin línea gris alrededor (menú de modos y de pensamiento)
+            }
+            elevation = 12 * d
+            clipToOutline = true
+            outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+        }
+        val checkCol = dp(30)   // columna del ✓
+        val fixedWidth = widthFrom?.let { names ->
+            val paint = android.graphics.Paint().apply {
+                textSize = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 17f, resources.displayMetrics)
+            }
+            var longest = 0f
+            for (n in names) longest = maxOf(longest, paint.measureText(n))
+            dp(6) * 2 + dp(18) + dp(28) + (if (checked >= 0) checkCol else 0) + longest.toInt() + dp(12) +
+                (if (icons != null) dp(24) + dp(14) else 0)
+        }
+        // ✨ Íconos de líneas (como copiar y compartir), gris suave
+        val iconTint = android.content.res.ColorStateList.valueOf(Color.parseColor(if (light) "#6E6E73" else "#9A9A9A"))
+        fun withIcon(tv: TextView, i: Int) {
+            val res = icons?.getOrNull(i) ?: return
+            tv.setCompoundDrawablesRelativeWithIntrinsicBounds(res, 0, 0, 0)
+            tv.compoundDrawablePadding = dp(14)
+            tv.compoundDrawableTintList = iconTint
+            tv.gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        val popup = android.widget.PopupWindow(box, fixedWidth ?: ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            elevation = 12 * d
+        }
+        items.forEachIndexed { i, label ->
+            val textColor = if (light) Color.parseColor("#111111") else Color.WHITE
+            val row: View = if (checked >= 0) {
+                LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding(dp(18), dp(12), dp(28), dp(12))
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    addView(TextView(this@MainActivity).apply {
+                        text = if (i == checked) "✓" else ""
+                        textSize = 17f
+                        setTextColor(textColor)
+                        layoutParams = LinearLayout.LayoutParams(checkCol, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    })
+                    addView(TextView(this@MainActivity).apply {
+                        text = label
+                        textSize = 17f
+                        setTextColor(textColor)
+                        withIcon(this, i)
+                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    })
+                }
+            } else {
+                TextView(this).apply {
+                    text = label
+                    textSize = 17f
+                    setTextColor(textColor)
+                    withIcon(this, i)
+                    setPadding(dp(18), dp(12), dp(28), dp(12))
+                }
+            }
+            row.apply {
+                val ta = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground))
+                background = ta.getDrawable(0); ta.recycle()
+                setOnClickListener { popup.dismiss(); onPick(i) }
+            }
+            box.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        applyTapRipple(box)   // 💧 opciones del menú con destello azul
+        if (above) {
+            box.measure(
+                if (fixedWidth != null) View.MeasureSpec.makeMeasureSpec(fixedWidth, View.MeasureSpec.EXACTLY) else View.MeasureSpec.UNSPECIFIED,
+                View.MeasureSpec.UNSPECIFIED)
+            popup.showAsDropDown(anchor, 0, -(anchor.height + box.measuredHeight + dp(8)))
+        } else {
+            popup.showAsDropDown(anchor, 0, dp(4))
+        }
+    }
+
+    private fun showChatModeMenu(anchor: View) {
+        val current = currentChatMode().key
+        val modes = availableChatModes().reversed()   // 🎭 la personalidad personalizada queda arriba de Traducción
+        // ✓ en su columna (los nombres largos quedan alineados) y siempre el mismo ancho: el de los modos normales
+        showRoundMenu(anchor, modes.map { it.label }, above = true,
+            checked = modes.indexOfFirst { it.key == current }, widthFrom = chatModes.map { it.label }) { i ->
+            val mode = modes[i]
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString("chat_mode", mode.key).apply()
+            btnChatMode?.text = "${mode.label} ▴"
+            cumulusToast(this, "Modo: ${mode.label}", Toast.LENGTH_SHORT).show()
+            runCatching { chatAdapter?.notifyDataSetChanged() }   // 📄 el código cambia a tarjetas de archivo (o vuelve a cuadros)
+        }
+    }
+
+    private fun setupChatModeAndAttach() {
+        btnChatMode?.text = "${currentChatMode().label} ▴"
+        btnChatMode?.setOnClickListener { anchor -> showChatModeMenu(anchor) }
+
+        btnAttach?.setOnClickListener { showAttachMenu() }
+        updateInternetIndicator()
+    }
+
+    // ========================================================================
+    // ➕ VENTANA DEL BOTÓN +: Imagen / Video / Cámara / Archivo / Internet
+    // ========================================================================
+    /**
+     * ⬇️ Botón redondo con flecha hacia abajo (abajo al centro del chat). Aparece cuando subiste a leer
+     * mensajes anteriores y, al tocarlo, baja hasta el final del último mensaje. Se esconde solo al llegar abajo.
+     */
+    private fun setupScrollToBottomButton() {
+        val rv = rvChatMessages ?: return
+        val parent = rv.parent as? ViewGroup ?: return
+        if (parent.tag == "chat_frame") return
+        val d = resources.displayMetrics.density
+        // El chat queda dentro de un marco (mismo lugar y tamaño) para poner el botón encima
+        val index = parent.indexOfChild(rv)
+        val lp = rv.layoutParams
+        parent.removeView(rv)
+        val frame = android.widget.FrameLayout(this).apply { tag = "chat_frame" }
+        frame.addView(rv, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        parent.addView(frame, index, lp)
+        val btn = ImageView(this).apply {
+            setImageResource(R.drawable.ic_scroll_down)
+            setColorFilter(Color.WHITE)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding((12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt())
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(Color.parseColor("#262628"))
+                setStroke((1 * d).toInt(), Color.parseColor("#4A4A4E"))
+            }
+            elevation = 6 * d
+            contentDescription = "Bajar al último mensaje"
+            visibility = View.GONE
+            alpha = 0f
+        }
+        frame.addView(btn, android.widget.FrameLayout.LayoutParams((46 * d).toInt(), (46 * d).toInt(),
+            android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL).apply { bottomMargin = (12 * d).toInt() })
+        var shown = false
+        fun update() {
+            // Se muestra si falta más de ~1/3 de pantalla para llegar al final
+            val left = rv.computeVerticalScrollRange() - rv.computeVerticalScrollOffset() - rv.computeVerticalScrollExtent()
+            val want = rv.canScrollVertically(1) && left > rv.height / 3
+            if (want == shown) return
+            shown = want
+            btn.animate().cancel()
+            if (want) { btn.visibility = View.VISIBLE; btn.animate().alpha(1f).setDuration(160).start() }
+            else btn.animate().alpha(0f).setDuration(160).withEndAction { if (!shown) btn.visibility = View.GONE }.start()
+        }
+        rv.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) = update()
+        })
+        rv.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> rv.post { update() } }
+        btn.setOnClickListener {
+            val last = (rv.adapter?.itemCount ?: 0) - 1
+            if (last < 0) return@setOnClickListener
+            val lm = rv.layoutManager as? LinearLayoutManager
+            // Muy lejos: salta cerca del final y termina deslizando suave hasta el fondo del último mensaje
+            if (lm != null && last - lm.findLastVisibleItemPosition() > 8) rv.scrollToPosition(last - 2)
+            rv.post { rv.smoothScrollBy(0, rv.computeVerticalScrollRange()) }
+        }
+    }
+
+    private fun isInternetEnabled(): Boolean =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("chat_internet", false)
+
+    /** 🔄 Interruptor «Actualización de códigos y programación» (menú ➕). */
+    private fun isCodeUpdatesEnabled(): Boolean =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("code_updates", false)
+
+    /** Versión estable más nueva de un maven-metadata.xml (sin alpha, beta, rc, dev, eap…). */
+    private fun latestStableFromMetadata(xml: String): String? =
+        Regex("<version>([^<]+)</version>").findAll(xml).map { it.groupValues[1].trim() }
+            .filter { Regex("^\\d+(\\.\\d+)+$").matches(it) }
+            .maxWithOrNull { a, b ->
+                val x = a.split('.').map { it.toIntOrNull() ?: 0 }; val y = b.split('.').map { it.toIntOrNull() ?: 0 }
+                (0 until maxOf(x.size, y.size)).map { (x.getOrElse(it) { 0 }).compareTo(y.getOrElse(it) { 0 }) }.firstOrNull { it != 0 } ?: 0
+            }
+
+    /**
+     * 🔄 Versiones estables ACTUALES de lo que más se usa al programar apps Android (Kotlin, Gradle, plugin de Android,
+     * AndroidX, Material, Compose, Room, corrutinas). Se leen de los repositorios oficiales (Maven Central, Google Maven
+     * y Gradle) y se guardan 12 horas para no repetir la consulta en cada mensaje.
+     */
+    private fun currentCodeVersions(): String? {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val cached = prefs.getString("code_versions_cache", null)
+        if (cached != null && System.currentTimeMillis() - prefs.getLong("code_versions_time", 0) < 12 * 3600_000L) return cached
+        val central = "https://repo1.maven.org/maven2/"
+        val google = "https://dl.google.com/android/maven2/"
+        val libs = listOf(
+            "Kotlin" to central + "org/jetbrains/kotlin/kotlin-stdlib",
+            "Corrutinas (kotlinx-coroutines-android)" to central + "org/jetbrains/kotlinx/kotlinx-coroutines-android",
+            "Android Gradle Plugin" to google + "com/android/tools/build/gradle",
+            "androidx.core:core-ktx" to google + "androidx/core/core-ktx",
+            "androidx.appcompat:appcompat" to google + "androidx/appcompat/appcompat",
+            "com.google.android.material:material" to google + "com/google/android/material/material",
+            "androidx.activity:activity-ktx" to google + "androidx/activity/activity-ktx",
+            "androidx.constraintlayout:constraintlayout" to google + "androidx/constraintlayout/constraintlayout",
+            "androidx.recyclerview:recyclerview" to google + "androidx/recyclerview/recyclerview",
+            "androidx.lifecycle:lifecycle-runtime-ktx" to google + "androidx/lifecycle/lifecycle-runtime-ktx",
+            "androidx.navigation:navigation-fragment-ktx" to google + "androidx/navigation/navigation-fragment-ktx",
+            "androidx.room:room-runtime" to google + "androidx/room/room-runtime",
+            "androidx.compose:compose-bom" to google + "androidx/compose/compose-bom"
+        )
+        val found = arrayOfNulls<String>(libs.size)
+        libs.mapIndexed { i, (_, base) ->
+            thread { runCatching { httpGetText("$base/maven-metadata.xml", maxBytes = 400_000)?.second?.let { found[i] = latestStableFromMetadata(it) } } }
+        }.forEach { it.join(8000) }
+        val gradle = runCatching { httpGetText("https://services.gradle.org/versions/current", maxBytes = 20_000)?.second }
+            .getOrNull()?.let { Regex("\"version\"\\s*:\\s*\"([^\"]+)\"").find(it)?.groupValues?.get(1) }
+        val lines = libs.indices.mapNotNull { i -> found[i]?.let { "- ${libs[i].first}: $it" } } +
+            listOfNotNull(gradle?.let { "- Gradle (gradle-wrapper): $it" })
+        if (lines.size < 3) return cached   // sin conexión: lo último que se guardó (si hay)
+        val text = lines.joinToString("\n")
+        prefs.edit().putString("code_versions_cache", text).putLong("code_versions_time", System.currentTimeMillis()).apply()
+        return text
+    }
+
+    /**
+     * 🔄 Lo que la app le entrega a la IA con «Actualización de códigos y programación» encendido (solo con Internet
+     * encendido y en el modo Ingeniero de código): las versiones estables de hoy y la documentación oficial al día
+     * del tema que pediste. null si no corresponde o no llegó nada.
+     */
+    private fun codeUpdatesContext(question: String): String? {
+        if (!isCodeUpdatesEnabled() || !isInternetEnabled() || currentChatMode().key != "codigo" || stopRequested) return null
+        AiActivity.analyzing("🔄 Actualizando la IA: versiones y documentación de programación de hoy")
+        val versions = runCatching { currentCodeVersions() }.getOrNull()
+        if (stopRequested) return null
+        // 📚 Documentación oficial al día del tema pedido (Android, Kotlin, MDN, Stack Overflow, GitHub…)
+        val topic = question.replace(Regex("```.*?```", RegexOption.DOT_MATCHES_ALL), " ")
+            .lines().firstOrNull { it.isNotBlank() }.orEmpty().replace(Regex("\\s+"), " ").trim().take(140)
+        val year = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        val docs = if (topic.length < 12) null else runCatching {
+            // 🌍 En el idioma de quien programa (indonesio, vietnamita, tailandés, árabe, alemán…): su comunidad y su documentación
+            val docsWords = runCatching { WebSearchRules.officialDocsWords(WebSearchRules.codeLanguage(question, newsCountry())) }
+                .getOrDefault("documentación oficial")
+            fetchWebContext("$topic $docsWords $year", reserveChars = 2500, code = true)
+        }.getOrNull()?.take(1800)
+        if (versions == null && docs == null) return null
+        val sb = StringBuilder("[ACTUALIZACIÓN DE CÓDIGOS Y PROGRAMACIÓN · datos de internet de hoy ($year)]\n")
+        if (versions != null) sb.append("Versiones estables actuales (repositorios oficiales):\n").append(versions).append('\n')
+            .append("Si escribes build.gradle o dependencias, usa estas versiones (no versiones viejas). Si una librería nueva " +
+                "pide un compileSdk más alto, súbelo y avísalo.\n")
+        if (docs != null) sb.append("\nDocumentación reciente sobre lo pedido:\n").append(docs).append('\n')
+        sb.append("Prefiere las APIs actuales y evita las obsoletas (deprecated).")
+        AiActivity.log("🔄 Le entregué a la IA las versiones y la documentación al día" + (if (versions != null) "" else " (sin versiones)"))
+        return sb.toString()
+    }
+
+    /** 🔄 Versiones de hoy en una sola línea corta, para cada archivo de un proyecto armado por partes (null = no aplica). */
+    @Volatile private var projectCodeUpdates: String? = null
+
+    private fun projectCodeUpdatesBrief(): String? {
+        if (!isCodeUpdatesEnabled() || !isInternetEnabled() || currentChatMode().key != "codigo") return null
+        AiActivity.analyzing("🔄 Actualizando la IA: versiones de programación de hoy para tu proyecto")
+        val versions = currentCodeVersions() ?: return null
+        val line = versions.lines().map { it.removePrefix("- ").trim() }.filter { it.isNotEmpty() }.joinToString(" · ")
+        AiActivity.log("🔄 La IA armará el proyecto con las versiones de hoy", line.take(600))
+        return "[Versiones estables de hoy (internet): $line. Usa estas versiones en build.gradle y dependencias; " +
+            "prefiere APIs actuales, no obsoletas.]"
+    }
+
+    private fun updateInternetIndicator() {
+        // El + se pinta azul cuando Internet está activado
+        if (pendingAttachments.isEmpty()) {
+            btnAttach?.setColorFilter(Color.parseColor(if (isInternetEnabled()) "#3D5AFE" else "#808080"))
+        }
+        refreshInternetBadge()
+    }
+
+    /**
+     * 🌐 Al tocar el interruptor de Internet, la línea de estado de la última respuesta cambia al
+     * instante (⚠️ amarillo ↔ 🌐 azul), sin esperar al próximo mensaje. Las respuestas que sí
+     * usaron datos de la web («🌐 Datos de: …») no se tocan.
+     */
+    private fun refreshInternetBadge() {
+        val idx = chatMessages.indexOfLast { !it.isUser }
+        if (idx < 0) return
+        val msg = chatMessages[idx]
+        val on = isInternetEnabled()
+        val newTokens = if (on) msg.tokens.replace("⚠️ Sin datos de internet", "🌐 Internet activado · no hizo falta buscar")
+                        else msg.tokens.replace("🌐 Internet activado · no hizo falta buscar", "⚠️ Sin datos de internet")
+        if (newTokens != msg.tokens) {
+            chatMessages[idx] = msg.copy(tokens = newTokens)
+            chatAdapter?.notifyItemChanged(idx)
+        }
+    }
+
+    /** 🔵 Interruptor azul (el mismo azul de la app) cuando está prendido; gris cuando está apagado. */
+    private fun paintSwitchBlue(sw: com.google.android.material.switchmaterial.SwitchMaterial) {
+        val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+        sw.setUseMaterialThemeColors(false)
+        sw.setThumbTintList(android.content.res.ColorStateList(states,
+            intArrayOf(Color.parseColor("#3D5AFE"), Color.parseColor("#E0E0E0"))))
+        sw.setTrackTintList(android.content.res.ColorStateList(states,
+            intArrayOf(Color.parseColor("#803D5AFE"), Color.parseColor("#5A5A5E"))))
+    }
+
+    private fun showAttachMenu() {
+        val dp = resources.displayMetrics.density
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (8 * dp).toInt())
+        }
+        lateinit var dialog: AlertDialog
+        // ✨ Íconos de líneas (como los de copiar y compartir): gris suave, se ven modernos en negro y en blanco
+        val iconTint = android.content.res.ColorStateList.valueOf(Color.parseColor(if (isLightMode()) "#6E6E73" else "#9A9A9A"))
+        fun withIcon(view: TextView, iconRes: Int) {
+            view.setCompoundDrawablesRelativeWithIntrinsicBounds(iconRes, 0, 0, 0)
+            view.compoundDrawablePadding = (16 * dp).toInt()
+            view.compoundDrawableTintList = iconTint
+            view.gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+
+        fun addOption(iconRes: Int, label: String, action: () -> Unit) {
+            container.addView(TextView(this).apply {
+                text = label
+                withIcon(this, iconRes)
+                textSize = 18f
+                setTextColor(Color.WHITE)
+                setPadding((8 * dp).toInt(), (14 * dp).toInt(), (8 * dp).toInt(), (14 * dp).toInt())
+                isClickable = true
+                isFocusable = true
+                val attrs = intArrayOf(android.R.attr.selectableItemBackground)
+                val ta = obtainStyledAttributes(attrs)
+                background = ta.getDrawable(0)
+                ta.recycle()
+                setOnClickListener {
+                    dialog.dismiss()
+                    action()
+                }
+            })
+        }
+
+        addOption(R.drawable.ic_menu_image, "Imagen") { openGalleryPicker() }
+        addOption(R.drawable.ic_menu_video, "Video") { openAttachmentPicker(arrayOf("video/*")) }
+        // 📷 Una sola cámara: la del ojito (Cámara en vivo). La otra (que abría la cámara del teléfono
+        //    y guardaba la foto en la galería) se quitó.
+        addOption(R.drawable.ic_menu_eye, "Cámara en vivo") { openCameraLive() }
+        addOption(R.drawable.ic_menu_file, "Archivo") {
+            // Todos los archivos: el código con extensiones raras (.kt, .app, .gradle…) a veces no trae un tipo conocido
+            openAttachmentPicker(arrayOf("*/*"))
+        }
+
+        container.addView(View(this).apply {
+            setBackgroundColor(Color.parseColor("#3A3A3C"))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt()
+            ).apply { topMargin = (6 * dp).toInt(); bottomMargin = (6 * dp).toInt() }
+        })
+
+        // 🖥️ Vista previa web y 📱 maqueta de la app (lo que construye la IA en el chat)
+        addOption(R.drawable.ic_menu_web, "Vista previa web") { openWebPreview() }
+        addOption(R.drawable.ic_menu_phone, "Maqueta de la app") { openAppMockup() }
+
+        container.addView(View(this).apply {
+            setBackgroundColor(Color.parseColor("#3A3A3C"))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt()
+            ).apply { topMargin = (6 * dp).toInt(); bottomMargin = (6 * dp).toInt() }
+        })
+
+        // 🎙️ Conversación voz a voz (on/off)
+        container.addView(com.google.android.material.switchmaterial.SwitchMaterial(this).apply {
+            text = "Conversación por voz"
+            withIcon(this, R.drawable.ic_menu_voice)
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            paintSwitchBlue(this)
+            isChecked = isVoiceConversationActive
+            setPadding((8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt())
+            setOnCheckedChangeListener { view, checked ->
+                setVoiceConversation(checked)
+                if (checked && !isVoiceConversationActive) view.isChecked = false
+                if (checked && isVoiceConversationActive) dialog.dismiss()
+            }
+        })
+
+        container.addView(View(this).apply {
+            setBackgroundColor(Color.parseColor("#3A3A3C"))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt()
+            ).apply { topMargin = (6 * dp).toInt(); bottomMargin = (6 * dp).toInt() }
+        })
+
+        container.addView(com.google.android.material.switchmaterial.SwitchMaterial(this).apply {
+            text = "Internet"
+            withIcon(this, R.drawable.ic_menu_globe)
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            paintSwitchBlue(this)
+            isChecked = isInternetEnabled()
+            setPadding((8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt())
+            setOnCheckedChangeListener { _, checked ->
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putBoolean("chat_internet", checked).apply()
+                updateInternetIndicator()
+                // 🌐 Se conecta YA (no al mandar el mensaje): prueba la red y deja lista la conexión
+                //    para que la primera búsqueda no frene al motor
+                if (checked) thread {
+                    val ok = runCatching {
+                        val c = (URL("https://www.google.com/generate_204").openConnection() as HttpURLConnection).apply {
+                            connectTimeout = 3000; readTimeout = 3000; requestMethod = "GET"
+                        }
+                        try { c.responseCode in 200..399 } finally { c.disconnect() }
+                    }.getOrDefault(false)
+                    runOnUiThread {
+                        if (!ok) cumulusToast(this@MainActivity,
+                            "⚠️ Internet activado, pero el teléfono no tiene conexión ahora. Revisa Wi‑Fi o datos.",
+                            Toast.LENGTH_LONG).show()
+                    }
+                }
+                cumulusToast(
+                    this@MainActivity,
+                    if (checked) "🌐 Internet activado: la IA buscará en la web" else "Internet desactivado",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        })
+
+        // 🔄 Actualización de códigos y programación: se complementa con Internet y con el modo Ingeniero de código.
+        //    Encendido + Internet encendido + modo Ingeniero de código → la app le entrega a la IA las versiones
+        //    actuales (Kotlin, Gradle, AndroidX…) y la documentación oficial al día de lo que pediste.
+        container.addView(com.google.android.material.switchmaterial.SwitchMaterial(this).apply {
+            text = "Actualización de códigos y programación"
+            withIcon(this, R.drawable.ic_menu_code)
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            paintSwitchBlue(this)
+            isChecked = isCodeUpdatesEnabled()
+            setPadding((8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt())
+            setOnCheckedChangeListener { _, checked ->
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean("code_updates", checked).apply()
+                val msg = when {
+                    !checked -> "Actualización de códigos y programación desactivada"
+                    !isInternetEnabled() -> "🔄 Activada. Enciende también Internet para que la IA reciba las actualizaciones"
+                    currentChatMode().key != "codigo" -> "🔄 Activada. Se usará cuando elijas el modo Ingeniero de código"
+                    else -> "🔄 Activada: la IA programará con las versiones y la documentación al día"
+                }
+                cumulusToast(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+            }
+        })
+
+        applyTapRipple(container)   // 💧 opciones del menú ➕ con destello azul
+        dialog = AlertDialog.Builder(this)
+            .setView(container)
+            .create()
+        dialog.show()
+        // ⚫ Modo oscuro: fondo negro · ⚪ Modo claro: fondo blanco (esquinas curvas, sin línea gris alrededor)
+        if (isLightMode()) {
+            val d = resources.displayMetrics.density
+            dialog.window?.setBackgroundDrawable(android.graphics.drawable.InsetDrawable(
+                android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 22 * d
+                    setColor(Color.WHITE)
+                }, (16 * d).toInt()))
+            recolorTree(container, true)   // textos e íconos oscuros sobre el blanco
+        } else styleDarkRoundDialog(dialog, border = false)
+    }
+
+    /** Respuestas de la IA en el chat, de la más nueva a la más vieja (para la vista previa). */
+    private fun aiMessagesNewestFirst(): List<String> =
+        chatMessages.filter { !it.isUser && it.text.isNotBlank() }.map { it.text }.asReversed()
+
+    private fun openWebPreview() {
+        PreviewPanel.open(this, "🖥️ Vista previa web",
+            "Todavía no hay código web (HTML, CSS o JavaScript) en este chat.<br><br>" +
+                "Pídele a la IA, por ejemplo: <b>«Créame una calculadora en HTML, CSS y JavaScript»</b> y vuelve a abrir esta ventana " +
+                "(o toca 🔄).", live = { liveCodeActive }, handoff = { shareProjectToOtherAi() }) { PreviewPanel.buildWebPage(liveDraftForPreview() + aiMessagesNewestFirst()) }
+    }
+
+    /**
+     * 📱🖥️ ¿Pide VER su app? («muéstrame la parte visual», «ábreme la maqueta», «quiero ver cómo se ve»,
+     * «abre la vista previa»). Devuelve ("app" | "web" | "none", respuesta) o null si no lo pide.
+     */
+    private fun showPreviewKind(message: String): Pair<String, String>? {
+        val p = message.lowercase(Locale.ROOT)
+        // Palabras completas aunque empiecen o terminen con tilde («ábreme», «quedó»)
+        fun w(body: String) = Regex("(?<![\\p{L}\\p{N}_])(?:$body)(?![\\p{L}\\p{N}_])")
+        val ask = w("mu[eé]strame|mu[eé]stra(la|lo)?|mostrar(me)?|ens[eé][ñn]ame|[aá]bre(me|la|lo)?|abrir|quiero ver|d[eé]jame ver|veamos|" +
+            "c[oó]mo (se ve|qued[oó]|luce|va quedando)").containsMatchIn(p)
+        val visual = w("parte visual|lo visual|visual|maqueta|vista previa|preview|dise[ñn]o|pantallas?|interfaz|c[oó]mo se ve|" +
+            "c[oó]mo (qued[oó]|luce|va quedando)|funcionando").containsMatchIn(p)
+        if (!ask || !visual) return null
+        // No es mostrar si pide cambiarla, crearla o aprender a hacerla («crea el diseño», «agrégale un botón»…)
+        if (w("cr[eé]ame|crea (un|una|el|la)|hazme|haz (un|una|el|la)|c[aá]mbia(le|la|r)?|agr[eé]ga(le)?|a[ñn][aá]de(le)?|modifica|" +
+                "corrige|mejora|arregla|ponle|qu[ií]tale|c[oó]mo (hacer|hago|se hace|crear|creo|programar)|c[oó]digo|ejemplo").containsMatchIn(p)) return null
+        val msgs = aiMessagesNewestFirst()
+        val hasLayout = runCatching { PreviewPanel.buildAppMockup(msgs) != null }.getOrDefault(false)
+        val hasWeb = runCatching { PreviewPanel.buildWebPage(msgs) != null }.getOrDefault(false)
+        val wantsWeb = w("web|p[aá]gina|html|navegador|vista previa|preview|funcionando").containsMatchIn(p)
+        return when {
+            hasWeb && (wantsWeb || !hasLayout) -> "web" to "🖥️ Te abrí la vista previa de tu app web para que la veas funcionando. " +
+                "Si después le hago cambios, vuelve a abrirla para ver cómo va quedando."
+            hasLayout -> "app" to "📱 Te abrí la maqueta con la parte visual de tu app. " +
+                "Si después le agrego más botones o pantallas, vuelve a abrirla para ver cómo va quedando."
+            else -> "none" to "Todavía no hay una parte visual para mostrar en este chat 🙂.\n\n" +
+                "📱 Para la maqueta necesito el diseño XML de las pantallas (res/layout). Pídeme, por ejemplo: «créame el diseño XML de la calculadora».\n" +
+                "🖥️ Para la vista previa web necesito el código HTML, CSS y JavaScript."
+        }
+    }
+
+    /**
+     * 🧪 Opción C de la maqueta: cuando la IA termina de escribir la lógica Kotlin de una app que tiene diseños XML,
+     * escribe además una versión corta en JavaScript (maqueta.js) para que la maqueta funcione con esa lógica.
+     * Si el modelo no la logra o sale con errores, la respuesta queda igual (la maqueta sigue con su interactividad básica).
+     */
+    private fun withMockupLogic(reply: AiReply, history: List<Pair<String, String>>, backend: String): AiReply {
+        val text = reply.text
+        if (stopRequested || isVoiceConversationActive || currentChatMode().key != "codigo" || text.contains("maqueta.js", ignoreCase = true)) return reply
+        // Botones que ya funcionan en la maqueta (de los maqueta.js anteriores): la IA solo escribe lo nuevo
+        val alreadyDone = history.filter { it.first == "assistant" }.flatMap { (_, t) ->
+            Regex("alClick\\(\\s*['\"]([\\w]+)['\"]").findAll(t).map { it.groupValues[1] }.toList() }.distinct()
+        val kotlin = Regex("```(?:kotlin|kt)[ \\t]*\\r?\\n(.*?)```", RegexOption.DOT_MATCHES_ALL).findAll(text).map { it.groupValues[1] }
+            .filter { Regex("setOnClickListener|addTextChangedListener|onClick|\\.add\\(|submitList|notifyItem").containsMatchIn(it) }.toList()
+        if (kotlin.isEmpty()) return reply
+        val screens = PreviewPanel.mockupIds(listOf(text) + history.filter { it.first == "assistant" }.map { it.second }.asReversed()) ?: return reply
+        val logic = kotlin.joinToString("\n").lines()
+            .filterNot { val t = it.trim(); t.isEmpty() || t.startsWith("import ") || t.startsWith("package ") || t.startsWith("//") }
+            .joinToString("\n").take(1100)
+        AiActivity.analyzing("🧪 Preparando la maqueta para que funcione con la lógica de tu app")
+        val sys = "Eres un programador experto en JavaScript. Respondes SOLO con un bloque de código ```javascript, sin explicaciones."
+        val ask = "Escribe un JavaScript CORTO que simule en una maqueta HTML la lógica de esta app Android.\n" +
+            "Usa SOLO estas funciones (ya existen): alClick(id, function(){...}) · valor(id) lee lo escrito · texto(id) / texto(id, nuevo) · " +
+            "limpiar(id) · agregar(idLista, texto) agrega a una lista · burbuja(texto) muestra un mensaje de chat · " +
+            "burbuja(texto, true) muestra la respuesta de la app · aviso(mensaje) · abrir(nombrePantalla) · mostrar(id, true|false).\n" +
+            "Escribe SOLO la lógica de lo que se agregó o cambió ahora (lo anterior ya funciona y se mantiene).\n" +
+            "Los id son los mismos del diseño XML. Variables con var. Nada de import, fetch, Android ni Kotlin.\n\n" +
+            "PANTALLAS Y ELEMENTOS:\n$screens\n\n" +
+            (if (alreadyDone.isNotEmpty()) "YA FUNCIONAN (no los repitas salvo que cambien): ${alreadyDone.joinToString(", ")}\n\n" else "") +
+            "LÓGICA KOTLIN:\n$logic"
+        val raw = runCatching { removeThinking(rawGenerate(sys, ask, 450, backend)) }.getOrNull() ?: return reply
+        if (stopRequested) return reply
+        val js = (Regex("```(?:javascript|js)?[ \\t]*\\r?\\n(.*?)```", RegexOption.DOT_MATCHES_ALL).find(raw)?.groupValues?.get(1)
+            ?: raw.takeIf { it.contains("alClick(") })?.trim()
+        if (js == null || !mockupJsLooksValid(js)) {
+            AiActivity.log("🧪 La lógica para la maqueta no salió bien: la maqueta queda con su interactividad básica")
+            return reply
+        }
+        AiActivity.log("🧪 Lógica para la maqueta lista (maqueta.js)")
+        return reply.copy(text = text.trimEnd() + "\n\n🧪 Lógica para la maqueta (JavaScript que simula tu app en la vista previa; no va en el proyecto):\n" +
+            "📁 maqueta.js\n```javascript\n$js\n```")
+    }
+
+    /** ¿El maqueta.js se ve bien? (usa las funciones de la maqueta, paréntesis y llaves cerradas, sin cosas de Android) */
+    private fun mockupJsLooksValid(js: String): Boolean {
+        if (js.length !in 20..4000) return false
+        if (!Regex("\\b(alClick|agregar|texto|valor|aviso|abrir|mostrar|limpiar)\\(").containsMatchIn(js)) return false
+        if (Regex("\\b(import |require\\(|fetch\\(|findViewById|setOnClickListener|override fun|val |fun )").containsMatchIn(js)) return false
+        // Paréntesis, llaves y corchetes equilibrados (sin contar los que van dentro de textos)
+        val noStrings = js.replace(Regex("'(?:[^'\\\\\\n]|\\\\.)*'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|`[^`]*`"), "\"\"")
+            .replace(Regex("//[^\\n]*"), "")
+        var depth = 0
+        for (ch in noStrings) {
+            when (ch) { '(', '{', '[' -> depth++; ')', '}', ']' -> depth-- }
+            if (depth < 0) return false
+        }
+        return depth == 0
+    }
+
+    // ✍️ Código que la IA está escribiendo AHORA (para ver el desarrollo de la app en la vista previa)
+    @Volatile private var liveCodeActive = false
+    @Volatile private var liveCodeDraft: String? = null
+    @Volatile private var liveDraftPrefix = ""
+
+    private fun liveDraftForPreview(): List<String> = listOfNotNull(liveCodeDraft?.takeIf { liveCodeActive }?.let { d ->
+        // Si el bloque de código todavía no se cierra (la IA sigue escribiendo), se cierra para poder mostrarlo
+        if (Regex("```").findAll(d).count() % 2 == 1) "$d\n```" else d
+    })
+
+    private fun startLiveCode(kind: String?, active: Boolean = kind != null) {
+        liveDraftPrefix = ""
+        liveCodeDraft = null
+        liveCodeActive = active
+        AiActivity.previewKind = kind
+    }
+
+    /** Guarda lo que va escribiendo la IA y avisa cuando ya está la parte visual de la app. */
+    private fun updateLiveDraft(draft: String) {
+        if (!liveCodeActive) return
+        liveCodeDraft = draft
+        checkLiveVisualReady(draft)
+    }
+
+    // Un diseño XML de Android COMPLETO (bloque de código cerrado) = ya está la parte visual
+    private val layoutBlockRx = Regex("```(xml)?[ \\t]*\\r?\\n\\s*(<\\?xml[^>]*>\\s*)?(<!--.*?-->\\s*)*<(LinearLayout|RelativeLayout|FrameLayout|" +
+        "ScrollView|TableLayout|GridLayout|[\\w.]*ConstraintLayout|[\\w.]*CoordinatorLayout|[\\w.]*CardView|[\\w.]*DrawerLayout|" +
+        "[\\w.]*NestedScrollView)[\\s>].*?```", RegexOption.DOT_MATCHES_ALL)
+    @Volatile private var lastVisualCheckLen = 0
+
+    /**
+     * 📱 App con Kotlin: en cuanto la IA termina de escribir la parte visual (el diseño XML),
+     * se le pide al usuario que entre a la maqueta. Ni antes ni después.
+     */
+    private fun checkLiveVisualReady(draft: String) {
+        if (AiActivity.previewReady || AiActivity.previewKind == "web") return
+        // Revisar solo cuando creció el texto y ya hay un bloque cerrado (no en cada letra)
+        if (draft.length - lastVisualCheckLen < 150 && lastVisualCheckLen != 0) return
+        lastVisualCheckLen = draft.length
+        if (!draft.contains("Layout") || draft.split("```").size < 3) return
+        if (layoutBlockRx.containsMatchIn(draft)) {
+            AiActivity.previewKind = "app"
+            AiActivity.markPreviewReady("📱 Ya está creada la parte visual de tu app: entra a la maqueta para ver cómo se ve")
+        }
+    }
+
+    private fun stopLiveCode() {
+        liveCodeActive = false
+        liveCodeDraft = null
+        liveDraftPrefix = ""
+        lastVisualCheckLen = 0
+    }
+
+    private fun openAppMockup() {
+        PreviewPanel.open(this, "📱 Maqueta de la app",
+            "Todavía no hay diseños de app Android (XML) en este chat.<br><br>" +
+                "Pídele a la IA, por ejemplo: <b>«Créame una app de notas completa en Kotlin en partes separadas»</b> y vuelve a abrir " +
+                "esta ventana (o toca 🔄).", live = { liveCodeActive }, handoff = { shareProjectToOtherAi() }) { PreviewPanel.buildAppMockup(liveDraftForPreview() + aiMessagesNewestFirst()) }
+    }
+
+    /**
+     * 🤖 «Llevar mi proyecto a otra IA»: junta TODO el proyecto del chat (archivos con su ruta, lo que pidió el usuario,
+     * el resumen y una instrucción inicial) en un solo texto. Lo copia y abre «Compartir» para mandarlo directo a
+     * Claude, Gemini, ChatGPT o donde quieras. Si es muy largo para pegar, va además como archivo .txt.
+     */
+    private fun shareProjectToOtherAi() {
+        val requests = chatMessages.filter { it.isUser && it.text.isNotBlank() }.map { it.text.trim() }
+        // 🌍 Idioma del mensaje para la otra IA: el que usa el usuario al escribir (si no queda claro, el de su país).
+        //    En Chile, en español; en EE.UU., en inglés; un chileno en EE.UU. que escribe en español, en español.
+        val lang = runCatching { WebSearchRules.replyLanguage(requests.takeLast(6).joinToString(" "), newsCountry()) }.getOrDefault("es")
+        val text = runCatching { PreviewPanel.buildHandoff(aiMessagesNewestFirst(), requests, lang) }.getOrNull()
+        if (text == null) {
+            cumulusToast(this, "Todavía no hay código en este chat para llevar a otra IA.", Toast.LENGTH_LONG).show()
+            return
+        }
+        // 📋 Copiado (si es enorme y el teléfono no lo deja copiar, igual se comparte como archivo)
+        val copied = runCatching {
+            (getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+                .setPrimaryClip(android.content.ClipData.newPlainText("Proyecto para otra IA", text))
+        }.isSuccess
+        val big = text.length > 90_000
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Mi proyecto para seguir desarrollándolo")
+            if (big) {
+                runCatching {
+                    val f = File(deliveriesDir(), "proyecto_para_otra_ia.txt").apply { writeText(text) }
+                    putExtra(Intent.EXTRA_STREAM, privateUri(f))
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    putExtra(Intent.EXTRA_TEXT, text.lineSequence().first() + " 📎 (.txt)")   // el saludo, en el idioma del usuario
+                }.onFailure { putExtra(Intent.EXTRA_TEXT, text.take(90_000)) }
+            } else putExtra(Intent.EXTRA_TEXT, text)
+        }
+        cumulusToast(this, (if (copied) "📋 Proyecto copiado (${text.length / 1000 + 1} mil letras). " else "") +
+            "Elige la IA o pégalo en Claude, Gemini o ChatGPT.", Toast.LENGTH_LONG).show()
+        runCatching { startActivity(Intent.createChooser(send, "🤖 Llevar mi proyecto a otra IA")) }
+    }
+
+    // 🖼️ Se abrió la Galería (y no el selector de archivos): si no deja leer la foto, se usa el selector de siempre
+    private var attachFromGallery = false
+    private var chatImageFromGallery = false
+
+    /** «Imagen» del menú ➕: abre DIRECTO la app Galería (se pueden elegir varias), sin la ventana «Abrir desde». */
+    private fun openGalleryPicker() {
+        val gallery = Intent(Intent.ACTION_PICK).apply {
+            setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*")
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)   // elegir varias a la vez
+        }
+        // En Samsung va directo a su Galería; si no está, la galería que tengas; si no hay, el selector de siempre
+        val samsung = Intent(gallery).setPackage("com.sec.android.gallery3d")
+        try {
+            try {
+                startActivityForResult(samsung, PICK_ATTACHMENT_REQUEST)
+                        } catch (e: android.content.ActivityNotFoundException) {
+                startActivityForResult(gallery, PICK_ATTACHMENT_REQUEST)
+            }
+            attachFromGallery = true
+        } catch (e: Exception) {
+            openAttachmentPicker(arrayOf("image/*"))
+        }
+    }
+
+    private fun openAttachmentPicker(mimeTypes: Array<String>) {
+        attachFromGallery = false
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = if (mimeTypes.size == 1) mimeTypes[0] else "*/*"
+            if (mimeTypes.size > 1) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)   // elegir varios a la vez
+        }
+        try {
+            startActivityForResult(intent, PICK_ATTACHMENT_REQUEST)
+                } catch (e: Exception) {
+            cumulusToast(this, "No se pudo abrir el selector de archivos", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openCamera() {
+        try {
+            // La foto se guarda en Imágenes/CumulusIA (no necesita FileProvider)
+                        val values = android.content.ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, "cumulus_${System.currentTimeMillis()}.jpg")
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CumulusIA")
+            }
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            if (uri == null) {
+                cumulusToast(this, "No se pudo preparar la cámara", Toast.LENGTH_SHORT).show()
+                return
+            }
+            cameraPhotoUri = uri
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            }
+            startActivityForResult(intent, TAKE_PHOTO_REQUEST)
+        } catch (e: SecurityException) {
+            // Solo pasa si la app declara el permiso CAMERA y aún no se ha dado
+            cameraPhotoUri?.let { runCatching { contentResolver.delete(it, null, null) } }
+            cameraPhotoUri = null
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), TAKE_PHOTO_REQUEST)
+            cumulusToast(this, "Da permiso de cámara y vuelve a tocar Cámara", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al abrir la cámara: ${e.message}")
+            cumulusToast(this, "No se pudo abrir la cámara", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // ========================================================================
+    // 🌐 INTERNET REAL: busca en la web, entra a las páginas y lee su contenido.
+    //    Si escribes un enlace (https://...), lee esa página directamente.
+    // ========================================================================
+    private data class WebResult(val title: String, val url: String, val snippet: String)
+
+    private fun httpGetText(url: String, maxBytes: Int = 1_500_000, userAgent: String? = null): Pair<String, String>? = runCatching {
+        var current = url
+        repeat(5) {
+            val conn = (URL(current).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 8000
+                readTimeout = 10000
+                instanceFollowRedirects = false
+                setRequestProperty(
+                    "User-Agent",
+                    userAgent ?: "Mozilla/5.0 (Linux; Android 14; SM-S931B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Mobile Safari/537.36"
+                )
+                setRequestProperty("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5")
+                setRequestProperty("Accept-Language", "es-ES,es;q=0.9,en;q=0.8")
+            }
+            try {
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    val loc = conn.getHeaderField("Location") ?: return@runCatching null
+                    current = URL(URL(current), loc).toString()
+                    return@repeat
+                }
+                if (code !in 200..299) return@runCatching null
+                val type = conn.contentType.orEmpty().lowercase(Locale.US)
+                if (type.isNotEmpty() && !type.contains("text") && !type.contains("html") &&
+                    !type.contains("json") && !type.contains("xml")
+                ) return@runCatching null
+                val cs = Regex("charset=([\\w-]+)").find(type)?.groupValues?.get(1) ?: "UTF-8"
+                val bytes = conn.inputStream.use { input ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buf = ByteArray(16 * 1024)
+                    var total = 0
+                    while (total < maxBytes) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        total += n
+                    }
+                    out.toByteArray()
+                }
+                val text = runCatching { String(bytes, java.nio.charset.Charset.forName(cs)) }.getOrElse { String(bytes) }
+                return@runCatching current to text
+            } finally {
+                conn.disconnect()
+            }
+        }
+        null
+    }.onFailure { Log.w(TAG, "No se pudo abrir $url: ${it.message}") }.getOrNull()
+
+    private fun htmlToReadableText(html: String): String {
+        var h = html
+        // Quita lo que no es contenido: scripts, estilos, menús, pies de página
+        for (tag in listOf("script", "style", "noscript", "svg", "nav", "footer", "header", "form", "aside", "iframe")) {
+            h = h.replace(Regex("<$tag\\b[^>]*>.*?</$tag>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)), " ")
+        }
+        h = h.replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), " ")
+        // Saltos de párrafo en etiquetas de bloque
+        h = h.replace(Regex("</?(p|div|br|li|h[1-6]|tr|section|article|table|ul|ol)\\b[^>]*>", RegexOption.IGNORE_CASE), "\n")
+        val text = android.text.Html.fromHtml(h, android.text.Html.FROM_HTML_MODE_LEGACY).toString()
+        return text.lines()
+            .map { it.replace(Regex("\\s+"), " ").trim() }
+            .filter { it.length >= 40 }        // descarta botones y textos sueltos
+            .joinToString("\n")
+    }
+
+    private fun pageTitle(html: String): String =
+        Regex("<title[^>]*>(.*?)</title>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+            .find(html)?.groupValues?.get(1)
+            ?.let { android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim() }
+            .orEmpty()
+
+    // Elige los párrafos de la página que más se parecen a tu pregunta
+    private fun bestPassages(text: String, query: String, maxChars: Int): String {
+        val stop = setOf("que", "qué", "como", "cómo", "para", "por", "con", "los", "las", "una", "uno", "del",
+            "the", "and", "for", "what", "how", "cual", "cuál", "donde", "dónde", "cuando", "cuándo", "es", "de", "la", "el", "en")
+        val words = query.lowercase(Locale.getDefault())
+            .split(Regex("[^\\p{L}\\p{N}]+"))
+            .filter { it.length > 2 && it !in stop }
+            .toSet()
+        val paragraphs = text.split("\n").filter { it.isNotBlank() }
+        if (paragraphs.isEmpty()) return ""
+        val scored = paragraphs.mapIndexed { idx, p ->
+            val lower = p.lowercase(Locale.getDefault())
+            val hits = words.count { lower.contains(it) }
+            Triple(idx, p, hits * 10 - idx / 20)   // prioriza coincidencias y lo de arriba
+        }
+        val chosen = scored.sortedByDescending { it.third }
+            .let { list -> if (words.isEmpty()) scored else list }
+        val out = StringBuilder()
+        val picked = mutableListOf<Pair<Int, String>>()
+        for ((idx, p, _) in chosen) {
+            if (out.length + p.length > maxChars) continue
+            picked.add(idx to p)
+            out.append(p).append('\n')
+            if (out.length >= maxChars * 0.9) break
+        }
+        return picked.sortedBy { it.first }.joinToString("\n") { it.second.take(700) }
+    }
+
+    // 🔎 Búsqueda con varios buscadores: si uno falla o bloquea, se usa el siguiente
+    /**
+     * 🎯 Búsqueda según el TEMA: primero en las páginas de ese tema (vuelos → aerolíneas y buscadores de vuelos,
+     * micros → Moovit y transporte oficial, súper → páginas de cada supermercado, hoteles → Booking/Trivago…);
+     * después en la web general. Las páginas de noticias se usan SOLO para noticias (y economía, tecnología, ciencia).
+     */
+    private fun searchWebFor(cat: WebSearchRules.Category?, query: String, humor: Boolean = false, code: Boolean = false): List<WebResult> {
+        if (cat == null && !humor && !code) return searchWeb(query)
+        // 💻 Programación: se busca en las páginas de código solo con la pregunta (sin «documentación OR stackoverflow…»)
+        val q = (if (code) query.replace(Regex("\\s*\\(documentación OR stackoverflow OR github\\)"), "") else query).trim()
+        if (q.isEmpty()) return emptyList()
+        // 😄 Chistes, payas, adivinanzas y trabalenguas, y 💻 código: sus propias páginas y nunca noticias
+        val allowNews = !humor && !code && WebSearchRules.allowsNews(cat, q)
+        val sites = runCatching {
+            when {
+                code -> WebSearchRules.codeSites(q, newsCountry())
+                humor -> WebSearchRules.humorSites(q, newsCountry())
+                else -> WebSearchRules.preferredSites(cat, q, newsCountry())
+            }
+        }.getOrDefault(emptyList())
+        val topicTitle = when { code -> "💻 PROGRAMACIÓN"; humor -> "😄 CHISTES, PAYAS Y ADIVINANZAS"; else -> cat?.title.orEmpty() }
+        val out = mutableListOf<WebResult>()
+        var skippedNews = 0
+        fun add(list: List<WebResult>) {
+            list.forEach { r ->
+                if (out.any { it.url == r.url }) return@forEach
+                if (!allowNews && WebSearchRules.isNewsUrl(r.url)) { skippedNews++; return@forEach }
+                out.add(r)
+            }
+        }
+        if (sites.isNotEmpty() && !stopRequested) {
+            // Búsqueda solo dentro de esas páginas: «vuelos a Santiago (site:latamairlines.com OR site:skyairline.com …)»
+            // (la búsqueda se corta en 250 letras: pedido corto + 5 páginas por vuelta, para que no se corte el paréntesis)
+            val shortQ = q.take(110).substringBeforeLast(' ', q.take(110)).trim()
+            for (group in sites.chunked(5).take(2)) {
+                if (out.size >= 4 || stopRequested) break
+                val sq = shortQ + " (" + group.joinToString(" OR ") { "site:$it" } + ")"
+                add(searchBing(sq))
+                if (out.size < 2) add(searchDuckDuckGoLite(sq))
+            }
+            AiActivity.log("🎯 Páginas de $topicTitle",
+                "Busco en: " + sites.take(8).joinToString(", ") + "\n" +
+                    (if (out.isEmpty()) "No encontré nada ahí: busco en la web general" else "${out.size} resultado(s) de esas páginas"))
+        }
+        // 🌐 Si las páginas del tema no trajeron suficiente: la web general (sin noticias, si el tema no es de noticias)
+        if (out.size < 4 && !stopRequested) add(searchWeb(if (code) query else q, allowNews))
+        if (skippedNews > 0) AiActivity.log("🚫 Salté $skippedNews página(s) de noticias", "Las noticias solo se usan cuando pides noticias")
+        // Primero las páginas del tema
+        fun isPreferred(u: String) = runCatching {
+            val h = java.net.URI(u).host.orEmpty().lowercase().removePrefix("www.")
+            sites.any { s -> h == s || h.endsWith(".$s") }
+        }.getOrDefault(false)
+        return out.sortedByDescending { isPreferred(it.url) }.take(8)
+    }
+
+    private fun searchWeb(query: String, allowNews: Boolean = true): List<WebResult> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        val out = mutableListOf<WebResult>()
+        fun add(list: List<WebResult>) {
+            list.forEach { r -> if (out.none { it.url == r.url }) out.add(r) }
+        }
+        val newsLike = Regex(
+            // 📄 «precio» ya no va a Google Noticias primero: traía noticias de ofertas (que no se pueden abrir) en vez de páginas con precios
+            "noticia|hoy|último|ultima|última|actual|ahora|reciente|semana|ayer|resultado|partido|dólar|dolar|clima|tiempo en|elecci",
+            RegexOption.IGNORE_CASE
+        ).containsMatchIn(q)
+        // Google Noticias primero en temas de actualidad, Bing para la web general
+        if (newsLike && allowNews) add(searchGoogleNews(q))
+        add(searchBing(q))
+        // 🛟 Si Bing no respondió (a veces bloquea), DuckDuckGo de respaldo
+        if (out.size < 3) add(searchDuckDuckGo(q))
+        if (out.size < 3) add(searchDuckDuckGoLite(q))
+        if (out.size < 3 && !newsLike && allowNews) add(searchGoogleNews(q))
+        if (out.size < 3) add(searchWikipedia(q))
+        // 🔁 Una búsqueda larga a veces no trae nada: se prueba con las palabras importantes
+        if (out.size < 2) {
+            val short = shortSearchQuery(q)
+            if (short.isNotBlank() && short != q) {
+                Log.d(TAG, "🔁 Sin resultados: pruebo con «$short»")
+                add(searchBing(short))
+                if (out.size < 2) add(searchDuckDuckGoLite(short))
+                if (out.size < 2 && allowNews) add(searchGoogleNews(short))
+            }
+        }
+        Log.d(TAG, "🔎 «$q» → ${out.size} resultados")
+        return out.take(8)
+    }
+
+    /** «quiero comer algo Santiago Chile restaurantes recomendados» → «comer Santiago restaurantes recomendados» */
+    private fun shortSearchQuery(q: String): String {
+        val stop = setOf("quiero", "quisiera", "algo", "me", "puedes", "dame", "dime", "busca", "buscar", "por", "favor", "un", "una",
+            "unos", "unas", "el", "la", "los", "las", "de", "del", "que", "para", "en", "a", "y", "o", "hay", "tengo", "necesito",
+            "precio", "octubre", "noviembre", "diciembre", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre")
+        return q.split(Regex("\\s+")).filter { it.isNotBlank() && it.lowercase() !in stop && !Regex("^(19|20)\\d{2}$").matches(it) }
+            .take(5).joinToString(" ")
+    }
+
+    private fun htmlText(s: String): String =
+        android.text.Html.fromHtml(s, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim()
+
+    private fun enc(q: String) = java.net.URLEncoder.encode(q.take(250), "UTF-8")
+
+    // Noticias: Google News RSS (Chile, en español), muy confiable para titulares del día
+    private fun searchGoogleNews(query: String): List<WebResult> = runCatching {
+        val (_, xml) = httpGetText("https://news.google.com/rss/search?q=${enc(query)}&hl=es-419&gl=CL&ceid=CL:es-419")
+            ?: return@runCatching emptyList()
+        xml.split("<item>").drop(1).mapNotNull { item ->
+            fun tag(n: String) = Regex("<$n[^>]*>(.*?)</$n>", RegexOption.DOT_MATCHES_ALL).find(item)?.groupValues?.get(1)
+                ?.replace("<![CDATA[", "")?.replace("]]>", "")?.let { htmlText(it) }.orEmpty()
+            val title = tag("title"); val link = tag("link")
+            if (title.isBlank() || !link.startsWith("http")) null
+            else WebResult(title, link, "${tag("source")} · ${tag("pubDate")}".trim(' ', '·'))
+        }.take(8)
+    }.getOrDefault(emptyList())
+
+    private fun searchDuckDuckGoLite(query: String): List<WebResult> = runCatching {
+        val (_, html) = httpGetText("https://lite.duckduckgo.com/lite/?q=${enc(query)}") ?: return@runCatching emptyList()
+        val links = Regex("<a[^>]*href=\"([^\"]+)\"[^>]*class=['\"]result-link['\"][^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL)
+            .findAll(html).toList()
+        val snippets = Regex("class=['\"]result-snippet['\"][^>]*>(.*?)</td>", RegexOption.DOT_MATCHES_ALL)
+            .findAll(html).map { htmlText(it.groupValues[1]) }.toList()
+        links.mapIndexedNotNull { i, m ->
+            var href = htmlText(m.groupValues[1])
+            Regex("[?&]uddg=([^&]+)").find(href)?.let { href = java.net.URLDecoder.decode(it.groupValues[1], "UTF-8") }
+            if (href.startsWith("//")) href = "https:$href"
+            if (!href.startsWith("http")) null else WebResult(htmlText(m.groupValues[2]), href, snippets.getOrElse(i) { "" })
+        }.take(8)
+    }.getOrDefault(emptyList())
+
+    private fun searchBing(query: String): List<WebResult> = runCatching {
+        val (_, html) = httpGetText("https://www.bing.com/search?q=${enc(query)}&setlang=es&cc=" + newsCountry(),
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
+            ?: return@runCatching emptyList()
+        html.split(Regex("class=\"b_algo[^\"]*\"")).drop(1).mapNotNull { block ->
+            val m = Regex("<h2[^>]*>\\s*<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL).find(block)
+                ?: return@mapNotNull null
+            var href = htmlText(m.groupValues[1])
+            // Bing envuelve enlaces: bing.com/ck/a?...&u=a1<base64>
+            Regex("[?&]u=a1([^&]+)").find(href)?.let {
+                runCatching {
+                    val b = it.groupValues[1].replace('-', '+').replace('_', '/')
+                    val padded = b + "=".repeat((4 - b.length % 4) % 4)
+                    href = String(android.util.Base64.decode(padded, android.util.Base64.DEFAULT))
+                }
+            }
+            if (!href.startsWith("http")) return@mapNotNull null
+            val snippet = Regex("<p[^>]*>(.*?)</p>", RegexOption.DOT_MATCHES_ALL).find(block)?.groupValues?.get(1)
+                ?.let { htmlText(it) }.orEmpty()
+            WebResult(htmlText(m.groupValues[2]), href, snippet)
+        }.take(8)
+    }.getOrDefault(emptyList())
+
+    private fun searchWikipedia(query: String): List<WebResult> = runCatching {
+        val (_, json) = httpGetText(
+            "https://es.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=3&srsearch=${enc(query)}"
+        ) ?: return@runCatching emptyList()
+        val arr = org.json.JSONObject(json).getJSONObject("query").getJSONArray("search")
+        (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            val title = o.getString("title")
+            WebResult(title, "https://es.wikipedia.org/wiki/" + java.net.URLEncoder.encode(title.replace(' ', '_'), "UTF-8"),
+                htmlText(o.optString("snippet")))
+        }
+    }.getOrDefault(emptyList())
+
+    private fun searchDuckDuckGo(query: String): List<WebResult> = runCatching {
+        val q = java.net.URLEncoder.encode(query.take(250), "UTF-8")
+        val (_, html) = httpGetText("https://html.duckduckgo.com/html/?q=$q") ?: return@runCatching emptyList()
+        val blocks = html.split("class=\"result__body\"").drop(1)
+        blocks.mapNotNull { block ->
+            val link = Regex("class=\"result__a\"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL)
+                .find(block) ?: return@mapNotNull null
+            var href = android.text.Html.fromHtml(link.groupValues[1], android.text.Html.FROM_HTML_MODE_LEGACY).toString()
+            // DuckDuckGo envuelve los enlaces: //duckduckgo.com/l/?uddg=URL_REAL
+            Regex("[?&]uddg=([^&]+)").find(href)?.let {
+                href = java.net.URLDecoder.decode(it.groupValues[1], "UTF-8")
+            }
+            if (href.startsWith("//")) href = "https:$href"
+            if (!href.startsWith("http") || href.contains("duckduckgo.com/y.js")) return@mapNotNull null
+            val title = android.text.Html.fromHtml(link.groupValues[2], android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim()
+            val snippet = Regex("class=\"result__snippet\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL)
+                .find(block)?.groupValues?.get(1)
+                ?.let { android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim() }
+                .orEmpty()
+            WebResult(title, href, snippet)
+        }.distinctBy { it.url }.take(8)
+    }.onFailure { Log.e(TAG, "Búsqueda web falló: ${it.message}") }.getOrDefault(emptyList())
+
+    // ========================================================================
+    // 🌐 REGLAS DE BÚSQUEDA WEB Y CONTEXTO EN TIEMPO REAL (igual que las noticias)
+    //    Con cada búsqueda la IA recibe: fecha y hora del teléfono, ciudad/país, idioma de la app,
+    //    QUÉ entregar según el tipo de pedido (31 categorías) y el formato. Ver ai/WebSearchRules.kt
+    // ========================================================================
+    @Volatile private var cachedWebPlace: Pair<Long, String>? = null
+    /** Si la respuesta anterior fue de YouTube, su tipo: así «y una de Enrique Iglesias» sigue con canciones. */
+    @Volatile private var ytPrevKind: WebSearchRules.YtKind? = null
+
+    /** ¿La última respuesta de la IA fue una lista de YouTube? Devuelve su tipo (canciones, tráiler o videos). */
+    private fun previousYoutubeKind(history: List<Pair<String, String>>): WebSearchRules.YtKind? {
+        val last = history.lastOrNull { it.first == "assistant" }?.second ?: return null
+        if (!last.contains("youtube.com/watch")) return null
+        val t = last.trimStart()
+        return when {
+            t.startsWith("🎵") -> WebSearchRules.YtKind.MUSIC
+            t.contains("Tráiler de") -> WebSearchRules.YtKind.TRAILER
+            else -> WebSearchRules.YtKind.VIDEO
+        }
+    }
+
+    /** Categoría de la última búsqueda pedida con «busca…» (para poner portadas y enlaces de YouTube). */
+    @Volatile private var lastExplicitWebCategory: WebSearchRules.Category? = null
+
+    /** ¿El lugar guardado salió de la ubicación del teléfono (o de tu comuna) y no de internet? */
+    @Volatile private var cachedPlaceExact = false
+    /** ✈️ Ciudad grande de tu provincia (la del aeropuerto): Chiguayante → Concepción. */
+    @Volatile private var cachedProvinceCity = ""
+
+    /**
+     * 📍 «Chiguayante, Chile»: tu comuna sale de la ubicación del teléfono (por red o GPS); si no diste permiso,
+     * de la comuna que dijiste («vivo en Chiguayante»); y solo al final, de tu conexión a internet.
+     * El país sale de la SIM. La ubicación del teléfono se guarda 10 minutos; la de internet, 1 hora.
+     */
+    private fun devicePlace(askLocation: Boolean = false): String {
+        cachedWebPlace?.let { (at, p) ->
+            val age = System.currentTimeMillis() - at
+            if (cachedPlaceExact && age < 10 * 60_000L) return p
+            // La de internet no se reutiliza cuando la búsqueda necesita tu ubicación exacta
+            if (!cachedPlaceExact && age < 3_600_000L && !askLocation) {
+                if (p.contains(',')) approxPlaceUsed = p.substringBefore(',').trim()
+                return p
+            }
+        }
+        val cc = newsCountry()
+        val country = Locale("", cc).getDisplayCountry(Locale("es")).ifBlank { cc }
+        // 📍 Primero la ubicación del teléfono (la de internet suele decir «Santiago» aunque estés en Chiguayante)
+        var province = ""
+        val gpsCity = if (hasLocationPermission() || askLocation) runCatching {
+            phoneLocation()?.let { (la, lo) ->
+                nominatimReverse(la, lo, 10)?.optJSONObject("address")?.let { a ->
+                    province = a.optString("county").ifBlank { a.optString("state_district") }
+                        .replace(Regex("(?iu)^(provincia|province|departamento|partido|municipio) (de |del )?"), "").trim()
+                    a.optString("city").ifBlank { a.optString("town") }.ifBlank { a.optString("village") }
+                        .ifBlank { a.optString("municipality") }.ifBlank { a.optString("county") }
+                }
+            }
+        }.getOrNull().orEmpty() else ""
+        if (gpsCity.isNotBlank()) {
+            val place = "$gpsCity, $country"
+            cachedWebPlace = System.currentTimeMillis() to place
+            cachedPlaceExact = true
+            cachedProvinceCity = province.takeIf { it.isNotBlank() && !it.equals(gpsCity, ignoreCase = true) }.orEmpty()
+            return place
+        }
+        // 📍 La comuna que dijiste antes («vivo en Chiguayante»)
+        val home = savedHomePlace()
+        if (home.isNotBlank()) {
+            val place = "$home, $country"
+            cachedWebPlace = System.currentTimeMillis() to place
+            cachedPlaceExact = true
+            cachedProvinceCity = ""
+            return place
+        }
+        val city = runCatching {
+            httpGetText("https://ipwho.is/?lang=es")?.second?.let { org.json.JSONObject(it) }
+                ?.takeIf { it.optBoolean("success", false) && it.optString("country_code").equals(cc, ignoreCase = true) }
+                ?.optString("city").orEmpty()
+        }.getOrNull().orEmpty()
+        val place = if (city.isNotBlank()) "$city, $country" else country
+        cachedWebPlace = System.currentTimeMillis() to place
+        cachedPlaceExact = false
+        cachedProvinceCity = ""
+        // 📍 Se avisa al final de la respuesta que esta ubicación es aproximada (la de internet suele decir «Santiago»)
+        if (city.isNotBlank()) approxPlaceUsed = city
+        return place
+    }
+
+    /** 📍 Ciudad aproximada (de internet) usada en esta respuesta: se avisa al final para que puedas corregirla. */
+    @Volatile private var approxPlaceUsed = ""
+
+    /** ¿Está encendida la «Ubicación» del teléfono? */
+    private fun locationServicesOn(): Boolean = runCatching {
+        (getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager).isLocationEnabled
+    }.getOrDefault(true)
+
+    /**
+     * 📍 Si la respuesta usó la ubicación de internet (no la del teléfono ni tu comuna guardada), se dice al final
+     * y cómo arreglarlo: antes salían supermercados, micros y vuelos de Santiago estando en Chiguayante.
+     */
+    private fun withPlaceNote(r: AiReply): AiReply {
+        val p = approxPlaceUsed
+        approxPlaceUsed = ""
+        if (p.isBlank() || stopRequested || r.text.isBlank() || r.text.startsWith(ENGINE_FAIL_MARK) || r.text.contains("vivo en ")) return r
+        // 🎙️ En voz a voz no se lee este aviso en voz alta (sale igual en el chat escrito)
+        if (isVoiceConversationActive) return r
+        val why = when {
+            !hasLocationPermission() -> "Cumulus no tiene permiso de ubicación"
+            !locationServicesOn() -> "la Ubicación del teléfono está apagada"
+            else -> "el teléfono no entregó tu ubicación a tiempo"
+        }
+        val fix = when {
+            !hasLocationPermission() -> "\n• O da el permiso: Ajustes del teléfono → Apps → Cumulus → Permisos → Ubicación → «Permitir solo con la app en uso» (Precisa)."
+            !locationServicesOn() -> "\n• O enciende la Ubicación (desliza la barra de arriba y toca 📍 Ubicación)."
+            else -> ""
+        }
+        return r.copy(text = r.text.trimEnd() + "\n\n📍 Ojo: usé una ubicación aproximada ($p), porque $why.\n" +
+            "• Si no estás ahí, escríbeme tu comuna (por ejemplo «vivo en Chiguayante») y la recuerdo para las próximas búsquedas." + fix)
+    }
+
+    /**
+     * 📍 El lugar para esta búsqueda: si la pregunta dice dónde vives o estás, ese (y se recuerda);
+     * si no, tu ubicación. YouTube y YouTube Music no la necesitan.
+     */
+    @Volatile private var lastSearchPlace = ""
+
+    private fun searchPlace(cat: WebSearchRules.Category, question: String): String =
+        searchPlaceFor(cat, question).also {
+            lastSearchPlace = it
+            // 📍 El aviso de «ubicación aproximada» solo cuando el lugar importa (micros, vuelos, tiendas, clima…),
+            //    no en YouTube, música, series, recetas o «qué es la IA»
+            if (!placeMatters(cat, question)) approxPlaceUsed = ""
+        }
+
+    /** ¿La respuesta depende de dónde estás? */
+    private fun placeMatters(cat: WebSearchRules.Category, question: String): Boolean = when (cat) {
+        WebSearchRules.COMIDA -> !Regex("(?iu)receta|cocinar|preparar|recipe|receita").containsMatchIn(question)
+        WebSearchRules.MEDICINA -> Regex("(?iu)farmacia|turno|urgencia|cl[ií]nica|hospital|cesfam|pharmacy").containsMatchIn(question)
+        else -> cat.local || cat in setOf(WebSearchRules.VUELOS, WebSearchRules.BUSES, WebSearchRules.CLIMA, WebSearchRules.CINE,
+            WebSearchRules.EVENTOS, WebSearchRules.EMPLEOS, WebSearchRules.SUPERMERCADOS, WebSearchRules.TIENDAS,
+            WebSearchRules.DELIVERY, WebSearchRules.HOTELES, WebSearchRules.ARRIENDOS)
+    }
+
+    private fun searchPlaceFor(cat: WebSearchRules.Category, question: String): String {
+        val said = rememberHomePlace(question)
+        val ask = cat != WebSearchRules.YOUTUBE && cat != WebSearchRules.YOUTUBE_MUSIC
+        if (said != null) {
+            val cc = newsCountry()
+            val country = Locale("", cc).getDisplayCountry(Locale("es")).ifBlank { cc }
+            return "$said, $country"
+        }
+        val place = devicePlace(askLocation = ask)
+        // ✈️ Vuelos: desde la ciudad del aeropuerto de tu provincia (Chiguayante no tiene aeropuerto → Concepción)
+        if (cat == WebSearchRules.VUELOS && cachedProvinceCity.isNotBlank() && place.contains(',')) {
+            return cachedProvinceCity + "," + place.substringAfter(',')
+        }
+        return place
+    }
+
+    /**
+     * 🕒 «Día: miércoles · Fecha: 14 de octubre de 2026 · Hora: 14:21 (hora de Chile) · Año: 2026» (reloj del teléfono).
+     * Va en CADA búsqueda, para que la IA sepa en qué día, fecha, hora y año entrega la información.
+     */
+    private fun webNowText(): String = runCatching {
+        val now = java.util.Date()
+        val es = Locale("es")
+        fun f(p: String) = java.text.SimpleDateFormat(p, es).format(now)
+        "Día: ${f("EEEE")} · Fecha: ${f("d 'de' MMMM 'de' yyyy")} · Hora: ${f("HH:mm")} (${f("zzzz")}) · Año: ${f("yyyy")}"
+    }.getOrDefault(java.util.Date().toString())
+
+    /** Idioma elegido en la app («español», «English»…). */
+    private fun webLanguageName(): String = runCatching {
+        val code = LanguageManager.getSelectedLanguage(this)
+        val loc = Locale.forLanguageTag(code)
+        loc.getDisplayLanguage(loc).ifBlank { "español" }
+    }.getOrDefault("español")
+
+    /** «peso chileno (CLP)» según el país de la SIM. */
+    private fun localCurrencyName(): String = runCatching {
+        val cur = java.util.Currency.getInstance(Locale("", newsCountry()))
+        cur.getDisplayName(Locale("es")) + " (" + cur.currencyCode + ")"
+    }.getOrDefault("")
+
+    /** Bloque que se le inyecta a la IA con la búsqueda. */
+    private fun webRulesBlock(cat: WebSearchRules.Category, place: String, question: String = ""): String =
+        WebSearchRules.contextBlock(cat, webNowText(), place, webLanguageName(), localCurrencyName(),
+            // 🌦️ Vacaciones y viajes: la temporada actual (primavera, verano…) según tu país
+            if (cat == WebSearchRules.VACACIONES || cat == WebSearchRules.VIAJES)
+                NearbyFinder.season(newsCountry(), java.util.Calendar.getInstance().get(java.util.Calendar.MONTH)) else "",
+            question).also { lastWebRules = it }
+
+    /** 🧹 Las últimas instrucciones de búsqueda que se le dieron a la IA (para quitarlas si las copia en la respuesta). */
+    @Volatile private var lastWebRules = ""
+
+    /** Frases de instrucción que la IA a veces copia tal cual en su respuesta. */
+    private val ECHO_INSTRUCTIONS = "Primero la respuesta directa y luego los detalles importantes; usa fechas, cifras y nombres tal cual aparecen.\n" +
+        "Entrégale la información encontrada de forma clara y ordenada, usando SOLO estos resultados, y menciona los sitios de donde sale.\n" +
+        "Responde en el mismo idioma en que te escribió el usuario."
+
+    // ========================================================================
+    // 🍽️ LOCALES PARA COMER Y DELIVERY (ver ai/FoodFinder.kt)
+    // ========================================================================
+    @Volatile private var locationAnswer: java.util.concurrent.CountDownLatch? = null
+
+    /** Ventana de Android «¿Permitir que Cumulus acceda a tu ubicación?» (al responder, sigue la búsqueda de locales) */
+    private val locationPermissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { locationAnswer?.countDown() }
+
+    /**
+     * 📍 Ubicación aproximada del teléfono (para buscar locales cerca de ti). La primera vez Android te pregunta
+     * si das permiso; si dices que no, no se vuelve a preguntar y se usa la ciudad de tu conexión a internet.
+     */
+    @android.annotation.SuppressLint("MissingPermission")
+    // ========================================================================
+    // 🚩 REPORTAR UNA RESPUESTA O IMAGEN DE LA IA (Google Play: contenido generado por IA). Ver ai/ContentReport.kt
+    // ========================================================================
+    private fun showReportDialog(message: ChatMessage, question: String, position: Int) {
+        val d = resources.displayMetrics.density
+        val light = isLightMode()
+        val textColor = if (light) Color.parseColor("#222222") else Color.parseColor("#EEEEEE")
+        val soft = if (light) Color.parseColor("#666666") else Color.parseColor("#AAAAAA")
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((22 * d).toInt(), (6 * d).toInt(), (22 * d).toInt(), 0)
+        }
+        box.addView(TextView(this).apply {
+            text = "¿Por qué reportas esta respuesta?"
+            setTextColor(textColor); textSize = 15f
+        })
+        val group = android.widget.RadioGroup(this)
+        ContentReport.REASONS.forEachIndexed { i, r ->
+            group.addView(android.widget.RadioButton(this).apply {
+                id = View.generateViewId(); text = r; setTextColor(textColor); textSize = 15f
+                buttonTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#0A84FF"))
+                if (i == 0) isChecked = true
+            })
+        }
+        box.addView(group)
+        val comment = EditText(this).apply {
+            hint = "Cuéntanos más (opcional)"
+            setTextColor(textColor); setHintTextColor(soft); textSize = 15f
+            maxLines = 4
+        }
+        box.addView(comment)
+        box.addView(TextView(this).apply {
+            text = "Se enviará esta respuesta y tu pregunta para revisarlas. No se envía tu nombre, tu ubicación ni tus archivos."
+            setTextColor(soft); textSize = 12.5f
+            setPadding(0, (8 * d).toInt(), 0, 0)
+        })
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("🚩 Reportar respuesta")
+            .setView(box)
+            .setPositiveButton("Enviar reporte") { _, _ ->
+                val idx = (0 until group.childCount).firstOrNull { (group.getChildAt(it) as? android.widget.RadioButton)?.isChecked == true } ?: 0
+                val reason = ContentReport.REASONS[idx].substringAfter(' ')
+                val note = comment.text?.toString().orEmpty().trim()
+                val replyText = message.text.ifBlank { "(imagen o archivo: " + message.attachments.joinToString { File(it).name } + ")" }
+                val details = listOf(
+                    "Modelo: " + message.tokens.replace('\n', ' ').take(200),
+                    "App " + runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull().orEmpty(),
+                    "Android " + Build.VERSION.RELEASE,
+                    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(java.util.Date())
+                ).joinToString(" · ")
+                ContentReport.markReported(this, ContentReport.key(message.timestamp, message.text))
+                chatAdapter?.notifyItemChanged(position)
+                thread { runCatching { ContentReport.send(applicationContext, reason, note, replyText, question, details) } }
+                AlertDialog.Builder(this)
+                    .setTitle("✅ Gracias por avisar")
+                    .setMessage("Tu reporte nos ayuda a mejorar las respuestas de Cumulus IA. La banderita quedó en rojo para que sepas que ya lo reportaste.")
+                    .setPositiveButton("Listo", null)
+                    .show().also { styleDarkRoundDialog(it) }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+        styleDarkRoundDialog(dialog)
+    }
+
+    /** ¿Diste permiso de ubicación (exacta o aproximada)? */
+    private fun hasLocationPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    private fun phoneLocation(): Pair<Double, Double>? {
+        if (!hasLocationPermission()) {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            // 📍 Si dijiste «Ahora no», se vuelve a preguntar a los 3 días (antes no se preguntaba nunca más
+            //    y la app quedaba usando la ciudad de internet, que suele decir «Santiago»)
+            val askedAt = prefs.getLong("location_asked_at", 0L)
+            if (System.currentTimeMillis() - askedAt < 3L * 24 * 3_600_000L) return null
+            prefs.edit().putLong("location_asked_at", System.currentTimeMillis()).apply()
+            val latch = java.util.concurrent.CountDownLatch(1)
+            locationAnswer = latch
+            AiActivity.log("📍 Te pido permiso de ubicación para buscar con tu ubicación exacta")
+            // 📍 Primero se explica para qué (Google Play), y recién si acepta aparece el permiso de Android
+            runOnUiThread {
+                runCatching {
+                    var answered = false
+                    AlertDialog.Builder(this)
+                        .setTitle("📍 Tu ubicación")
+                        .setMessage("Para buscar en internet con tu ubicación exacta (micros y paraderos, vuelos desde tu ciudad, " +
+                            "empleos, cines, comida, hoteles, farmacias, arriendos, autos, el cielo de tu ciudad y más) necesito tu ubicación.\n\n" +
+                            "• Elige «Precisa» para que los paraderos y locales cercanos sean exactos.\n" +
+                            "• Se usa solo en ese momento, para esa búsqueda.\n" +
+                            "• No se guarda ni se usa en segundo plano.\n" +
+                            "• Si prefieres no darla, dime tu comuna (por ejemplo «vivo en Chiguayante») y la uso.")
+                        .setPositiveButton("Continuar") { _, _ ->
+                            answered = true
+                            runCatching {
+                                locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION))
+                            }.onFailure { latch.countDown() }
+                        }
+                        .setNegativeButton("Ahora no") { _, _ -> answered = true; latch.countDown() }
+                        .setOnDismissListener { if (!answered) latch.countDown() }
+                        .show().also { styleDarkRoundDialog(it) }
+                }.onFailure { latch.countDown() }
+            }
+            latch.await(90, java.util.concurrent.TimeUnit.SECONDS)
+            locationAnswer = null
+            if (!hasLocationPermission()) return null
+        }
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager ?: return null
+        // 📍 Con permiso pero con la «Ubicación» del teléfono apagada no llega nada (Android no deja que una app la encienda):
+        //    se avisa y el botón «Activar» lleva a la pantalla para encenderla; al volver, sigue la búsqueda
+        if (!locationServicesOn()) askToTurnOnLocation()
+        val last = listOf(android.location.LocationManager.FUSED_PROVIDER, android.location.LocationManager.NETWORK_PROVIDER,
+            android.location.LocationManager.GPS_PROVIDER, android.location.LocationManager.PASSIVE_PROVIDER)
+            .mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }
+            .maxByOrNull { it.time }
+        // Una ubicación de hace menos de 10 minutos sirve (si te moviste más, se pide una nueva)
+        if (last != null && System.currentTimeMillis() - last.time < 10 * 60_000L) return last.latitude to last.longitude
+        // 📡 Ubicación nueva por red (wifi y antenas: rápida y exacta) o GPS: espera hasta 8 segundos
+        val provider = listOf(android.location.LocationManager.FUSED_PROVIDER, android.location.LocationManager.NETWORK_PROVIDER,
+            android.location.LocationManager.GPS_PROVIDER)
+            .firstOrNull { runCatching { lm.isProviderEnabled(it) }.getOrDefault(false) }
+        if (provider != null) {
+            val latch = java.util.concurrent.CountDownLatch(1)
+            var got: android.location.Location? = null
+            runCatching {
+                lm.getCurrentLocation(provider, null, mainExecutor) { loc -> got = loc; latch.countDown() }
+                latch.await(8, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            got?.let { return it.latitude to it.longitude }
+        }
+        return last?.let { it.latitude to it.longitude }
+    }
+
+    /** 📍 Espera a que vuelvas de la pantalla de Ubicación del teléfono. */
+    @Volatile private var locationSettingsLatch: java.util.concurrent.CountDownLatch? = null
+
+    /**
+     * 📍 La «Ubicación» del teléfono está apagada: ventana con «Activar» (abre la pantalla de Ubicación de Android).
+     * Si dices «Ahora no», no se vuelve a preguntar en 6 horas (y la respuesta avisa que la ubicación es aproximada).
+     */
+    private fun askToTurnOnLocation() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (System.currentTimeMillis() - prefs.getLong("location_on_asked_at", 0L) < 6L * 3_600_000L) return
+        prefs.edit().putLong("location_on_asked_at", System.currentTimeMillis()).apply()
+        AiActivity.log("📍 La Ubicación del teléfono está apagada: te pido encenderla")
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var openedSettings = false
+        runOnUiThread {
+            runCatching {
+                var answered = false
+                AlertDialog.Builder(this)
+                    .setTitle("📍 Enciende la Ubicación")
+                    .setMessage("Cumulus tiene permiso, pero la Ubicación del teléfono está apagada, así que no llega tu ubicación " +
+                        "y tendría que usar la de internet (que suele decir «Santiago»).\n\n" +
+                        "Toca «Activar», enciende «Usar ubicación» y vuelve a Cumulus: sigo con tu búsqueda.")
+                    .setPositiveButton("Activar") { _, _ ->
+                        answered = true
+                        openedSettings = runCatching {
+                            locationSettingsLatch = latch
+                            startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                        }.isSuccess
+                        if (!openedSettings) latch.countDown()
+                    }
+                    .setNegativeButton("Ahora no") { _, _ -> answered = true; latch.countDown() }
+                    .setOnDismissListener { if (!answered) latch.countDown() }
+                    .show().also { styleDarkRoundDialog(it) }
+            }.onFailure { latch.countDown() }
+        }
+        latch.await(120, java.util.concurrent.TimeUnit.SECONDS)
+        locationSettingsLatch = null
+        // Al volver, Android tarda un poco en tener la ubicación lista
+        if (openedSettings && locationServicesOn()) {
+            AiActivity.log("📍 Ubicación encendida: busco con tu ubicación real")
+            runCatching { Thread.sleep(1500) }
+        }
+    }
+
+    /** 📍 La comuna que dijiste que es la tuya («vivo en Chiguayante»), guardada para las próximas búsquedas. */
+    private fun savedHomePlace(): String =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("home_place", "").orEmpty()
+
+    /** Si la pregunta dice dónde vives o estás («vivo en chiguayante», «estoy en Talcahuano»), se recuerda. */
+    private fun rememberHomePlace(question: String): String? {
+        val said = runCatching { WebSearchRules.homePlace(question) }.getOrNull() ?: return null
+        if (said != savedHomePlace()) {
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString("home_place", said).apply()
+            cachedWebPlace = null
+            AiActivity.log("📍 Recuerdo tu comuna: $said")
+        }
+        return said
+    }
+
+    /**
+     * Sin permiso de ubicación: primero la comuna que dijiste («vivo en Chiguayante»);
+     * si no, la ciudad aproximada de tu conexión a internet.
+     */
+    private fun ipLocation(): Triple<String, Double, Double>? {
+        val home = savedHomePlace()
+        if (home.isNotBlank()) runCatching { geocodePlace(home) }.getOrNull()?.let { return Triple(home, it.second, it.third) }
+        return internetLocation()
+    }
+
+    /** Ciudad aproximada de tu conexión a internet. */
+    private fun internetLocation(): Triple<String, Double, Double>? = runCatching {
+        val o = org.json.JSONObject(httpGetText("https://ipwho.is/?lang=es")?.second ?: return null)
+        if (!o.optBoolean("success", false)) return null
+        Triple(listOf(o.optString("city"), o.optString("country")).filter { it.isNotBlank() }.joinToString(", "),
+            o.getDouble("latitude"), o.getDouble("longitude"))
+            // 📍 Se avisa al final de la respuesta que esta ubicación es aproximada
+            .also { t -> approxPlaceUsed = o.optString("city").ifBlank { t.first } }
+    }.getOrNull()
+
+    /** «Providencia», «Plaza de Armas», «Viña del Mar» → nombre, latitud y longitud (mapa de OpenStreetMap) */
+    private fun geocodePlace(text: String): Triple<String, Double, Double>? {
+        val cc = newsCountry().lowercase(Locale.ROOT)
+        for (inCountry in listOf(true, false)) {
+            val url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=es" +
+                (if (inCountry) "&countrycodes=$cc" else "") + "&q=" + java.net.URLEncoder.encode(text, "UTF-8")
+            val body = httpGetText(url, userAgent = OSM_UA)?.second ?: continue
+            val arr = runCatching { org.json.JSONArray(body) }.getOrNull() ?: continue
+            if (arr.length() == 0) continue
+            val o = arr.getJSONObject(0)
+            val name = o.optString("display_name").split(",").map { it.trim() }.filter { it.isNotBlank() }.take(2).joinToString(", ")
+            val lat = o.optString("lat").toDoubleOrNull() ?: continue
+            val lon = o.optString("lon").toDoubleOrNull() ?: continue
+            return Triple(name.ifBlank { text }, lat, lon)
+        }
+        return null
+    }
+
+    private fun nominatimReverse(lat: Double, lon: Double, zoom: Int): org.json.JSONObject? =
+        httpGetText("https://nominatim.openstreetmap.org/reverse?format=json&accept-language=es&zoom=$zoom&lat=$lat&lon=$lon",
+            userAgent = OSM_UA)?.second?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
+
+    /** Comuna y ciudad del punto («Ñuñoa, Santiago») */
+    private fun reverseAreaName(lat: Double, lon: Double): String? =
+        nominatimReverse(lat, lon, 14)?.optJSONObject("address")?.let { a ->
+            listOf(a.optString("suburb").ifBlank { a.optString("city_district") }.ifBlank { a.optString("town") }
+                .ifBlank { a.optString("village") }, a.optString("city").ifBlank { a.optString("state") })
+                .filter { it.isNotBlank() }.distinct().joinToString(", ")
+        }?.ifBlank { null }
+
+    /** Dirección del local cuando el mapa no la trae escrita («Av. Irarrázaval 2401, Ñuñoa») */
+    private fun reverseAddress(lat: Double, lon: Double): String? =
+        nominatimReverse(lat, lon, 18)?.optJSONObject("address")?.let { a ->
+            val street = listOf(a.optString("road"), a.optString("house_number")).filter { it.isNotBlank() }.joinToString(" ")
+            val area = a.optString("suburb").ifBlank { a.optString("city_district") }.ifBlank { a.optString("city") }
+            listOf(street, area).filter { it.isNotBlank() }.joinToString(", ")
+        }?.ifBlank { null }
+
+    /**
+     * 🍽️ Busca los locales reales (OpenStreetMap) donde pediste o cerca de ti y arma la respuesta con
+     * dirección, teléfono, horario, delivery, mapa y una foto de su carta o de lo que vende.
+     */
+    private fun foodPlacesContext(req: FoodFinder.Request): String {
+        AiActivity.analyzing("${req.emoji} Buscando locales de ${req.what}", req.place?.let { "en $it" } ?: "cerca de ti")
+        // 1) ¿Dónde? El lugar que nombraste, tu ubicación (si diste permiso) o la ciudad de tu conexión
+        val where = req.place?.let { geocodePlace(it) }
+            ?: phoneLocation()?.let { (la, lo) -> Triple(reverseAreaName(la, lo) ?: "tu ubicación", la, lo) }
+            ?: ipLocation()
+        if (where == null) {
+            dailyDirect = "${req.emoji} No pude saber dónde buscar. Dime la comuna o la ciudad, por ejemplo: «${req.what} en Providencia».\n\n" +
+                "🔎 Mientras tanto, en Google Maps: " + FoodFinder.moreUrl(req, "mí")
+            return "Locales para comer: sin ubicación"
+        }
+        val (area, lat, lon) = where
+        AiActivity.log("📍 Busco cerca de $area", "${"%.4f".format(Locale.US, lat)}, ${"%.4f".format(Locale.US, lon)}")
+        // 2) Locales del mapa (si hay pocos, se busca más lejos)
+        var found = emptyList<FoodFinder.Place>()
+        for (radius in listOf(1500, 3500, 8000, 30000, 100000)) {   // 📏 hasta 100 km a la redonda si cerca no hay
+            val json = httpGetText(FoodFinder.overpassUrl(FoodFinder.overpassQuery(lat, lon, radius, req)), maxBytes = 3_000_000,
+                userAgent = OSM_UA)?.second
+            val list = json?.let { runCatching { FoodFinder.parseOverpass(it, lat, lon) }.getOrNull() }
+            if (list != null && list.size >= found.size) found = list
+            AiActivity.log("🗺️ ${found.size} locales a ${radius / 1000.0} km")
+            if (found.size >= 5) break
+        }
+        val moreUrl = FoodFinder.moreUrl(req, area)
+        if (found.isEmpty()) {
+            dailyDirect = "${req.emoji} No encontré locales de ${req.what} en el mapa cerca de $area.\n\n🔎 Búscalos en Google Maps: $moreUrl"
+            return "Locales para comer: ninguno"
+        }
+        val top = FoodFinder.rank(found, req).take(6)
+        // 3) Dirección de los que no la traen (OpenStreetMap pide una consulta por segundo)
+        top.filter { it.address.isBlank() }.take(4).forEachIndexed { k, p ->
+            if (k > 0) Thread.sleep(1100)
+            runCatching { reverseAddress(p.lat, p.lon) }.getOrNull()?.let { p.address = it }
+        }
+        // 4) Foto de la carta o de lo que vende cada local (en paralelo, debajo de la respuesta)
+        AiActivity.log("🖼️ Buscando la carta o fotos de cada local", top.joinToString("\n") { "• ${it.name}" })
+        val city = area.substringBefore(',').trim()
+        val photos = arrayOfNulls<String>(top.size)
+        top.mapIndexed { i, p ->
+            thread {
+                runCatching {
+                    photos[i] = fetchSearchImages("${p.name} $city carta menú", 1, recent = false, tag = "carta").firstOrNull()?.second
+                }
+            }
+        }.forEach { it.join(12000) }
+        var n = 0
+        val numbers = photos.map { ph -> if (ph != null) { replyImages.add(ph); ++n } else null }
+        dailyDirect = FoodFinder.answer(req, top, area, numbers, moreUrl)
+        AiActivity.log("🍽️ ${top.size} locales · 📞 ${top.count { it.phone.isNotBlank() }} con teléfono · 🖼️ $n fotos")
+        return "Locales para comer cerca de $area (OpenStreetMap):\n" +
+            top.joinToString("\n") { "- ${it.name} · ${it.address} · ${it.phone}" }
+    }
+
+    /**
+     * 🎟️ Los cines reales más cercanos (o del lugar que nombraste: «cartelera en Talcahuano»): nombre, dirección,
+     * teléfono, distancia, mapa y el enlace a su página para ver cartelera, horarios y precios.
+     */
+    private fun cinemaBlock(question: String): String {
+        AiActivity.analyzing("🎟️ Buscando los cines más cercanos")
+        val where = (CinemaFinder.placeIn(question) ?: WebSearchRules.namedPlace(question))?.let { geocodePlace(it) }
+            ?: phoneLocation()?.let { (la, lo) -> Triple(reverseAreaName(la, lo) ?: "tu ubicación", la, lo) }
+            ?: ipLocation()
+            ?: return ""
+        val (area, lat, lon) = where
+        var found = emptyList<FoodFinder.Place>()
+        for (radius in listOf(5000, 15000, 40000, 100000)) {   // 📏 hasta 100 km a la redonda
+            val json = httpGetText(FoodFinder.overpassUrl(CinemaFinder.overpassQuery(lat, lon, radius)), maxBytes = 2_000_000,
+                userAgent = OSM_UA)?.second
+            val list = json?.let { runCatching { FoodFinder.parseOverpass(it, lat, lon) }.getOrNull() }
+            if (list != null && list.size >= found.size) found = list
+            AiActivity.log("🎟️ ${found.size} cines a ${radius / 1000} km de $area")
+            if (found.size >= 3) break
+        }
+        if (found.isEmpty()) return "🎟️ No encontré cines en el mapa cerca de $area.\n🔎 Búscalos en Google Maps: " + CinemaFinder.moreUrl(area)
+        val seen = HashSet<String>()
+        val top = found.sortedBy { it.distanceM }.filter { seen.add(it.name.lowercase()) }.take(5)
+        // Dirección de los que no la traen (OpenStreetMap pide una consulta por segundo)
+        top.filter { it.address.isBlank() }.take(3).forEachIndexed { k, p ->
+            if (k > 0) Thread.sleep(1100)
+            runCatching { reverseAddress(p.lat, p.lon) }.getOrNull()?.let { p.address = it }
+        }
+        return CinemaFinder.block(top, area, newsCountry())
+    }
+
+    /**
+     * 🧳 Viajes y vacaciones: una foto de cada destino (debajo de la respuesta) y los enlaces reales para planificarlo:
+     * vuelos, hoteles, paquetes, requisitos (y buses si viaja por tierra).
+     */
+    private fun travelBlock(question: String, answer: String, place: String): String {
+        val where = place.ifBlank { cachedWebPlace?.second.orEmpty() }
+        val city = where.substringBefore(',').trim()
+        val country = where.substringAfter(',', "").trim()
+        val byBus = Regex("(?iu)\\bbus(es)?\\b|\\bmicro|terrestre|por tierra|en auto").containsMatchIn(question)
+        // El destino que pediste; si pediste ideas, los destinos de la lista de la respuesta (hasta 4)
+        val dests = WebSearchRules.travelDestination(question)?.let { listOf(it) }
+            ?: WebSearchRules.mediaTitles(answer, 4).map { it.title }
+                // 🚌 «Recorrido: Santiago - La Serena» → «La Serena» (antes quedaba «vuelos a Recorrido: Santiago»)
+                .map { t -> t.replace(Regex("(?iu)^(recorridos?|rutas?|l[ií]neas?|trayectos?|servicios?|buses?|destinos?)\\s*\\d*\\s*[.\\-–:]\\s*"), "")
+                    .split(Regex("\\s+(?:-|–|→|a|hasta)\\s+")).last().trim().trimEnd(':', '.', ',') }
+                .filter { it.length >= 3 && !Regex("(?iu)^(pasajes?|paquetes?|requisitos?|vuelos?|hoteles?|precios?|documentos?|nacionales|internacionales|recorridos?|horas?|horarios?|tarifas?)\\b").containsMatchIn(it) }
+                .distinct()
+        if (dests.isEmpty()) return ""
+        AiActivity.analyzing("🧳 Buscando fotos de los destinos", dests.joinToString("\n") { "• $it" })
+        val photos = arrayOfNulls<String>(dests.size)
+        dests.mapIndexed { i, d ->
+            thread { runCatching { photos[i] = fetchSearchImages("$d turismo paisaje", 1, recent = false, tag = "destino").firstOrNull()?.second } }
+        }.forEach { it.join(12000) }
+        var n = 0
+        val sb = StringBuilder("🧳 Para planificar tu viaje:")
+        dests.forEachIndexed { i, d ->
+            sb.append("\n\n").append(if (dests.size > 1) "${i + 1}. " else "").append("📍 ").append(d)
+            photos[i]?.let { replyImages.add(it); n++; sb.append(" · 🖼️ Foto ").append(replyImages.size).append(" (arriba)") }
+            WebSearchRules.travelLinks(d, city, country, byBus).forEach { (label, url) ->
+                sb.append("\n   ").append(label).append(": ").append(url)
+            }
+        }
+        AiActivity.log("🧳 ${dests.size} destino(s) · 🖼️ $n foto(s)")
+        return sb.toString()
+    }
+
+    // ========================================================================
+    // 🗺️ HOTELES, ATRACTIVOS Y BUSES con datos reales del mapa (ver ai/NearbyFinder.kt)
+    // ========================================================================
+    /** El lugar que nombraste o, si no, donde estás (ubicación del teléfono o ciudad de tu conexión). */
+    private fun placeOrHere(placeText: String?): Triple<String, Double, Double>? =
+        placeText?.let { geocodePlace(it) }
+            ?: phoneLocation()?.let { (la, lo) -> Triple(reverseAreaName(la, lo) ?: "tu ubicación", la, lo) }
+            ?: ipLocation()
+
+    /** Consulta OpenStreetMap ampliando el radio hasta tener al menos [enough] resultados. */
+    private fun spotsAround(lat: Double, lon: Double, radii: List<Int>, enough: Int, query: (Int) -> String): List<NearbyFinder.Spot> {
+        var found = emptyList<NearbyFinder.Spot>()
+        for (r in radii) {
+            val json = httpGetText(NearbyFinder.url(query(r)), maxBytes = 3_000_000, userAgent = OSM_UA)?.second
+            val list = json?.let { runCatching { NearbyFinder.parseSpots(it, lat, lon) }.getOrNull() }
+            if (list != null && list.size >= found.size) found = list
+            if (found.size >= enough) break
+        }
+        return found
+    }
+
+    /** Dirección (si falta) y una foto de cada lugar; devuelve el número de foto de cada uno. */
+    private fun addressesAndPhotos(spots: List<NearbyFinder.Spot>, city: String, photoHint: String): List<Int?> {
+        spots.filter { it.address.isBlank() }.take(3).forEachIndexed { k, p ->
+            if (k > 0) Thread.sleep(1100)   // OpenStreetMap pide una consulta por segundo
+            runCatching { reverseAddress(p.lat, p.lon) }.getOrNull()?.let { p.address = it }
+        }
+        val photos = arrayOfNulls<String>(spots.size)
+        spots.mapIndexed { i, p ->
+            thread { runCatching { photos[i] = fetchSearchImages("${p.name} $city $photoHint".trim(), 1, recent = false, tag = "lugar").firstOrNull()?.second } }
+        }.forEach { it.join(12000) }
+        return photos.map { ph -> if (ph != null) { replyImages.add(ph); replyImages.size } else null }
+    }
+
+    /** 🏨 Hoteles del lugar pedido (o cerca de ti) con estrellas, dirección, teléfono, foto y enlace a precios. */
+    private fun hotelsBlock(question: String): String {
+        AiActivity.analyzing("🏨 Buscando alojamientos en el mapa")
+        val (area, lat, lon) = placeOrHere(FoodFinder.placeIn(question) ?: WebSearchRules.travelDestination(question)) ?: return ""
+        val top = NearbyFinder.rankHotels(spotsAround(lat, lon, listOf(3000, 8000, 20000, 100000), 5) { r -> NearbyFinder.hotelQuery(lat, lon, r) }).take(5)
+        AiActivity.log("🏨 ${top.size} alojamientos en $area")
+        if (top.isEmpty()) return ""
+        val numbers = addressesAndPhotos(top, area.substringBefore(',').trim(), "hotel")
+        return NearbyFinder.hotelBlock(top, area, numbers)
+    }
+
+    /** 🏞️ Atractivos del lugar (museos, miradores, playas, parques…) con foto y mapa. */
+    private fun attractionsBlock(question: String): String {
+        AiActivity.analyzing("🏞️ Buscando atractivos en el mapa")
+        val (area, lat, lon) = placeOrHere(FoodFinder.placeIn(question) ?: WebSearchRules.travelDestination(question)) ?: return ""
+        val top = NearbyFinder.rankAttractions(spotsAround(lat, lon, listOf(5000, 20000, 50000, 100000), 6) { r -> NearbyFinder.attractionQuery(lat, lon, r) }).take(6)
+        AiActivity.log("🏞️ ${top.size} atractivos en $area")
+        if (top.isEmpty()) return ""
+        val numbers = addressesAndPhotos(top, area.substringBefore(',').trim(), "")
+        return NearbyFinder.attractionsBlock(top, area, numbers)
+    }
+
+    /** 🚌 La línea pedida con sus paraderos, los paraderos y líneas cerca de ti, y cómo llegar en transporte público. */
+    /**
+     * 🏬🛒 Tiendas y supermercados reales cerca (o en la comuna que nombraste): dirección, horario de hoy,
+     * 🟢 abierto / 🔴 cerrado ahora (a qué hora cierra o abre), teléfono y su mapa. Ver ai/StoreFinder.kt
+     */
+    private fun storesBlock(question: String, cat: WebSearchRules.Category?): String {
+        AiActivity.analyzing("🏬 Buscando locales y sus horarios en el mapa")
+        val kind = StoreFinder.kindOf(question, cat)
+        val brand = StoreFinder.brand(question)
+        // «horario del Líder» no es un lugar: solo se usa una comuna o ciudad nombrada
+        val named = (FoodFinder.placeIn(question) ?: WebSearchRules.namedPlace(question))
+            ?.takeIf { StoreFinder.brand(it) == null && !Regex("(?iu)supermercado|tienda|mall|ferreter|local").containsMatchIn(it) }
+        val (area, lat, lon) = placeOrHere(named) ?: return ""
+        var found = emptyList<StoreFinder.Store>()
+        for (r in listOf(1500, 3500, 8000, 30000, 100000)) {   // 📏 hasta 100 km a la redonda si cerca no hay
+            val json = httpGetText(NearbyFinder.url(StoreFinder.query(lat, lon, r, kind, brand)), maxBytes = 3_000_000, userAgent = OSM_UA)?.second
+            val list = json?.let { runCatching { StoreFinder.parse(it, lat, lon) }.getOrNull() }
+            if (list != null && list.size >= found.size) found = list
+            if (found.size >= 5) break
+        }
+        val top = StoreFinder.rank(found).take(6)
+        top.filter { it.spot.address.isBlank() }.take(3).forEachIndexed { k, s ->
+            if (k > 0) Thread.sleep(1100)   // OpenStreetMap pide una consulta por segundo
+            runCatching { reverseAddress(s.spot.lat, s.spot.lon) }.getOrNull()?.let { s.spot.address = it }
+        }
+        AiActivity.log("🏬 ${kind.label}${brand?.let { " ($it)" } ?: ""}: ${top.size} cerca de $area")
+        return StoreFinder.block(kind, top, area)
+    }
+
+    /** 📋 Los datos reales que arma la app para cada tipo de pedido (se muestran aunque internet no traiga nada). */
+    private fun appDataBlock(cat: WebSearchRules.Category, question: String, place: String): String = runCatching {
+        when (cat) {
+            WebSearchRules.CINE -> cinemaBlock(question)
+            WebSearchRules.BUSES -> transitBlock(question)
+            WebSearchRules.HOTELES -> hotelsBlock(question)
+            WebSearchRules.TIENDAS, WebSearchRules.SUPERMERCADOS -> storesBlock(question, cat)
+            WebSearchRules.VESTUARIO, WebSearchRules.MAQUILLAJE, WebSearchRules.TECNOLOGIA ->
+                if (StoreFinder.asksForStore(question)) storesBlock(question, cat) else ""
+            WebSearchRules.ARRIENDOS -> rentBlock(question, place)
+            WebSearchRules.VEHICULOS -> carBlock(question, place)
+            WebSearchRules.VIAJES, WebSearchRules.VACACIONES -> travelBlock(question, "", place)
+            WebSearchRules.ASTRONOMIA -> skyBlock(question)
+            WebSearchRules.MEDICINA -> healthBlock(question)
+            else -> ""
+        }
+    }.getOrDefault("")
+
+    private fun transitBlock(question: String): String {
+        AiActivity.analyzing("🚌 Buscando recorridos y paraderos en el mapa")
+        val ref = NearbyFinder.lineRef(question)
+        val dest = NearbyFinder.destination(question)
+        // Paraderos cercanos: siempre donde estás; la línea, en tu ciudad o en la que nombraste
+        val here = phoneLocation()?.let { (la, lo) -> Triple(reverseAreaName(la, lo) ?: "tu ubicación", la, lo) } ?: ipLocation()
+        val named = (FoodFinder.placeIn(question) ?: WebSearchRules.namedPlace(question))
+            ?.takeIf { dest == null || !it.equals(dest, ignoreCase = true) }?.let { geocodePlace(it) }
+        val center = named ?: here ?: return ""
+        val line = ref?.let { r ->
+            httpGetText(NearbyFinder.url(NearbyFinder.lineQuery(r, center.second, center.third)), maxBytes = 3_000_000, userAgent = OSM_UA)
+                ?.second?.let { runCatching { NearbyFinder.parseLine(it, r) }.getOrNull() }
+        }
+        val (stops, lines) = here?.let { h ->
+            httpGetText(NearbyFinder.url(NearbyFinder.nearbyTransitQuery(h.second, h.third)), maxBytes = 3_000_000, userAgent = OSM_UA)
+                ?.second?.let { runCatching { NearbyFinder.parseNearby(it, h.second, h.third) }.getOrNull() }
+        } ?: (emptyList<NearbyFinder.Spot>() to emptyList())
+        AiActivity.log("🚌 Línea ${ref ?: "—"}: ${line?.stops?.size ?: 0} paraderos · 🚏 ${stops.size} cerca · ${lines.size} líneas cerca")
+        return NearbyFinder.transitBlock(line, ref, stops, lines, center.first, dest)
+    }
+
+    // ========================================================================
+    // 🏠 ARRIENDOS Y 🚗 VEHÍCULOS con avisos reales, portales de tu país y negocios del mapa (ver ai/MarketFinder.kt)
+    // ========================================================================
+    /**
+     * Avisos con foto: busca en imágenes, se queda solo con fotos de avisos de portales de tu país (primero del último mes)
+     * y las pone debajo de la respuesta. Devuelve los avisos y el número de foto de cada uno.
+     */
+    private fun listingPhotos(query: String, domains: List<String>, max: Int): Pair<List<MarketFinder.Listing>, List<Int?>> {
+        if (domains.isEmpty()) return emptyList<MarketFinder.Listing>() to emptyList()
+        val cands = mutableListOf<MarketFinder.Listing>()
+        for (age in listOf("&qft=+filterui:age-lt43200", "&qft=+filterui:age-lt525600")) {
+            val html = httpGetText("https://www.bing.com/images/search?q=" + java.net.URLEncoder.encode(query, "UTF-8") + age + "&setlang=es")?.second ?: break
+            MarketFinder.onlyListings(MarketFinder.parseImageResults(html), domains).forEach { l -> if (cands.none { it.pageUrl == l.pageUrl }) cands += l }
+            if (cands.size >= max) break
+        }
+        val pick = cands.take(max * 2)
+        val paths = arrayOfNulls<String>(pick.size)
+        pick.mapIndexed { i, l ->
+            thread {
+                runCatching {
+                    val bmp = downloadImage(l.imageUrl) ?: return@runCatching
+                    if (bmp.width >= 200 && bmp.height >= 120) paths[i] = saveReplyBitmap(bmp, "aviso")
+                    bmp.recycle()
+                }
+            }
+        }.forEach { it.join(12000) }
+        val chosen = pick.indices.filter { paths[it] != null }.take(max)
+        val numbers = chosen.map { i -> replyImages.add(paths[i]!!); replyImages.size }
+        AiActivity.log("🖼️ ${chosen.size} avisos con foto (de ${cands.size} encontrados)")
+        return chosen.map { pick[it] } to numbers
+    }
+
+    /** Negocios del mapa (corredoras, concesionarias, rent a car) en el lugar que nombraste o cerca de ti, con dirección. */
+    private fun mapPlaces(placeText: String?, radii: List<Int>, enough: Int,
+                          query: (Double, Double, Int) -> String): Pair<String, List<NearbyFinder.Spot>>? {
+        val (area, lat, lon) = placeOrHere(placeText) ?: return null
+        val top = MarketFinder.rankPlaces(spotsAround(lat, lon, radii, enough) { r -> query(lat, lon, r) }).take(5)
+        top.filter { it.address.isBlank() }.take(3).forEachIndexed { k, p ->
+            if (k > 0) Thread.sleep(1100)   // OpenStreetMap pide una consulta por segundo
+            runCatching { reverseAddress(p.lat, p.lon) }.getOrNull()?.let { p.address = it }
+        }
+        return area to top
+    }
+
+    /** 🏠 Arriendos (mensual o por día) y venta de propiedades: avisos con foto, portales de tu país y corredoras cerca. */
+    private fun rentBlock(question: String, place: String): String {
+        val where = place.ifBlank { cachedWebPlace?.second.orEmpty() }
+        val city = where.substringBefore(',').trim()
+        val countryName = where.substringAfter(',', "").trim().ifBlank { "tu país" }
+        val country = newsCountry()
+        val r = MarketFinder.parseRent(question)
+        val text = MarketFinder.rentText(r, city)
+        AiActivity.analyzing("🏠 Buscando avisos y corredoras", text)
+        var listings: Pair<List<MarketFinder.Listing>, List<Int?>> = emptyList<MarketFinder.Listing>() to emptyList()
+        val photosJob = thread { runCatching { listings = listingPhotos(text, MarketFinder.rentDomains(country, r.daily), 4) } }
+        val agents = if (r.daily) null else runCatching {
+            mapPlaces(r.place, listOf(3000, 8000, 20000, 100000), 3) { la, lo, rad -> MarketFinder.agentQuery(la, lo, rad) }
+        }.getOrNull()
+        photosJob.join(40000)
+        AiActivity.log("🏠 ${listings.first.size} avisos · 🏢 ${agents?.second?.size ?: 0} corredoras")
+        val parts = mutableListOf<String>()
+        parts += MarketFinder.listingsBlock("🏠 Avisos con foto ($text):", listings.first, listings.second)
+        parts += MarketFinder.linksBlock("🔎 Más avisos en los portales de $countryName:", MarketFinder.rentPortals(country, r, city))
+        if (!r.daily) {
+            val area = agents?.first ?: (r.place ?: city)
+            parts += if (!agents?.second.isNullOrEmpty()) MarketFinder.placesBlock("🏢 Corredoras de propiedades cerca de $area (del mapa):", agents!!.second)
+            else "🏢 Corredoras de propiedades en el mapa: " + MarketFinder.mapsSearch("corredoras de propiedades $area")
+        }
+        return parts.filter { it.isNotBlank() }.joinToString("\n\n")
+    }
+
+    /** 🚗 Autos y motos: foto del modelo, avisos con foto, portales, tasación, ficha técnica y concesionarias cerca; o rent a car. */
+    private fun carBlock(question: String, place: String): String {
+        val where = place.ifBlank { cachedWebPlace?.second.orEmpty() }
+        val city = where.substringBefore(',').trim()
+        val countryName = where.substringAfter(',', "").trim().ifBlank { "tu país" }
+        val country = newsCountry()
+        val c = MarketFinder.parseCar(question)
+        // 🔑 Arriendo de autos: las empresas cerca con su teléfono y dirección
+        if (c.rental) {
+            AiActivity.analyzing("🔑 Buscando arriendo de autos en el mapa")
+            val rent = runCatching { mapPlaces(c.place, listOf(5000, 15000, 40000, 100000), 3) { la, lo, rad -> MarketFinder.dealerQuery(la, lo, rad, c, false) } }.getOrNull()
+            val area = rent?.first ?: (c.place ?: city)
+            AiActivity.log("🔑 ${rent?.second?.size ?: 0} empresas de arriendo de autos en $area")
+            return listOf(
+                if (!rent?.second.isNullOrEmpty()) MarketFinder.placesBlock("🔑 Arriendo de autos cerca de $area (del mapa):", rent!!.second) else "",
+                MarketFinder.linksBlock("🔎 Comparar precios:", listOf(
+                    "Arriendo de autos en el mapa" to MarketFinder.mapsSearch("arriendo de autos $area"),
+                    "Precios por día" to "https://www.google.com/search?q=" + java.net.URLEncoder.encode("arriendo de autos $area precio por día", "UTF-8")))
+            ).filter { it.isNotBlank() }.joinToString("\n\n")
+        }
+        val text = MarketFinder.carText(c)
+        AiActivity.analyzing("🚗 Buscando fotos, avisos y concesionarias", text)
+        var modelPhoto: Int? = null
+        var listings: Pair<List<MarketFinder.Listing>, List<Int?>> = emptyList<MarketFinder.Listing>() to emptyList()
+        val photosJob = thread {
+            runCatching {
+                // La foto del modelo primero (Foto 1) y después las de los avisos
+                if (c.brand != null) fetchSearchImages(c.name + if (c.moto) " moto" else "", 1, recent = false, tag = "vehiculo").firstOrNull()?.let {
+                    replyImages.add(it.second); modelPhoto = replyImages.size
+                }
+                listings = listingPhotos(text, MarketFinder.carDomains(country), 4)
+            }
+        }
+        val kind = if (c.moto) "Tiendas de motos" else "Concesionarias"
+        var dealers = runCatching {
+            mapPlaces(c.place, listOf(5000, 20000, 100000), 2) { la, lo, rad -> MarketFinder.dealerQuery(la, lo, rad, c, brandOnly = true) }
+        }.getOrNull()
+        var header = if (c.brand != null) "$kind ${c.brand}" else if (c.moto) "Tiendas de motos" else "Automotoras y concesionarias"
+        if (c.brand != null && dealers?.second.isNullOrEmpty()) {
+            dealers = runCatching { mapPlaces(c.place, listOf(5000, 40000, 100000), 2) { la, lo, rad -> MarketFinder.dealerQuery(la, lo, rad, c, brandOnly = false) } }.getOrNull()
+            header = if (c.moto) "Tiendas de motos" else "Automotoras y concesionarias"
+        }
+        photosJob.join(40000)
+        AiActivity.log("🚗 ${listings.first.size} avisos · 🏪 ${dealers?.second?.size ?: 0} $header")
+        val parts = mutableListOf<String>()
+        modelPhoto?.let { parts += "🚗 ${c.name} · 🖼️ Foto $it (arriba)" }
+        parts += MarketFinder.listingsBlock("🛒 Avisos con foto ($text):", listings.first, listings.second)
+        parts += MarketFinder.linksBlock("🔎 Más avisos en los portales de $countryName:", MarketFinder.carPortals(country, c))
+        parts += MarketFinder.carExtras(country, c).joinToString("\n") { (n, u) -> "$n: $u" }
+        val area = dealers?.first ?: (c.place ?: city)
+        parts += if (!dealers?.second.isNullOrEmpty()) MarketFinder.placesBlock("🏪 $header cerca de $area (del mapa):", dealers!!.second)
+        else "🏪 $header en el mapa: " + MarketFinder.mapsSearch("$header $area")
+        return parts.filter { it.isNotBlank() }.joinToString("\n\n")
+    }
+
+    // ========================================================================
+    // 🔎 CONSULTA GENERAL (categoría 31): datos comprobables según el tipo de pregunta (ver ai/GeneralFinder.kt)
+    // ========================================================================
+    private fun generalBlock(question: String, place: String): String {
+        val where = place.ifBlank { cachedWebPlace?.second.orEmpty() }
+        val countryName = where.substringAfter(',', "").trim()
+        val country = newsCountry()
+        return when (GeneralFinder.kind(question)) {
+            GeneralFinder.Kind.KNOWLEDGE -> wikiBlock(question)
+            GeneralFinder.Kind.TRAMITE -> GeneralFinder.tramiteBlock(country, countryName, question)
+            GeneralFinder.Kind.TUTORIAL -> videosBlock(GeneralFinder.tutorialQuery(question), "▶️ Tutoriales en YouTube", 3)
+            GeneralFinder.Kind.SPORTS -> sportsBlock(question, country)
+            GeneralFinder.Kind.OTHER -> ""
+        }
+    }
+
+    /** 📖 Resumen de Wikipedia en español con su foto y su enlace. */
+    private fun wikiBlock(question: String): String {
+        val term = GeneralFinder.wikiTerm(question)
+        if (term.length < 3) return ""
+        AiActivity.analyzing("📖 Buscando en Wikipedia", term)
+        val title = httpGetText(GeneralFinder.wikiSearchUrl(term), maxBytes = 500_000, userAgent = OSM_UA)?.second
+            ?.let { runCatching { GeneralFinder.parseWikiSearch(it) }.getOrNull() } ?: return ""
+        val w = httpGetText(GeneralFinder.wikiSummaryUrl(title), maxBytes = 500_000, userAgent = OSM_UA)?.second
+            ?.let { runCatching { GeneralFinder.parseWikiSummary(it) }.getOrNull() } ?: return ""
+        var number: Int? = null
+        if (w.image.isNotBlank()) {
+            val bmp = downloadImage(w.image)
+            if (bmp != null) {
+                if (bmp.width >= 150) saveReplyBitmap(bmp, "wikipedia")?.let { replyImages.add(it); number = replyImages.size }
+                bmp.recycle()
+            }
+        }
+        AiActivity.log("📖 Wikipedia: «${w.title}»" + if (number != null) " · 🖼️ con foto" else "")
+        return GeneralFinder.wikiBlock(w, number)
+    }
+
+    /** 📖 El resumen de Wikipedia como resultado de internet (cuando la búsqueda web no trajo nada). */
+    private fun wikiAsWebData(question: String): String? {
+        val term = WebSearchRules.knowledgeTopic(question) ?: GeneralFinder.wikiTerm(WebSearchRules.stripRequestWords(question))
+        if (term.length < 2) return null
+        val title = httpGetText(GeneralFinder.wikiSearchUrl(term), maxBytes = 500_000, userAgent = OSM_UA)?.second
+            ?.let { runCatching { GeneralFinder.parseWikiSearch(it) }.getOrNull() } ?: return null
+        val w = httpGetText(GeneralFinder.wikiSummaryUrl(title), maxBytes = 500_000, userAgent = OSM_UA)?.second
+            ?.let { runCatching { GeneralFinder.parseWikiSummary(it) }.getOrNull() } ?: return null
+        if (w.extract.length < 40) return null
+        AiActivity.log("📖 Uso el resumen de Wikipedia: «${w.title}»")
+        return "### ${w.title} (Wikipedia)\nFuente: ${w.url}\n${w.extract}"
+    }
+
+    /** ▶️ Videos reales de YouTube con su miniatura (tutoriales, resúmenes de partidos). */
+    private fun videosBlock(query: String, header: String, max: Int): String {
+        AiActivity.analyzing("▶️ Buscando videos en YouTube", query)
+        val videos = runCatching { youtubeVideos(query, max) }.getOrDefault(emptyList())
+        if (videos.isEmpty()) return ""
+        val thumbs = arrayOfNulls<String>(videos.size)
+        videos.mapIndexed { i, v -> thread { runCatching { thumbs[i] = youtubeThumbnail(v.id) } } }.forEach { it.join(12000) }
+        val sb = StringBuilder(header).append(":")
+        videos.forEachIndexed { i, v ->
+            sb.append("\n\n").append(i + 1).append(". ").append(v.title)
+            val meta = listOf(v.channel, v.duration).filter { it.isNotBlank() }.joinToString(" · ")
+            if (meta.isNotBlank()) sb.append(" — ").append(meta)
+            thumbs[i]?.let { replyImages.add(it); sb.append(" · 🖼️ Foto ").append(replyImages.size).append(" (arriba)") }
+            sb.append("\n   ▶️ ").append(v.url)
+        }
+        return sb.toString()
+    }
+
+    /** ⚽ Resultados, partidos en vivo, próximos partidos y tabla (ESPN) + el resumen en YouTube. */
+    private fun sportsBlock(question: String, country: String): String {
+        val league = GeneralFinder.league(question, country)
+        val team = GeneralFinder.team(question)
+        val parts = mutableListOf<String>()
+        if (league != null) {
+            AiActivity.analyzing("⚽ Buscando resultados y tabla", league.name + (team?.let { " · $it" } ?: ""))
+            val now = System.currentTimeMillis()
+            val tz = java.util.TimeZone.getDefault()
+            var table = ""
+            val tableJob = if (GeneralFinder.wantsTable(question) && league.sport == "soccer") thread {
+                runCatching {
+                    httpGetText(GeneralFinder.standingsUrl(league), maxBytes = 2_000_000)?.second
+                        ?.let { table = GeneralFinder.tableBlock(league, GeneralFinder.parseStandings(it), team) }
+                }
+            } else null
+            val matches = httpGetText(GeneralFinder.scoreboardUrl(league, now, if (team != null) 21 else 4, if (team != null) 21 else 5), maxBytes = 3_000_000)
+                ?.second?.let { runCatching { GeneralFinder.parseScoreboard(it) }.getOrNull() }.orEmpty()
+            tableJob?.join(15000)
+            AiActivity.log("⚽ ${league.name}: ${matches.size} partidos" + if (table.isNotBlank()) " · 📊 tabla" else "")
+            parts += GeneralFinder.matchesBlock(league, matches, team, now, tz)
+            parts += table
+        }
+        // 📺 Resumen y goles en YouTube (si pregunta por un partido o un resultado)
+        if (Regex("(?iu)resultado|partido|gan[oó]|perdi[oó]|empat|goles?|resumen|jug[oó]|sali[oó]").containsMatchIn(question)) {
+            val q = question.replace(Regex("[¿?¡!]"), " ").replace(Regex("(?iu)\\b(c[oó]mo|qu[eé]|cu[aá]l|fue|sali[oó]|el|la|de|del)\\b"), " ")
+                .replace(Regex("\\s+"), " ").trim()
+            parts += videosBlock("$q resumen goles", "📺 Resumen en YouTube", 2)
+        }
+        return parts.filter { it.isNotBlank() }.joinToString("\n\n")
+    }
+
+    // ========================================================================
+    // 🔭 ASTRONOMÍA: el cielo calculado en el teléfono (ver ai/SkyCalc.kt) y su tarjeta
+    // ========================================================================
+    private fun skyBlock(question: String): String {
+        val topics = SkyCalc.topics(question) ?: return ""
+        AiActivity.analyzing("🔭 Calculando el cielo para tu ubicación")
+        val named = MarketFinder.placeOf(question)?.let { geocodePlace(it) }
+        val (area, lat, lon) = named
+            ?: phoneLocation()?.let { (la, lo) -> Triple(reverseAreaName(la, lo) ?: "tu ubicación", la, lo) }
+            ?: ipLocation() ?: return ""
+        val tz = java.util.TimeZone.getDefault()
+        val rep = SkyCalc.report(area, lat, lon, System.currentTimeMillis(), tz, newsCountry(), question)
+        AiActivity.log("🔭 $area · ${rep.moon.name} ${rep.moon.illum}% · 🪐 ${rep.planets.size} planetas · 🤝 ${rep.conj.size} conjunciones")
+        var text = SkyCalc.text(rep, topics)
+        if (named != null) text += "\n🕒 Horas en la zona horaria de tu teléfono."
+        renderSkyCard(rep)?.let { replyImages.add(it); text += "\n🖼️ Foto ${replyImages.size} (arriba): tu cielo de esta noche" }
+        return text
+    }
+
+    /** Tarjeta «Tu cielo esta noche»: la Luna dibujada con su fase real, el Sol, la noche cerrada y los planetas visibles. */
+    private fun renderSkyCard(r: SkyCalc.Report): String? = runCatching {
+        val tz = r.tz
+        val planets = r.planets.filter { it.mag < 6.5 }.sortedBy { it.mag }.take(6)
+        val w = 1080
+        val h = 760 + planets.size.coerceAtLeast(1) * 92 + 130
+        val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bmp)
+        val grad = android.graphics.LinearGradient(0f, 0f, 0f, h.toFloat(), Color.parseColor("#060A1E"), Color.parseColor("#1C2554"),
+            android.graphics.Shader.TileMode.CLAMP)
+        c.drawRoundRect(android.graphics.RectF(0f, 0f, w.toFloat(), h.toFloat()), 60f, 60f, android.graphics.Paint().apply { shader = grad; isAntiAlias = true })
+        // ✨ estrellas de fondo
+        val rnd = java.util.Random(7)
+        val star = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        repeat(160) {
+            star.color = Color.argb(60 + rnd.nextInt(170), 255, 255, 255)
+            c.drawCircle(rnd.nextFloat() * w, rnd.nextFloat() * h, 1f + rnd.nextFloat() * 2.2f, star)
+        }
+        val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        p.textSize = 54f; p.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        c.drawText("🌌 Tu cielo esta noche", 60f, 100f, p)
+        p.typeface = android.graphics.Typeface.DEFAULT; p.textSize = 36f; p.color = Color.parseColor("#CCFFFFFF")
+        c.drawText("📍 " + r.area.take(40) + " · hemisferio " + if (r.southern) "sur" else "norte", 60f, 155f, p)
+        // 🌙 la Luna con su fase (en el hemisferio sur la creciente se ilumina por la izquierda)
+        val cx = 220f; val cy = 360f; val rad = 130f
+        val lit = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F4EDD2") }
+        val dark = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#2B3150") }
+        val glow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#22F4EDD2") }
+        c.drawCircle(cx, cy, rad + 22f, glow)
+        c.drawCircle(cx, cy, rad, dark)
+        val k = r.moon.illum / 100f
+        val litRight = r.moon.waxing != r.southern
+        val box = android.graphics.RectF(cx - rad, cy - rad, cx + rad, cy + rad)
+        c.drawArc(box, if (litRight) -90f else 90f, 180f, true, lit)
+        val rx = rad * kotlin.math.abs(2 * k - 1)
+        c.drawOval(android.graphics.RectF(cx - rx, cy - rad, cx + rx, cy + rad), if (k >= 0.5f) lit else dark)
+        p.color = Color.WHITE; p.typeface = android.graphics.Typeface.DEFAULT_BOLD; p.textSize = 50f
+        c.drawText(r.moon.name, 420f, 300f, p)
+        p.typeface = android.graphics.Typeface.DEFAULT; p.textSize = 40f
+        c.drawText("${r.moon.illum}% iluminada", 420f, 360f, p)
+        p.textSize = 34f; p.color = Color.parseColor("#DDFFFFFF")
+        val rs = listOfNotNull(r.moon.rise?.let { "Sale " + SkyCalc.hhmm(it, tz) }, r.moon.set?.let { "se pone " + SkyCalc.hhmm(it, tz) }).joinToString(" · ")
+        if (rs.isNotBlank()) c.drawText(rs, 420f, 415f, p)
+        r.moon.next.firstOrNull { it.first == "Luna llena" || it.first == "Luna nueva" }?.let { (n, e, t) ->
+            c.drawText("$e $n: ${SkyCalc.date(t, tz)}", 420f, 465f, p)
+        }
+        val line = android.graphics.Paint().apply { color = Color.parseColor("#44FFFFFF"); strokeWidth = 2f }
+        c.drawLine(60f, 540f, w - 60f, 540f, line)
+        p.textSize = 36f; p.color = Color.WHITE
+        val n = r.night
+        val sunLine = listOfNotNull(n.sunset?.let { "🌅 " + SkyCalc.hhmm(it, tz) },
+            n.darkStart?.let { ds -> n.darkEnd?.let { de -> "🌌 ${SkyCalc.hhmm(ds, tz)}–${SkyCalc.hhmm(de, tz)}" } },
+            n.sunrise?.let { "🌄 " + SkyCalc.hhmm(it, tz) }).joinToString("     ")
+        c.drawText(sunLine, 60f, 600f, p)
+        p.textSize = 30f; p.color = Color.parseColor("#AAFFFFFF")
+        c.drawText("puesta del sol · noche cerrada (para observar) · amanecer", 60f, 645f, p)
+        p.typeface = android.graphics.Typeface.DEFAULT_BOLD; p.textSize = 40f; p.color = Color.WHITE
+        c.drawText("Planetas visibles", 60f, 720f, p)
+        p.typeface = android.graphics.Typeface.DEFAULT
+        if (planets.isEmpty()) { p.textSize = 36f; c.drawText("Ninguno a buena altura esta noche", 60f, 800f, p) }
+        planets.forEachIndexed { i, pl ->
+            val y = 800f + i * 92
+            p.textSize = 42f; p.color = Color.WHITE
+            c.drawText("${pl.p.emoji} ${pl.p.es}", 60f, y, p)
+            p.textSize = 36f; p.color = Color.parseColor("#DDFFFFFF")
+            c.drawText("${SkyCalc.hhmm(pl.from, tz)}–${SkyCalc.hhmm(pl.to, tz)}", 430f, y, p)
+            val dir = "↑ ${SkyCalc.directionShort(pl.bestAz)} ${pl.bestAlt}°"
+            c.drawText(dir, w - 60f - p.measureText(dir), y, p)
+        }
+        r.showers.firstOrNull()?.let { s ->
+            p.textSize = 32f; p.color = Color.parseColor("#CCFFFFFF")
+            c.drawText("☄️ ${s.s.name}: máximo ${SkyCalc.date(s.evening, tz)}", 60f, h - 60f, p)
+        }
+        val path = saveReplyBitmap(bmp, "cielo")
+        bmp.recycle()
+        path
+    }.getOrNull()
+
+    // ========================================================================
+    // ⚕️ MEDICINA: aviso preventivo arriba y fuentes confiables abajo (ver ai/HealthFinder.kt)
+    // ========================================================================
+    /** Pone el aviso al inicio de la respuesta (después del razonamiento, si el modelo lo escribió entre etiquetas). */
+    private fun withTopNote(text: String, note: String): String {
+        if (text.contains(note)) return text
+        val think = Regex("(?is)^\\s*<(pensamiento|think|thinking)>.*?</\\1>\\s*").find(text)
+        return if (think != null) text.substring(0, think.range.last + 1) + note + "\n\n" + text.substring(think.range.last + 1).trimStart()
+        else note + "\n\n" + text.trimStart()
+    }
+
+    private fun healthBlock(question: String): String {
+        val country = newsCountry()
+        val drug = HealthFinder.drugName(question)
+        val term = HealthFinder.term(question)
+        val kind = HealthFinder.placeKind(question)
+        AiActivity.analyzing("📚 Buscando en fuentes médicas confiables", term)
+        var topics = emptyList<HealthFinder.Topic>()
+        val job = thread {
+            runCatching {
+                if (term.isNotBlank() && kind == null)
+                    httpGetText(HealthFinder.medlineUrl(term), maxBytes = 1_500_000)?.second?.let { topics = HealthFinder.parseMedline(it) }
+            }
+        }
+        // 💊🏥 Farmacias de turno (Chile, MINSAL), farmacias u hospitales y urgencias cerca
+        val places: String = if (kind == null) "" else runCatching {
+            val where = placeOrHere(MarketFinder.placeOf(question)) ?: return@runCatching ""
+            val (area, lat, lon) = where
+            var duty = ""
+            if (kind == HealthFinder.PlaceKind.DUTY_PHARMACY && country.equals("CL", true)) {
+                val fmt = { pattern: String, ms: Long -> java.text.SimpleDateFormat(pattern, Locale.US).format(java.util.Date(ms)) }
+                val now = System.currentTimeMillis()
+                val days = listOf(now, now - 86_400_000L).flatMap { t -> listOf(fmt("yyyy-MM-dd", t), fmt("dd-MM-yyyy", t), fmt("dd/MM/yyyy", t)) }.toSet()
+                val list = httpGetText(HealthFinder.DUTY_URL, maxBytes = 8_000_000)?.second
+                    ?.let { runCatching { HealthFinder.parseDuty(it, lat, lon, days) }.getOrNull() }.orEmpty()
+                AiActivity.log("💊 ${list.size} farmacias de turno cerca de $area")
+                duty = HealthFinder.dutyBlock(list, area)
+            }
+            if (duty.isNotBlank()) duty else {
+                val label = if (kind == HealthFinder.PlaceKind.HOSPITAL) "Hospitales, clínicas y urgencias" else "Farmacias"
+                val found = mapPlaces(MarketFinder.placeOf(question), listOf(2000, 6000, 15000, 40000, 100000), 3) { la, lo, rad -> HealthFinder.placesQuery(kind, la, lo, rad) }
+                AiActivity.log("🏥 ${found?.second?.size ?: 0} $label cerca de $area")
+                val turnoNote = if (kind == HealthFinder.PlaceKind.DUTY_PHARMACY) "\n⚠️ El mapa no sabe cuál está de turno hoy: llama antes de ir." else ""
+                if (!found?.second.isNullOrEmpty()) MarketFinder.placesBlock("🏥 $label cerca de ${found!!.first} (del mapa):", found.second) + turnoNote
+                else "🏥 $label en el mapa: " + HealthFinder.mapsSearch("${label.lowercase()} cerca de $area")
+            }
+        }.getOrDefault("")
+        job.join(15000)
+        AiActivity.log("📚 MedlinePlus: ${topics.size} temas para «$term»")
+        val links = HealthFinder.trustedLinks(country, term, drug)
+        return listOf(
+            places,
+            HealthFinder.medlineBlock(topics),
+            "🔎 Fuentes confiables:\n" + links.joinToString("\n") { (n, u) -> "   • $n: $u" },
+            HealthFinder.emergencyLine(country)
+        ).filter { it.isNotBlank() }.joinToString("\n\n")
+    }
+
+    /** Un video encontrado en YouTube. */
+    private data class YtVideo(val id: String, val title: String, val channel: String, val duration: String, val views: String) {
+        val url: String get() = "https://www.youtube.com/watch?v=$id"
+    }
+
+    private fun ytJsonText(raw: String?): String =
+        raw?.let { r -> runCatching { org.json.JSONObject("{\"t\":\"$r\"}").getString("t") }.getOrNull() }.orEmpty()
+
+    /** Busca en YouTube (la misma página que ves en el navegador) y devuelve los primeros videos. */
+    private fun youtubeVideos(query: String, max: Int): List<YtVideo> {
+        // Página de escritorio (la del celular cambia de formato y no trae los mismos datos)
+        val (_, html) = httpGetText("https://www.youtube.com/results?search_query=" +
+            java.net.URLEncoder.encode(query, "UTF-8") + "&hl=es&gl=" + newsCountry(), maxBytes = 2_500_000,
+            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
+            ?: return emptyList()
+        val starts = Regex("\"(?:videoRenderer|videoWithContextRenderer|compactVideoRenderer)\":\\{\"videoId\":\"([\\w-]{11})\"").findAll(html).toList()
+        val str = "\"((?:[^\"\\\\]|\\\\.)*)\""
+        val out = mutableListOf<YtVideo>()
+        for ((i, m) in starts.withIndex()) {
+            if (out.size >= max) break
+            val id = m.groupValues[1]
+            if (out.any { it.id == id }) continue
+            val end = minOf(starts.getOrNull(i + 1)?.range?.first ?: html.length, m.range.first + 30000, html.length)
+            val chunk = html.substring(m.range.first, end)
+            val title = ytJsonText(Regex("\"(?:title|headline)\":\\{\"runs\":\\[\\{\"text\":$str").find(chunk)?.groupValues?.get(1))
+            if (title.isBlank()) continue
+            val channel = ytJsonText(Regex("\"(?:ownerText|shortBylineText|longBylineText)\":\\{\"runs\":\\[\\{\"text\":$str").find(chunk)?.groupValues?.get(1))
+            val duration = Regex("\"lengthText\":\\{.{0,400}?\"simpleText\":\"([^\"]+)\"", RegexOption.DOT_MATCHES_ALL).find(chunk)?.groupValues?.get(1).orEmpty()
+            val views = ytJsonText(Regex("\"shortViewCountText\":\\{.{0,400}?\"simpleText\":$str", RegexOption.DOT_MATCHES_ALL).find(chunk)?.groupValues?.get(1))
+            out += YtVideo(id, title, channel, duration, views)
+        }
+        Log.i(TAG, "▶️ YouTube «$query»: ${out.size} videos")
+        return out
+    }
+
+    /** Miniatura del video (la misma que muestra YouTube), guardada en la memoria privada de la app (no en la galería). */
+    private fun youtubeThumbnail(id: String): String? {
+        for (name in listOf("hq720.jpg", "hqdefault.jpg")) {
+            val bmp = downloadImage("https://i.ytimg.com/vi/$id/$name") ?: continue
+            if (bmp.width < 200) { bmp.recycle(); continue }
+            val path = saveReplyBitmap(bmp, "youtube")
+            bmp.recycle()
+            if (path != null) return path
+        }
+        return null
+    }
+
+    /**
+     * ▶️ «Dame una canción de Amar Azul en YouTube», «ponme Bailando», «el tráiler de Dune 3»…
+     * Igual que las noticias: la APP busca en YouTube y arma la respuesta con los enlaces REALES y sus miniaturas.
+     * La IA no puede negarse («no puedo acceder a YouTube») ni inventar enlaces.
+     */
+    private fun youtubeContext(req: WebSearchRules.YtRequest): String {
+        val icon = req.icon
+        AiActivity.analyzing("$icon Buscando en YouTube", "«${req.query}»")
+        val videos = runCatching { youtubeVideos(req.query, req.count) }.getOrDefault(emptyList())
+        val searchUrl = "https://www.youtube.com/results?search_query=" + java.net.URLEncoder.encode(req.query, "UTF-8")
+        // 🌍 Textos en el idioma del pedido (alemán, francés, italiano, indonesio, vietnamita, tailandés, árabe); null = español
+        val tx = runCatching { WebSearchRules.ytTexts(req.lang) }.getOrNull()
+        fun t(i: Int) = tx?.get(i)?.replace("{0}", req.label)
+        if (videos.isEmpty()) {
+            AiActivity.log("▶️ YouTube no respondió: entrego el enlace de la búsqueda")
+            dailyDirect = if (tx != null) "$icon ${t(5)}\n\n▶️ $searchUrl"
+                else "$icon No pude abrir YouTube en este momento, pero aquí tienes la búsqueda de «${req.label}» lista para tocar:\n\n▶️ $searchUrl"
+            return "Videos de YouTube: no se pudo abrir YouTube. Búsqueda: $searchUrl"
+        }
+        // 🖼️ Miniaturas en paralelo (se muestran debajo de la respuesta, en el mismo orden)
+        AiActivity.log("🖼️ Descargando ${videos.size} miniatura(s)", videos.joinToString("\n") { "• " + it.title.take(70) })
+        val thumbs = arrayOfNulls<String>(videos.size)
+        videos.mapIndexed { i, v -> thread { runCatching { thumbs[i] = youtubeThumbnail(v.id) } } }.forEach { it.join(12000) }
+        thumbs.filterNotNull().forEach { replyImages.add(it) }
+        val single = req.count <= 3
+        val sb = StringBuilder()
+        sb.append(icon).append(' ').append(when {
+            tx != null && req.kind == WebSearchRules.YtKind.TRAILER -> t(4)
+            tx != null -> if (single) t(0) else t(1)
+            req.kind == WebSearchRules.YtKind.MUSIC -> if (single) "Aquí tienes «${req.label}» en YouTube:" else "${req.label} en YouTube:"
+            req.kind == WebSearchRules.YtKind.TRAILER -> "Tráiler de ${req.label} en YouTube:"
+            else -> if (single) "Aquí tienes «${req.label}» en YouTube:" else "${req.label} en YouTube:"
+        }).append("\n")
+        videos.forEachIndexed { i, v ->
+            if (single && i == 1) sb.append("\n").append(t(2) ?: "Otras opciones:").append("\n")
+            sb.append("\n").append(i + 1).append(". ").append(v.title).append('\n')
+            val info = listOf(v.channel, v.duration.let { if (it.isNotBlank()) "⏱️ $it" else "" }, v.views).filter { it.isNotBlank() }
+            if (info.isNotEmpty()) sb.append("   ").append(info.joinToString(" · ")).append('\n')
+            sb.append("   ▶️ ").append(v.url).append('\n')
+        }
+        sb.append("\n🔎 ").append(t(3) ?: "Más resultados").append(": ").append(searchUrl)
+        dailyDirect = sb.toString().trimEnd()
+        AiActivity.log("▶️ ${videos.size} video(s) de YouTube · 🖼️ ${thumbs.count { it != null }} miniatura(s)")
+        return "Videos de YouTube para «${req.label}»:\n" + videos.joinToString("\n") { "- ${it.title} (${it.channel}) ${it.url}" }
+    }
+
+    /**
+     * 🎬🎵 Música, Series, Películas y Cine: la APP pone la portada/afiche (debajo de la respuesta, como las fotos
+     * de las noticias) y el enlace de YouTube de cada título. Así nunca son inventados.
+     */
+    private fun webMediaExtras(cat: WebSearchRules.Category, question: String, answer: String, sources: String = "", place: String = ""): String {
+        val media = cat.media ?: return ""
+        // 🎟️ Películas del CINE: afiche + nombre + enlace a la página del cine del país (Cinemark, Cineplanet…), sin YouTube
+        if (cat == WebSearchRules.CINE) return cinemaMovieExtras(question, answer, sources, place)
+        // 🎟️ En la cartelera del cine se muestran hasta 6 afiches; en lo demás, 4
+        val items = WebSearchRules.mediaTitles(answer, if (cat == WebSearchRules.CINE) 6 else 4)
+            .ifEmpty { if (cat == WebSearchRules.CINE) emptyList() else listOfNotNull(WebSearchRules.titleFromQuestion(question)) }
+        if (items.isEmpty()) return ""
+        AiActivity.analyzing(if (media == WebSearchRules.Media.MUSIC) "🎧 Buscando portadas y enlaces de YouTube" else "🎬 Buscando afiches y tráilers en YouTube",
+            items.joinToString("\n") { it.label })
+        val links = arrayOfNulls<String>(items.size)
+        val covers = arrayOfNulls<String>(items.size)
+        val workers = items.mapIndexed { i, item ->
+            thread {
+                try {
+                    val vq = WebSearchRules.videoQuery(media, item)
+                    val video = youtubeVideos(vq, 1).firstOrNull()
+                    links[i] = video?.let { WebSearchRules.videoUrl(cat, it.id) } ?: WebSearchRules.searchUrl(cat, vq)
+                    // 🎵 Música: la miniatura del video · 🎬📺 Películas y series: el afiche (si no aparece, la miniatura del tráiler)
+                    covers[i] = if (media == WebSearchRules.Media.MUSIC) video?.let { youtubeThumbnail(it.id) }
+                        else fetchSearchImages(WebSearchRules.imageQuery(media, item), 1, recent = false, tag = "portada").firstOrNull()?.second
+                            ?: video?.let { youtubeThumbnail(it.id) }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Portada/YouTube de «${item.title}»: ${t.message}")
+                }
+            }
+        }
+        workers.forEach { it.join(15000) }
+        covers.filterNotNull().forEach { replyImages.add(it) }
+        AiActivity.log("🖼️ ${covers.count { it != null }} portada(s) · ▶️ ${links.count { it != null }} enlace(s) de YouTube")
+        val sb = StringBuilder(WebSearchRules.mediaHeader(media))
+        items.forEachIndexed { i, item ->
+            sb.append("\n").append(i + 1).append(". ").append(item.label).append(": ")
+                .append(links[i] ?: WebSearchRules.searchUrl(cat, WebSearchRules.videoQuery(media, item)))
+        }
+        return sb.toString()
+    }
+
+    /**
+     * 🎟️ Cartelera del cine: cada película con su afiche (debajo, como las fotos de las noticias), su nombre y el enlace
+     * a su página en el cine de tu país (Cinemark, Cineplanet, Cinépolis, Hoyts en Chile; la cadena de cada país en los demás).
+     * Las películas de YouTube van aparte (categoría Películas / YouTube): aquí no se mezclan.
+     */
+    private fun cinemaMovieExtras(question: String, answer: String, sources: String, place: String): String {
+        val items = WebSearchRules.mediaTitles(answer, 6)
+        if (items.isEmpty()) return ""
+        AiActivity.analyzing("🎟️ Buscando los afiches y la página del cine de cada película", items.joinToString("\n") { it.label })
+        val country = newsCountry()
+        // 🇨🇱 Chile: Cinemark, Cineplanet, Cinépolis y Hoyts · 🌍 otros países: sus propias cadenas de cine
+        val sites = runCatching { WebSearchRules.countrySites(WebSearchRules.CINE, question, country) }.getOrNull()
+            ?: if (country.equals("CL", ignoreCase = true))
+                runCatching { WebSearchRules.preferredSites(WebSearchRules.CINE, question, country).filter { it.endsWith(".cl") } }.getOrNull()
+            else null
+        val urls = Regex("(?:Fuente: |\\()(https?://[^\\s)]+)").findAll(sources).map { it.groupValues[1].trimEnd('.', ',') }.distinct().toList()
+        val city = place.substringBefore(',').trim()
+        val covers = arrayOfNulls<String>(items.size)
+        items.mapIndexed { i, item ->
+            thread {
+                try {
+                    covers[i] = fetchSearchImages(WebSearchRules.imageQuery(WebSearchRules.Media.MOVIE, item), 1, recent = false, tag = "afiche")
+                        .firstOrNull()?.second
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Afiche de «${item.title}»: ${t.message}")
+                }
+            }
+        }.forEach { it.join(15000) }
+        covers.filterNotNull().forEach { replyImages.add(it) }
+        val sb = StringBuilder("🎟️ Míralas en el cine (horarios, precios y entradas):")
+        items.forEachIndexed { i, item ->
+            val (name, link) = CinemaFinder.movieLink(item.title, sites, urls, city)
+            sb.append("\n\n").append(i + 1).append(". ").append(item.label)
+                .append("\n   🎟️ ").append(name).append(": ").append(link)
+        }
+        AiActivity.log("🖼️ ${covers.count { it != null }} afiche(s) · 🎟️ ${items.size} enlace(s) al cine")
+        return sb.toString()
+    }
+
+    // Arma el contexto para la IA: lee páginas reales (en paralelo) y resume lo relevante
+    private fun fetchWebContext(query: String, reserveChars: Int = 0, cat: WebSearchRules.Category? = null, humor: Boolean = false,
+                                code: Boolean = false): String? {
+        val ctx = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt("ai_context", 2048).coerceIn(2048, 15000)
+        // Caracteres de internet que caben (deja espacio para la respuesta)
+        // ⚡ Tope fijo: leer 60 mil letras de páginas demoraba mucho; con 8 mil basta para responder bien
+        // 🌐 reserveChars: lo que ocupan las reglas de búsqueda (fecha, ubicación, categoría) para que todo quepa
+        val budget = (((ctx - 1200) * 2.5).toInt() - reserveChars).coerceIn(1200, 8000)
+
+        val directUrls = Regex("https?://[^\\s<>\"]+").findAll(query).map { it.value.trimEnd('.', ',', ')') }.toList()
+        val cleanQuery = query.replace(Regex("https?://\\S+"), " ").trim().ifBlank { query }
+
+        val targets: List<WebResult> = if (directUrls.isNotEmpty()) {
+            directUrls.take(3).map { WebResult("", it, "") }
+        } else {
+            // 🎯 Cada tema busca en sus propias páginas (las de noticias, solo para noticias)
+            searchWebFor(cat, cleanQuery, humor, code)
+        }
+        AiActivity.analyzing(if (directUrls.isNotEmpty()) "🌐 Abriendo el enlace" else "🔎 Buscando en internet: «${cleanQuery.take(80)}»",
+            if (directUrls.isNotEmpty()) directUrls.take(3).joinToString("\n") else "${targets.size} resultados")
+        if (targets.isEmpty()) return null
+
+        // 📄 Los enlaces de Google Noticias no se pueden abrir (necesitan el navegador): de ahí salía «0 páginas leídas».
+        //    Se leen primero las páginas normales; si una falla, se prueba con la siguiente (hasta 3 leídas)
+        fun isGoogleNews(u: String) = runCatching { java.net.URI(u).host.orEmpty().contains("news.google.") }.getOrDefault(false)
+        val readable = targets.filter { !isGoogleNews(it.url) }
+        val toRead = readable.take(3)
+        val spare = readable.drop(3).take(3)
+        if (toRead.isEmpty()) AiActivity.log("📄 Solo hay enlaces de Google Noticias (no se pueden abrir): uso sus títulos y resúmenes")
+        else AiActivity.log("📄 Leyendo ${toRead.size} página(s)", toRead.joinToString("\n") { r ->
+            (runCatching { java.net.URI(r.url).host }.getOrNull() ?: r.url).removePrefix("www.") +
+                (if (r.title.isNotBlank()) " — " + r.title.take(70) else "")
+        })
+        val perPage = budget / (toRead.size + 1)
+        val pages = arrayOfNulls<String>(toRead.size)
+        val workers = toRead.mapIndexed { i, r ->
+            thread {
+                // 🛡️ Si una página rara hace fallar la lectura, se salta esa página (antes podía cerrar la app)
+                try {
+                    val got = httpGetText(r.url) ?: return@thread
+                    val html = got.second
+                    val title = r.title.ifBlank { pageTitle(html) }.ifBlank { r.url }
+                    val passages = bestPassages(htmlToReadableText(html), cleanQuery, perPage)
+                    if (passages.isNotBlank()) {
+                        pages[i] = "### $title\nFuente: ${got.first}\n$passages"
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "No se pudo leer ${r.url}: ${t.javaClass.simpleName} ${t.message}")
+                }
+            }
+        }
+        workers.forEach { it.join(15000) }
+        // 🔁 Si alguna no se pudo leer (bloqueada, vacía o muy lenta), se prueba con las siguientes de la lista
+        val extra = mutableListOf<String>()
+        val missing = pages.count { it == null }
+        if (missing > 0 && spare.isNotEmpty() && !stopRequested) {
+            val more = arrayOfNulls<String>(spare.size)
+            spare.take(missing + 1).mapIndexed { i, r ->
+                thread {
+                    try {
+                        val got = httpGetText(r.url) ?: return@thread
+                        val title = r.title.ifBlank { pageTitle(got.second) }.ifBlank { r.url }
+                        val passages = bestPassages(htmlToReadableText(got.second), cleanQuery, perPage)
+                        if (passages.isNotBlank()) more[i] = "### $title\nFuente: ${got.first}\n$passages"
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "No se pudo leer ${r.url}: ${t.javaClass.simpleName} ${t.message}")
+                    }
+                }
+            }.forEach { it.join(12000) }
+            more.filterNotNull().take(missing).forEach { extra.add(it) }
+            if (extra.isNotEmpty()) AiActivity.log("🔁 Leí ${extra.size} página(s) más en lugar de las que no abrieron")
+        }
+
+        val sb = StringBuilder()
+        pages.filterNotNull().forEach { sb.append(it).append("\n\n") }
+        extra.forEach { sb.append(it).append("\n\n") }
+        // Si alguna página no se pudo leer, al menos se usan los resúmenes del buscador
+        if (directUrls.isEmpty()) {
+            val snippets = targets.filter { it.snippet.isNotBlank() }.take(5)
+                .joinToString("\n") { "- ${it.title}: ${it.snippet} (${it.url})" }
+            if (snippets.isNotBlank() && sb.length + snippets.length < budget) {
+                sb.append("### Otros resultados\n").append(snippets)
+            }
+        }
+        val result = sb.toString().trim().take(budget)
+        Log.d(TAG, "🌐 Contexto web: ${result.length} caracteres de ${pages.count { it != null } + extra.size} páginas")
+        AiActivity.log("🧾 Información reunida", "${result.length} letras de ${pages.count { it != null } + extra.size} página(s) leída(s)" +
+            (if (pages.count { it != null } + extra.size == 0) " · solo resúmenes del buscador" else ""))
+        return result.ifBlank { null }
+    }
+
+    private val maxImages = 10
+    private val maxFiles = 10
+    private val maxVideos = 5
+
+    // Agrega un adjunto respetando los límites. Devuelve false si no cupo.
+    private fun addAttachment(file: File): Boolean {
+        val kind = attachmentKind(file)
+        val images = pendingAttachments.count { attachmentKind(it) == AttachKind.IMAGE }
+        val videos = pendingAttachments.count { attachmentKind(it) == AttachKind.VIDEO }
+        val files = pendingAttachments.size - images - videos
+        val full = when (kind) {
+            AttachKind.IMAGE -> images >= maxImages
+            AttachKind.VIDEO -> videos >= maxVideos
+            else -> files >= maxFiles
+        }
+        if (full) {
+            file.delete()
+            val msg = when (kind) {
+                AttachKind.IMAGE -> "Máximo $maxImages imágenes por mensaje"
+                AttachKind.VIDEO -> "Máximo $maxVideos videos por mensaje"
+                else -> "Máximo $maxFiles archivos por mensaje"
+            }
+            cumulusToast(this, msg, Toast.LENGTH_SHORT).show()
+            return false
+        }
+        pendingAttachments.add(file)
+        renderAttachments()
+        return true
+    }
+
+    private fun removeAttachment(file: File) {
+        pendingAttachments.remove(file)
+        file.delete()
+        renderAttachments()
+    }
+
+    private fun clearAttachments(deleteFiles: Boolean) {
+        if (deleteFiles) pendingAttachments.forEach { it.delete() }
+        pendingAttachments.clear()
+        renderAttachments()
+    }
+
+    // Compatibilidad con el código anterior (un solo adjunto)
+    private fun setPendingAttachment(file: File?, deleteFile: Boolean = true) {
+        if (file == null) clearAttachments(deleteFile) else addAttachment(file)
+    }
+
+    private fun decodeThumb(file: File, sizePx: Int): android.graphics.Bitmap? = runCatching {
+        when (attachmentKind(file)) {
+            AttachKind.IMAGE -> {
+                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeFile(file.absolutePath, bounds)
+                var sample = 1
+                while (bounds.outWidth / sample > sizePx * 2 || bounds.outHeight / sample > sizePx * 2) sample *= 2
+                android.graphics.BitmapFactory.decodeFile(
+                    file.absolutePath,
+                    android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                )
+            }
+            AttachKind.VIDEO -> android.media.ThumbnailUtils.createVideoThumbnail(
+                file, android.util.Size(sizePx, sizePx), null
+            )
+            else -> null
+        }
+    }.getOrNull()
+
+    // Miniatura cuadrada: imagen / cuadro del video / ícono del archivo, con la X dentro
+    private fun buildAttachmentThumb(file: File, onRemove: (() -> Unit)?): View {
+        val dp = resources.displayMetrics.density
+        val size = (64 * dp).toInt()
+        val frame = android.widget.FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = (8 * dp).toInt() }
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 12 * dp
+                setColor(Color.parseColor("#2C2C2E"))
+            }
+            clipToOutline = true
+            outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+        }
+        val kind = attachmentKind(file)
+        val bmp = decodeThumb(file, size)
+        if (bmp != null) {
+            frame.addView(ImageView(this).apply {
+                setImageBitmap(bmp)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                layoutParams = android.widget.FrameLayout.LayoutParams(size, size)
+            })
+        } else {
+            // Archivo o audio: ícono + extensión
+            frame.addView(TextView(this).apply {
+                val icon = if (kind == AttachKind.AUDIO) "🎵" else "📄"
+                text = "$icon\n${file.extension.uppercase(Locale.US).take(5)}"
+                gravity = android.view.Gravity.CENTER
+                textSize = 12f
+                setTextColor(Color.WHITE)
+                layoutParams = android.widget.FrameLayout.LayoutParams(size, size)
+            })
+        }
+        if (kind == AttachKind.VIDEO) {
+            frame.addView(ImageView(this).apply {
+                setImageResource(android.R.drawable.ic_media_play)
+                setColorFilter(Color.WHITE)
+                layoutParams = android.widget.FrameLayout.LayoutParams(
+                    (24 * dp).toInt(), (24 * dp).toInt(), android.view.Gravity.CENTER
+                )
+            })
+        }
+        if (onRemove != null) {
+            // X dentro de la miniatura, arriba a la derecha
+            frame.addView(TextView(this).apply {
+                text = "✕"
+                textSize = 11f
+                gravity = android.view.Gravity.CENTER
+                setTextColor(Color.WHITE)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(Color.parseColor("#CC000000"))
+                }
+                layoutParams = android.widget.FrameLayout.LayoutParams(
+                    (20 * dp).toInt(), (20 * dp).toInt(), android.view.Gravity.TOP or android.view.Gravity.END
+                ).apply { topMargin = (3 * dp).toInt(); marginEnd = (3 * dp).toInt() }
+                setOnClickListener { onRemove() }
+            })
+        }
+        return frame
+    }
+
+    private fun renderAttachments() {
+        val strip = attachmentsStrip ?: return
+        strip.removeAllViews()
+        pendingAttachments.forEach { file ->
+            strip.addView(buildAttachmentThumb(file) { removeAttachment(file) })
+        }
+        attachmentsScroll?.visibility = if (pendingAttachments.isEmpty()) View.GONE else View.VISIBLE
+        btnAttach?.setColorFilter(Color.parseColor(if (pendingAttachments.isNotEmpty()) "#3D5AFE" else "#808080"))
+        if (pendingAttachments.isEmpty()) updateInternetIndicator()
+    }
+
+    private enum class AttachKind { IMAGE, VIDEO, AUDIO, TEXT, OTHER }
+
+    private fun attachmentKind(file: File): AttachKind {
+        val ext = file.extension.lowercase(Locale.US)
+        return when (ext) {
+            "jpg", "jpeg", "jpe", "jfif", "pjpeg", "png", "webp", "bmp", "gif", "heic", "heif", "avif",
+            "ico", "wbmp", "dng", "cr2", "nef", "arw", "raf", "orf", "rw2" -> AttachKind.IMAGE
+            "mp4", "mkv", "webm", "3gp", "mov", "avi" -> AttachKind.VIDEO
+            "wav", "mp3", "flac", "m4a", "ogg", "aac", "opus" -> AttachKind.AUDIO
+            "txt", "md", "csv", "json", "xml", "html", "htm", "log", "kt", "kts", "java", "py", "js", "ts",
+            "jsx", "tsx", "mjs", "cjs", "vue", "svelte", "c", "cc", "cpp", "cxx", "h", "hpp", "cs", "go", "rs",
+            "swift", "dart", "php", "rb", "lua", "r", "scala", "pl", "m", "mm", "groovy", "sh", "bash", "zsh",
+            "bat", "ps1", "cmd", "yml", "yaml", "toml", "gradle", "properties", "cmake", "mk", "makefile",
+            "dockerfile", "sql", "css", "scss", "sass", "less", "ini", "cfg", "conf", "env", "gitignore",
+            "proto", "graphql", "tex", "asm", "s", "ino", "pro", "smali",
+            "docx", "xlsx", "pptx", "odt", "ods", "odp", "pdf", "rtf" -> AttachKind.TEXT
+            // Cualquier otra extensión (.app, .aidl, .svg, Makefile, .zip, .tar.gz…): se mira el contenido
+            else -> sniffKind(file)
+        }
+    }
+
+    private fun copyAttachmentToCache(uri: Uri): File? = runCatching {
+        var name = "adjunto"
+        contentResolver.query(uri, null, null, null, null)?.use { c ->
+            val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (idx >= 0 && c.moveToFirst()) name = c.getString(idx) ?: name
+        }
+        val safe = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val dir = File(cacheDir, "adjuntos").apply { mkdirs() }
+        val out = File(dir, "${System.currentTimeMillis()}_$safe")
+        contentResolver.openInputStream(uri)?.use { input ->
+            out.outputStream().use { input.copyTo(it) }
+        } ?: return@runCatching null
+        out
+    }.getOrNull()
+
+    /**
+     * 📋 Lo anterior del chat, tal cual (sin pasar por el modelo): la última respuesta, la conversación
+     * (los últimos intercambios) o tus mensajes anteriores.
+     */
+    private fun recallAnswer(kind: WebSearchRules.RecallKind, prompt: String, history: List<Pair<String, String>>): String {
+        val aiName = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("ai_name", null)?.trim().orEmpty().ifEmpty { "Cumulus" }
+        // Sin el mensaje que acabas de escribir ni los pedidos de «lo anterior»
+        val past = history.toMutableList()
+        while (past.isNotEmpty() && past.last().first == "user" && past.last().second.trim() == prompt.trim()) past.removeAt(past.lastIndex)
+        val clean = past.filterNot { (role, text) ->
+            text.isBlank() || (role == "user" && runCatching { WebSearchRules.recallRequest(text) }.getOrNull() != null) ||
+                (role == "assistant" && text.startsWith("📋 "))
+        }.map { (role, text) -> role to text.replace("⏹️ (detenida)", "").trim() }
+        if (clean.isEmpty()) return "📋 En este chat todavía no hay mensajes anteriores. Pregúntame lo que quieras y te respondo."
+        fun short(t: String, max: Int) = if (t.length <= max) t else t.take(max).substringBeforeLast(' ') + "…"
+        return when (kind) {
+            WebSearchRules.RecallKind.LAST_ANSWER -> {
+                val last = clean.lastOrNull { it.first == "assistant" }?.second
+                    ?: return "📋 Todavía no te he dado ninguna respuesta en este chat."
+                "📋 Esta fue mi respuesta anterior:\n\n$last"
+            }
+            WebSearchRules.RecallKind.MY_MESSAGES -> {
+                val mine = clean.filter { it.first == "user" }.takeLast(6)
+                if (mine.isEmpty()) return "📋 Todavía no me has escrito nada antes en este chat."
+                "📋 Esto me dijiste más arriba (lo más reciente al final):\n\n" +
+                    mine.mapIndexed { i, (_, t) -> "${i + 1}. ${short(t, 300)}" }.joinToString("\n")
+            }
+            WebSearchRules.RecallKind.CONVERSATION -> {
+                val recent = clean.takeLast(10)
+                "📋 Esto conversamos más arriba (lo más reciente al final):\n\n" +
+                    recent.joinToString("\n\n") { (role, t) ->
+                        (if (role == "user") "👤 Tú: " else "🤖 $aiName: ") + short(t, if (role == "user") 300 else 600)
+                    } +
+                    (if (clean.size > recent.size) "\n\n(Te muestro los últimos ${recent.size} mensajes; los demás siguen más arriba en el chat.)" else "") +
+                    "\n\nPídeme «dame la respuesta anterior» si quieres mi última respuesta completa."
+            }
+        }
+    }
+
+    // 🪪 "¿Cómo te llamas?" / "¿Cómo me llamo?" → respuesta directa, sin depender del modelo
+    private fun nameAnswer(raw: String): String? {
+        val q = java.text.Normalizer.normalize(raw.lowercase(), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}+"), "").replace(Regex("[¿?¡!.,]"), " ").replace(Regex("\\s+"), " ").trim()
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val aiName = prefs.getString("ai_name", null)?.trim().orEmpty().ifEmpty { "Cumulus" }
+        val userName = prefs.getString("user_name", null)?.trim().orEmpty()
+        // «oye», «y», «ahora», «a ver», «hola»… al comienzo y «po», «ahora» al final no cambian la pregunta
+        val lead = "((y|ahora|entonces|oye|hola|a ver|bueno|ya|pero|dime|sabes|oye y|y ahora) )*"
+        val tail = "( (po|ahora|entonces|al final|de verdad))*"
+        val askAi = Regex("^$lead(como te llamas|como te llamas tu|tu como te llamas|cual es tu nombre|cual es tu nombre tu|dime tu nombre|" +
+            "di tu nombre|tu nombre|tu nombre es|como es tu nombre|quien eres|quien eres tu|tu quien eres|que eres|que eres tu|" +
+            "como te puedo llamar|como te digo|tienes nombre|tienes un nombre)$tail$").matches(q)
+        val askUser = Regex("^$lead(como me llamo|como me llamo yo|yo como me llamo|di mi nombre|dime mi nombre|cual es mi nombre|" +
+            "mi nombre|mi nombre es|quien soy|quien soy yo|yo quien soy|sabes mi nombre|sabes como me llamo|sabes quien soy|" +
+            "te acuerdas de mi nombre|recuerdas mi nombre|como me dices)$tail$").matches(q)
+        // 🌐 "¿Tienes internet?" → se responde según el interruptor de Internet
+        val askNet = q.contains("internet") && Regex("(tienes|tengas|puedes|podes|acceso|accedes|acceder|conectad|usar|ya tienes|tiene)").containsMatchIn(q) &&
+            !Regex("(busca|buscar|investiga|noticia|clima|precio|quien|que es|cuanto)").containsMatchIn(q)
+        if (askNet) {
+            return if (isInternetEnabled())
+                listOf("¡Sí! 🌐 Tengo acceso a internet: puedo buscar noticias, datos actuales y abrir páginas. ¿Qué quieres que busque?",
+                    "Sí, tengo internet activado 🌐. Pídeme lo que quieras buscar.").random()
+            else "Ahora no tengo internet 🌐❌. Actívalo en el botón ➕ → Internet y podré buscar información actual."
+        }
+        if (q.length > 40) return null
+        return when {
+            askAi && Regex("quien eres|que eres").containsMatchIn(q) ->
+                "Soy $aiName 😊, tu asistente de inteligencia artificial: converso contigo, busco en internet con tu ubicación, " +
+                    "te ayudo con estudios, código, imágenes y mucho más." + (if (userName.isNotEmpty()) " ¿En qué te ayudo, $userName?" else " ¿En qué te ayudo?")
+            askAi -> listOf("¡Me llamo $aiName! 😊", "Soy $aiName, ¿en qué te ayudo?", "Mi nombre es $aiName 😄").random()
+            askUser && userName.isNotEmpty() && Regex("quien soy").containsMatchIn(q) ->
+                "Eres $userName 😊. Así me lo dijiste en Configuración; si quieres cambiarlo, está en Configuración → tu nombre."
+            askUser && userName.isNotEmpty() -> listOf("¡Te llamas $userName! 😊", "Eres $userName 😄", "Tu nombre es $userName, ¿en qué te ayudo?").random()
+            askUser -> "Todavía no me has dicho tu nombre 😅. Puedes ponerlo en Configuración → tu nombre."
+            else -> null
+        }
+    }
+
+    /**
+     * 🩹 Auto‑reparación: si el motor falla, la app lo arregla sola al instante (limpia la memoria y
+     * recarga el modelo) y vuelve a responder el MISMO mensaje. Así un error no se repite en el
+     * segundo ni en el tercer mensaje, y el usuario no tiene que tocar «Nuevo chat» ni recargar.
+     */
+    private fun generateAiResponse(
+        prompt: String,
+        backend: String,
+        attachments: List<File> = emptyList(),
+        history: List<Pair<String, String>> = emptyList()
+    ): AiReply {
+        // 🪪 «¿Quién soy?», «¿Cómo me llamo?», «¿Quién eres?», «¿Cuál es tu nombre?»: en cualquier modo, al instante
+        if (attachments.isEmpty()) runCatching { nameAnswer(prompt) }.getOrNull()?.let { return AiReply(it, "🪪 nombre de Configuración") }
+        // 📋 «Dame la respuesta anterior», «dame la conversación anterior», «dime qué dije más arriba»…: lo entrega la app tal cual
+        if (attachments.isEmpty()) runCatching { WebSearchRules.recallRequest(prompt) }.getOrNull()?.let { kind ->
+            return AiReply(recallAnswer(kind, prompt, history), "📋 copiado del chat, tal cual")
+        }
+        // 😄 «Cuéntame un chiste chileno», «hazme una paya», «otro»…: de la colección de la app (sin repetir y riéndose)
+        // 🤔 Voz a voz: si te hice una adivinanza, primero se revisa tu respuesta («¿es el reloj?», «me rindo»)
+        if (attachments.isEmpty()) runCatching { riddleTurn(prompt) }.getOrNull()?.let { return it }
+        if (attachments.isEmpty()) runCatching { jokeReply(prompt, history) }.getOrNull()?.let { return it }
+        // 🙅 «no me lo entregaste», «no está», «no me diste», «no me lo pasaste», «no lo veo» → se vuelve a buscar lo que pediste;
+        //    «no po», «no», «no quiero eso», «no lo necesito», «no lo quiero», «eso no» → no se busca eso;
+        //    «no, eso no, quiero vuelos a Cusco» → se busca lo nuevo
+        if (attachments.isEmpty() && currentChatMode().key != "codigo") {
+            runCatching { WebSearchRules.userFeedback(prompt) }.getOrNull()?.let { fb ->
+                if (fb.rest.isNotBlank() && runCatching { WebSearchRules.userFeedback(fb.rest) }.getOrNull() == null) {
+                    AiActivity.log("🙅 Entendí que no querías eso: busco lo que pides ahora", "«${fb.rest}»")
+                    return generateAiResponse(fb.rest, backend, attachments, history)
+                }
+                // La última pregunta tuya que no era un reclamo (sin la nota de adjuntos)
+                val prevIndex = history.indexOfLast { (role, text) ->
+                    role == "user" && text.trim() != prompt.trim() &&
+                        runCatching { WebSearchRules.userFeedback(text) }.getOrNull() == null
+                }
+                val previous = history.getOrNull(prevIndex)?.second
+                    ?.lines()?.filterNot { it.startsWith("[Adjuntó") }?.joinToString("\n")?.trim().orEmpty()
+                return when {
+                    fb.kind == WebSearchRules.FeedbackKind.MISSING && previous.isNotBlank() -> {
+                        AiActivity.log("🔁 Dices que no te lo entregué: vuelvo a buscar lo que pediste", "«${previous.take(160)}»")
+                        replyImages.clear()
+                        // Sin la respuesta anterior (la que no te sirvió), para que no la copie
+                        generateAiResponse(previous, backend, attachments, history.take(prevIndex))
+                    }
+                    fb.kind == WebSearchRules.FeedbackKind.REJECT -> AiReply(
+                        "👍 Entendido, dejo eso de lado.\n\n¿Qué necesitas? Dime qué busco (por ejemplo «horario de micros a Concepción», " +
+                            "«vuelos a Lima» o «a qué hora cierra el Líder») y lo busco ahora con tu ubicación.",
+                        "🙅 entendí que no querías eso")
+                    else -> AiReply(
+                        "🙏 Perdón, no alcancé a entregarte lo que necesitabas.\n\nDime qué busco (por ejemplo «horario de micros a Concepción», " +
+                            "«vuelos a Lima» o «a qué hora cierra el Líder») y lo busco ahora mismo con tu ubicación.",
+                        "🔁 reclamo sin pregunta anterior")
+                }
+            }
+        }
+        // 💻 Modo Ingeniero de código: solo programación (también en voz a voz)
+        runCatching { codeModeGate(prompt, history, attachments.isNotEmpty()) }.getOrNull()?.let {
+            AiActivity.log("💻 No es un pedido de programación: en modo Ingeniero de código no se hace")
+            return AiReply(it, "💻 Modo Ingeniero de código")
+        }
+        // 🧩 «Créame una app completa / por partes»: la app arma el proyecto ARCHIVO POR ARCHIVO
+        //    (un modelo pequeño no cabe todo en una respuesta y termina dando una «versión básica»)
+        if (attachments.isEmpty() && isProjectRequest(prompt) && triggerAutomaticModelLoadOnFirstMessage()) {
+            AiActivity.analyzing("🧩 Es un proyecto completo: lo armo archivo por archivo")
+            // 🔄 «Actualización de códigos y programación» + Internet + Ingeniero de código: también en los proyectos
+            projectCodeUpdates = runCatching { projectCodeUpdatesBrief() }.getOrNull()
+            val built = try {
+                runCatching { buildProjectInParts(prompt, backend) }
+                    .onFailure { Log.e(TAG, "Proyecto por partes falló", it) }.getOrNull()
+            } finally { projectCodeUpdates = null }
+            if (built != null) return built
+            // ⏹️ Detenido mientras armaba el proyecto: se termina aquí (no empieza la respuesta normal)
+            if (stopRequested) return AiReply("", "")
+        }
+        approxPlaceUsed = ""
+        loopCut = false
+        var first = generateAiResponseOnce(prompt, backend, attachments, history)
+        // 🔁 Se cortó porque repetía lo mismo: el motor queda listo para la próxima respuesta
+        if (loopCut && !stopRequested) { runCatching { nativeSetStop(false) }; loopCut = false }
+        // 🙅 A veces un modelo pequeño se niega sin motivo («Lo siento, no puedo asistir con eso»):
+        //    se reintenta una vez con la memoria limpia antes de mostrarlo
+        if (!stopRequested && first.text.length < 220 &&
+            Regex("(?i)(no puedo (asistir|ayudar)|no puedo (hacer|cumplir) eso|lo siento,? pero no puedo|i can'?t (help|assist)|i cannot (help|assist))").containsMatchIn(first.text)) {
+            Log.w(TAG, "🙅 Respuesta de rechazo; reintento: ${first.text}")
+            AiActivity.log("🔁 El modelo se negó sin motivo: reintento con la memoria limpia", first.text.take(200))
+            runCatching { nativeResetChatMemory() }
+            val again = generateAiResponseOnce(prompt, backend, attachments, history)
+            if (!again.text.startsWith(ENGINE_FAIL_MARK)) first = again
+        }
+        if (!first.text.startsWith(ENGINE_FAIL_MARK) || stopRequested) return withPlaceNote(first)
+        Log.w(TAG, "🩹 Motor falló; reparando y reintentando: ${first.text.take(200)}")
+        AiActivity.log("🩹 El motor falló: lo reparo y reintento", first.text.substringAfter("\n", "").substringBefore("\n\n").trim().take(300))
+        streamingIndex.let { idx ->
+            if (idx >= 0) runOnUiThread {
+                if (idx in chatMessages.indices && !chatMessages[idx].isUser) {
+                    // Se muestra el motivo para poder diagnosticarlo (ej. con modelos pequeños)
+                    val why = first.text.substringAfter("\n", "").substringBefore("\n\n").trim().take(160)
+                    chatMessages[idx] = chatMessages[idx].copy(text = "🩹 Reparando el motor y reintentando..." +
+                        (if (why.isNotEmpty()) "\n(motivo: $why)" else ""))
+                    chatAdapter?.notifyItemChanged(idx)
+                }
+            }
+        }
+        val healed = runCatching { healEngine(backend) }.getOrDefault(false)
+        if (healed && !stopRequested) {
+            replyImages.clear()   // las fotos (noticias/clima) se vuelven a poner en el reintento
+            // Reintento con memoria limpia: sin historial viejo, que suele ser lo que desbordó al motor
+            val second = generateAiResponseOnce(prompt, backend, attachments, emptyList())
+            if (!second.text.startsWith(ENGINE_FAIL_MARK)) return second
+            return AiReply(second.text.replace("\n\nSi se repite, toca «Nuevo chat» o vuelve a cargar el modelo.",
+                "\n\n🩹 Ya reparé el motor y reintenté una vez. Prueba con un mensaje más corto o en otro motor (CPU/GPU/NPU)."), second.tokens)
+        }
+        return first
+    }
+
+
+    // ========================================================================
+    // 🧩 PROYECTO COMPLETO POR PARTES (un archivo por llamada al modelo)
+    // ========================================================================
+    private fun isProjectRequest(prompt: String): Boolean {
+        val p = prompt.lowercase(Locale.ROOT)
+        val create = Regex("\\b(cr[eé]a(me|r)?|haz(me)?|hacer|genera(me|r)?|desarrolla(me|r)?|programa(me|r)?|construye(me)?|arma(me)?|p[aá]same|dame|quiero|necesito)\\b").containsMatchIn(p)
+        val thing = Regex("\\b(app|aplicaci[oó]n|proyecto|juego|programa|sistema|p[aá]gina web|sitio web)\\b").containsMatchIn(p)
+        val full = Regex("(complet[oa]|enter[oa]|todos los (archivos|c[oó]digos)|todo el c[oó]digo|por partes|en partes|partes separadas|separad[oa]s|archivo por archivo|funcional)").containsMatchIn(p)
+        // 🛠️ Modo Ingeniero de código: «créame una app / página web / juego…» ya es un proyecto completo
+        //    (si pegó código como formato, se responde de una vez usando ese código como base)
+        val codeMode = currentChatMode().key == "codigo" && !hasPastedCode(prompt)
+        return create && thing && (full || codeMode)
+    }
+
+    /** Llama al modelo cargado (CPU, GPU/NPU con GenieX o LiteRT) con unas instrucciones y un pedido. */
+    private fun rawGenerate(systemBase: String, ask: String, maxTokens: Int, backend: String): String {
+        // ⏹️ Tocaste detener: no se empieza otra parte (antes cada parte del proyecto pedía un toque más)
+        if (stopRequested) return ""
+        // 🔄 Proyecto con «Actualización de códigos y programación»: las versiones de hoy van en cada archivo
+        val system = projectCodeUpdates?.let { "$systemBase\n\n$it" } ?: systemBase
+        val model = getActiveModelFile()
+               val temp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getFloat("ai_temperature", 0.5f).coerceAtMost(0.5f)
+        fun once(): String = when {
+            GenieXEngineManager.isLoaded(model?.absolutePath) ->
+                runBlocking { GenieXEngineManager.generate(system, listOf("user"), listOf(ask), maxTokens, temp) }
+            model?.extension.equals("litertlm", true) ->
+                (runCatching { runBlocking { LiteRtLmEngineManager.generateChat(system, listOf("user"), listOf(ask)) } }
+                    .getOrElse { runBlocking { LiteRtLmEngineManager.generateFresh("[Instrucciones: $system]\n\n$ask") } })
+                    .also { AiActivity.live(it) }   // 👁️ LiteRT no escribe en vivo: se muestra al terminar
+            else -> {
+                runCatching { nativeResetChatMemory() }
+                cpuSetChatMode(system, maxTokens)
+                cpuRunChat(arrayOf("user"), arrayOf(ask))
+            }
+        }
+        return try { once() } catch (t: Throwable) {
+            // ⏹️ Se detuvo a propósito: nada de reparar el motor ni volver a empezar
+            if (stopRequested) return ""
+            // 🩹 Si el motor se llenó o falló, se repara y se intenta una vez más
+            Log.w(TAG, "Proyecto: el motor falló (${t.message}); reparo y reintento")
+            if (!healEngine(backend)) throw t
+            if (stopRequested) return ""
+            once()
+        }
+    }
+
+    private fun langFor(path: String): String = when (path.substringAfterLast('.', "").lowercase(Locale.ROOT)) {
+        "kt", "kts" -> "kotlin"; "java" -> "java"; "xml" -> "xml"; "gradle" -> "groovy"; "py" -> "python"
+        "js" -> "javascript"; "ts" -> "typescript"; "html" -> "html"; "css" -> "css"; "json" -> "json"
+        "swift" -> "swift"; "dart" -> "dart"; "sql" -> "sql"; "md" -> "markdown"
+        "cpp", "cc", "hpp", "h" -> "cpp"; "c" -> "c"; "cmake" -> "cmake"; else -> ""
+    }
+
+    private fun projectProgress(text: String) {
+        AiActivity.analyzing(text)   // ✦ también queda en la ventana de actividad
+        val idx = streamingIndex
+        if (idx < 0) return
+        runOnUiThread {
+            if (idx in chatMessages.indices && !chatMessages[idx].isUser) {
+                chatMessages[idx] = chatMessages[idx].copy(text = text)
+                chatAdapter?.notifyItemChanged(idx)
+            }
+        }
+    }
+
+
+    /**
+     * 📁 Carpeta donde va cada archivo (estructura estándar de Android si el modelo no dio la ruta completa).
+     * Para Kotlin/Java se usa el «package» del propio código: package com.ejemplo.tts → app/src/main/java/com/ejemplo/tts
+     */
+    private fun locationFor(path: String, code: String): Pair<String, String> {
+        val clean = path.replace('\\', '/').trim('/')
+        val fileName = clean.substringAfterLast('/')
+        val ext = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val pkg = Regex("(?m)^\\s*package\\s+([\\w.]+)").find(code)?.groupValues?.get(1)
+        val folder = when {
+            (ext == "kt" || ext == "java") && pkg != null -> "app/src/main/java/" + pkg.replace('.', '/')
+            clean.contains('/') -> clean.substringBeforeLast('/')
+            fileName.equals("AndroidManifest.xml", true) -> "app/src/main"
+            fileName.startsWith("build.gradle") -> "app   (el build.gradle de la app, no el de la raíz)"
+            fileName.startsWith("settings.gradle") -> "la raíz del proyecto"
+            ext == "xml" && code.contains("<resources") -> "app/src/main/res/values"
+            ext == "xml" && (code.contains("<menu")) -> "app/src/main/res/menu"
+            ext == "xml" && (code.contains("<vector") || code.contains("<shape") || code.contains("<selector")) -> "app/src/main/res/drawable"
+            ext == "xml" -> "app/src/main/res/layout"
+            ext == "kt" || ext == "java" -> "app/src/main/java/(tu paquete)"
+            ext in setOf("cpp", "cc", "hpp", "h", "c") || fileName.equals("CMakeLists.txt", true) -> "app/src/main/cpp"
+            else -> "la raíz del proyecto"
+        }
+        return folder to fileName
+    }
+
+    /**
+     * 🎨 Lo que hace MODERNO cada tipo de archivo (sobre todo el diseño: es lo que se ve en la maqueta
+     * y en la vista previa web). Cortito, para que los modelos pequeños lo sigan.
+     */
+    private fun modernHint(path: String): String {
+        val p = path.lowercase(Locale.ROOT)
+        return when {
+            p.endsWith(".xml") && p.contains("/layout") ->
+                "\nPANTALLA COMPLETA: incluye TODOS los botones y elementos que pidió el usuario y los que la app necesita " +
+                    "para funcionar (con creatividad), con los colores que pidió. Nunca una pantalla vacía con solo un título.\n" +
+                    "DISEÑO MODERNO (prioridad): Material Design 3. Usa MaterialCardView (app:cardCornerRadius 16dp, " +
+                    "app:cardElevation 2dp), MaterialButton (app:cornerRadius 24dp), TextInputLayout con TextInputEditText, " +
+                    "fondo oscuro elegante, colores de @color/, márgenes y paddings de 16dp, títulos grandes en negrita " +
+                    "y textos secundarios más suaves. Nada de pantallas grises o amontonadas.\n"
+            p.endsWith(".xml") && p.contains("/values") ->
+                "\nPaleta MODERNA y armónica: un color principal vivo, uno secundario, fondos oscuros suaves " +
+                    "(ej. #121212, #1E1E24) y textos claros (#FFFFFF, #B3B3C0).\n"
+            p.endsWith(".kt") || p.endsWith(".java") ->
+                "\nLógica MODERNA: Kotlin actual, ViewModel + StateFlow o LiveData, corrutinas para lo lento, " +
+                    "funciones cortas con nombres claros, sin código obsoleto.\n"
+            p.endsWith(".html") || p.endsWith(".css") ->
+                "\nDISEÑO WEB MODERNO (prioridad): variables CSS, flexbox o grid, esquinas redondeadas, sombras suaves, " +
+                    "degradados, transiciones al tocar, buena tipografía y que se vea bien en el celular.\n"
+            p.endsWith(".js") || p.endsWith(".ts") -> "\nJavaScript MODERNO: const/let, funciones flecha, módulos y código ordenado.\n"
+            p.endsWith(".cpp") || p.endsWith(".cc") || p.endsWith(".h") || p.endsWith(".hpp") ->
+                "\nC++ MODERNO (C++17): RAII, std::string y std::vector, sin fugas de memoria; con llama.cpp usa su API actual " +
+                    "(llama_model_load_from_file, llama_init_from_model, llama_decode) y funciones JNI que calcen con el Kotlin.\n"
+            p.endsWith(".gradle") || p.endsWith(".kts") ->
+                "\nUsa las versiones más recientes que conozcas (Material Components, Lifecycle/ViewModel, corrutinas).\n"
+            else -> ""
+        }
+    }
+
+    // ========================================================================
+    // 🧩 PROYECTOS: tecnología elegida, espacio del contexto y archivos que se cortan
+    // ========================================================================
+    /** Tecnología del proyecto según lo que eligió el usuario: "web", "cpp", "android" o null (no dijo). */
+    private fun projectTech(prompt: String): String? {
+        val chosen = Regex("(?is)Hazla con (.+)$").find(prompt)?.groupValues?.get(1) ?: prompt
+        val p = chosen.lowercase(Locale.ROOT)
+        return when {
+            Regex("c\\+\\+|llama\\.?cpp|\\bjni\\b|\\bcpp\\b").containsMatchIn(p) -> "cpp"
+            Regex("\\bhtml\\b|\\bcss\\b|javascript|\\bjs\\b|p[aá]gina web|sitio web|\\bweb\\b").containsMatchIn(p) &&
+                !Regex("kotlin|android|\\bxml\\b").containsMatchIn(p) -> "web"
+            Regex("kotlin|android|\\bxml\\b|\\bjava\\b").containsMatchIn(p) -> "android"
+            else -> null
+        }
+    }
+
+    /** Llaves { } abiertas sin cerrar (sin contar las que están dentro de textos o comentarios). */
+    private fun braceBalance(code: String): Int {
+        var bal = 0; var i = 0; val n = code.length
+        while (i < n) {
+            val c = code[i]
+            when {
+                code.startsWith("//", i) -> { val e = code.indexOf('\n', i); i = if (e < 0) n else e }
+                code.startsWith("/*", i) -> { val e = code.indexOf("*/", i + 2); i = if (e < 0) n else e + 2 }
+                code.startsWith("\"\"\"", i) -> { val e = code.indexOf("\"\"\"", i + 3); i = if (e < 0) n else e + 3 }
+                c == '"' || c == '\'' || c == '`' -> {
+                    var j = i + 1
+                    while (j < n && code[j] != c && code[j] != '\n') { if (code[j] == '\\') j++; j++ }
+                    i = j + 1
+                }
+                else -> { if (c == '{') bal++ else if (c == '}') bal--; i++ }
+            }
+        }
+        return bal
+    }
+
+    private val braceLangs = setOf("kt", "kts", "java", "js", "mjs", "ts", "css", "scss", "c", "cc", "cpp", "h", "hpp",
+        "json", "gradle", "dart", "swift", "cs", "go", "rs", "php")
+
+    /** ¿El archivo quedó cortado? (al modelo se le acabó el espacio a mitad de camino) */
+    private fun projectFileLooksCut(raw: String, code: String, path: String): Boolean {
+        val body = code.trimEnd()
+        if (body.isEmpty()) return false
+        if (Regex("```").findAll(raw).count() % 2 == 1) return true   // abrió el bloque de código y no lo cerró
+        return when (val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)) {
+            "xml" -> body.lastIndexOf('<') > body.lastIndexOf('>') || runCatching {
+                val pp = android.util.Xml.newPullParser()
+                pp.setInput(java.io.StringReader(body.removePrefix("\uFEFF")))
+                while (pp.next() != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) { }
+                false
+            }.getOrElse { (it.message ?: "").contains("EOF", true) }
+            "html", "htm" -> body.contains("<html", true) && !body.contains("</html>", true)
+            else -> ext in braceLangs && braceBalance(body) > 0
+        }
+    }
+
+    /** Quita del comienzo de la continuación las líneas que el modelo repitió. */
+    private fun dropRepeatedLines(base: List<String>, add: String): String {
+        val addLines = add.lines()
+        for (k in minOf(30, base.size, addLines.size) downTo 1) {
+            if (base.takeLast(k).map { it.trim() } == addLines.take(k).map { it.trim() }) return addLines.drop(k).joinToString("\n")
+        }
+        return add
+    }
+
+    /** Si el archivo se cortó, le pide al modelo que siga desde donde quedó (hasta 6 veces) y une las partes. */
+    private fun continueCutFile(path: String, prompt: String, first: String, firstRaw: String, sys: String, backend: String, label: String): String {
+        var code = first
+        var cut = projectFileLooksCut(firstRaw, code, path)
+        var tries = 0
+        while (cut && tries < 6 && !stopRequested) {
+            tries++
+            projectProgress("$label · se cortó, sigo escribiéndola ($tries)...")
+            AiActivity.log("✂️ «${path.substringAfterLast('/')}» se cortó: sigo desde donde quedó ($tries)")
+            val lines = code.trimEnd().lines()
+            // La última línea se repite si quedó a medias (así se sigue desde una línea completa)
+            val lastOk = lines.lastOrNull()?.trimEnd()?.let { it.isEmpty() || it.last() in ">{};),]" } ?: true
+            val base = if (lines.size > 1 && !lastOk) lines.dropLast(1) else lines
+            val tail = base.takeLast(18).joinToString("\n")
+            val ask = "Estás escribiendo el archivo «$path» (proyecto: «${prompt.take(200)}»).\n" +
+                "Se cortó. Estas son sus ÚLTIMAS líneas:\n```\n$tail\n```\n" +
+                "Continúa EXACTAMENTE desde la línea siguiente, sin repetir lo anterior, hasta TERMINAR el archivo " +
+                "(cierra todo lo que quedó abierto). Entrega SOLO la continuación dentro de un bloque ```${langFor(path)}."
+            val raw = removeThinking(rawGenerate(sys, ask, 4096, backend))
+            if (raw.trimStart().startsWith("⚠️")) break
+            val add = Regex("```[\\w+-]*\\n(.*?)(```|$)", RegexOption.DOT_MATCHES_ALL).find(raw)?.groupValues?.get(1)?.trimEnd()
+                ?: raw.trim()
+            if (add.isBlank()) break
+            val baseText = base.joinToString("\n")
+            val firstLine = base.firstOrNull { it.isNotBlank() }?.trim()
+            code = if (firstLine != null && add.lineSequence().firstOrNull { it.isNotBlank() }?.trim() == firstLine) {
+                // Lo reescribió desde el principio: se queda la versión más larga
+                if (add.length > baseText.length) add else baseText
+            } else {
+                val rest = dropRepeatedLines(base, add)
+                if (rest.isBlank()) break
+                baseText + "\n" + rest
+            }
+            cut = projectFileLooksCut(raw, code, path)
+        }
+        return code
+    }
+
+    /** Último recurso: cierra lo que quedó abierto para que el archivo sea válido (y la maqueta se pueda dibujar). */
+    private fun closeCutFile(code: String, path: String): String {
+        val ext = path.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return when {
+            ext == "xml" -> PreviewPanel.repairXml(code)
+            ext == "html" || ext == "htm" -> {
+                var c = code.trimEnd()
+                if (c.lastIndexOf('<') > c.lastIndexOf('>')) c = c.substring(0, c.lastIndexOf('<')).trimEnd()
+                if (c.contains("<script", true) && Regex("(?i)<script").findAll(c).count() > Regex("(?i)</script>").findAll(c).count()) c += "\n</script>"
+                if (c.contains("<body", true) && !c.contains("</body>", true)) c += "\n</body>"
+                if (!c.contains("</html>", true)) c += "\n</html>"
+                c
+            }
+            ext in braceLangs -> { val b = braceBalance(code); if (b > 0) code.trimEnd() + "\n" + List(b) { "}" }.joinToString("\n") else code }
+            else -> code
+        }
+    }
+
+    /**
+     * 🏗️ APP O PÁGINA CON BASE PROFESIONAL (ProjectTemplates): siempre trae panel lateral izquierdo (menú),
+     * panel derecho (ajustes), barra superior, inicio con tarjetas y atajos, y barra de escritura con
+     * 🎤 micrófono y ➤ enviar, con los colores que pidió el usuario. La IA describe su app (título, menú,
+     * ajustes, tarjetas, atajos) y escribe la lógica (AppLogic.kt o logic.js). Los juegos van por el camino anterior.
+     */
+    private fun buildProjectFromTemplate(prompt: String, backend: String, tech: String?): AiReply? {
+        if (Regex("(?i)\\b(juego|juegos|game|videojuego)\\b").containsMatchIn(prompt)) return null
+        // Cambiar una app que ya existe («agrégale…», «mejora…») o pedirla en otra tecnología (Python, Flutter…): camino anterior
+        val asked = prompt.substringBefore("\n\nHazla con").lowercase(Locale.ROOT)
+        if (Regex("\\b(agr[eé]ga(le|r)?|a[ñn]ade(le)?|a[ñn]adir|c[aá]mbia(le|r)?|modifica(r)?|mejora(r|la|le)?|corrige|corr[ií]gela|arregla(r|la)?|qu[ií]ta(le|r)?|actualiza(r|la)?)\\b").containsMatchIn(asked)) return null
+        if (tech == null && techNamedRx.containsMatchIn(prompt)) return null
+        val start = System.currentTimeMillis()
+        val web = tech == "web"
+        val cpp = tech == "cpp"
+        val aiName = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("ai_name", null)?.trim().orEmpty().ifEmpty { "Cumulus" }
+        val sys = "Eres $aiName, ingeniero de software senior. Escribes código real, COMPLETO, moderno y funcional: " +
+            "nunca una «versión básica» ni partes pendientes."
+        // 🌐 PÁGINA web (negocio, portafolio, blog…) y no APP web: su propia base (menú arriba, portada, secciones y pie)
+        if (web && ProjectTemplates.isWebPage(prompt)) return buildWebPageFromTemplate(prompt, backend, sys, start)
+        // 1) La IA describe SU app (corto: cabe aunque el contexto sea de 2048)
+        projectProgress("🧩 Pensando el contenido de tu app (menú, ajustes, tarjetas y atajos)...")
+        val specRaw = removeThinking(rawGenerate(sys, ProjectTemplates.specAsk(prompt, web), 700, backend))
+        if (stopRequested) return null
+        val spec = ProjectTemplates.parseSpec(if (specRaw.trimStart().startsWith("⚠️")) "" else specRaw, prompt)
+        val pal = ProjectTemplates.palette(prompt)
+        val pkg = ProjectTemplates.packageFor(spec.title)
+        // 🧩 Módulos extra que el usuario nombró (burbuja, notificaciones, cámara, guardar datos, recordatorios, internet)
+        val mods = ProjectTemplates.modules(prompt)
+        AiActivity.log("🏗️ Base de la app «${spec.title}» · color ${pal.primary}" +
+            (if (mods.isNotEmpty()) " · módulos: " + mods.joinToString(", ") { it.label } else ""),
+            "Menú: ${spec.menu.joinToString(" · ")}\nAjustes: ${spec.settings.joinToString(" · ") { it.second }}\n" +
+                "Tarjetas: ${spec.cards.joinToString(" · ") { it.first }}\nAtajos: ${spec.chips.joinToString(" · ")}")
+        // 2) La base: siempre bien hecha y con los colores pedidos
+        val files = mutableListOf<Pair<String, String>>()
+        if (web) files += ProjectTemplates.webShell(spec, pal, mods).filter { it.first != "script.js" }
+        else files += ProjectTemplates.androidShell(spec, pal, pkg, cpp, mods)
+        if (liveCodeActive) updateLiveDraft(projectText(files, web, pal.primary, spec.title, mods))
+        // 3) La lógica propia de la app la escribe la IA
+        fun logicFile(path: String, ask: String, valid: (String) -> Boolean): String? {
+            projectProgress("🧩 Escribiendo la lógica de tu app: ${path.substringAfterLast('/')} ...")
+            var raw = removeThinking(rawGenerate(sys, ask, 4096, backend))
+            if (raw.trimStart().startsWith("⚠️")) return null
+            val first = Regex("```[\\w+-]*\\n(.*?)(```|$)", RegexOption.DOT_MATCHES_ALL).find(raw)?.groupValues?.get(1)?.trimEnd()
+                ?: raw.trim()
+            if (first.isBlank()) return null
+            var code = continueCutFile(path, prompt, first, raw, sys, backend, "🧩 Lógica: ${path.substringAfterLast('/')}")
+            if (projectFileLooksCut("", code, path)) code = closeCutFile(code, path)
+            return code.takeIf(valid)
+        }
+        var usedDefault = false
+        if (web) {
+            val logic = if (stopRequested) null else logicFile("logic.js", ProjectTemplates.logicAskWeb(prompt, spec, mods)) {
+                Regex("\\bApp\\s*=").containsMatchIn(it) && it.contains("reply")
+            }
+            files += "logic.js" to (logic ?: defaultWebLogic(spec).also { usedDefault = true })
+            files += ProjectTemplates.webShell(spec, pal, mods).first { it.first == "script.js" }
+        } else {
+            val logicPath = "app/src/main/java/${pkg.replace('.', '/')}/AppLogic.kt"
+            val camera = ProjectTemplates.Module.CAMERA in mods
+            val logic = if (stopRequested) null else logicFile(logicPath, ProjectTemplates.logicAskAndroid(prompt, spec, pkg, cpp, mods)) {
+                it.contains("object AppLogic") && it.contains("fun reply") && it.contains("fun onMenu") && it.contains("fun onSetting") &&
+                    (!camera || it.contains("fun onPhoto"))
+            }
+            files += logicPath to (logic?.let { if (it.trimStart().startsWith("package")) it else "package $pkg\n\n$it" }
+                ?: defaultAndroidLogic(pkg, camera).also { usedDefault = true })
+            if (cpp && !stopRequested) {
+                logicFile("app/src/main/cpp/native-lib.cpp", ProjectTemplates.nativeAsk(prompt, pkg)) { it.contains("JNIEXPORT") || it.contains("extern \"C\"") }
+                    ?.let { files += "app/src/main/cpp/native-lib.cpp" to it }
+            }
+        }
+        if (usedDefault) AiActivity.log("⚠️ La IA no entregó la lógica completa: dejé una lógica base para que la app funcione")
+        val out = StringBuilder(projectText(files, web, pal.primary, spec.title, mods))
+        if (usedDefault) out.append("\n\n⚠️ La lógica de la app quedó básica (la IA no alcanzó a escribirla completa). " +
+            "Pídeme «mejora la lógica de la app» y la completo.")
+        val secs = (System.currentTimeMillis() - start) / 1000
+        val engine = if (GenieXEngineManager.isLoaded(getActiveModelFile()?.absolutePath)) GenieXEngineManager.engineInfo() else "motor local"
+        return AiReply(out.toString(), "🧩 Proyecto: ${files.size} archivos (base profesional) · $engine · ${secs} s")
+    }
+
+    /**
+     * 🌐 PÁGINA WEB con base propia: la IA describe el contenido (nombre, lema, secciones, destacados, contacto) y la app
+     * arma index.html + style.css + script.js con menú arriba (☰ en el celular), portada, secciones, tarjetas,
+     * contacto con formulario y pie de página, en los colores pedidos.
+     */
+    private fun buildWebPageFromTemplate(prompt: String, backend: String, sys: String, start: Long): AiReply? {
+        projectProgress("🌐 Pensando el contenido de tu página (portada, secciones, destacados y contacto)...")
+        val specRaw = removeThinking(rawGenerate(sys, ProjectTemplates.pageSpecAsk(prompt), 700, backend))
+        if (stopRequested) return null
+        val spec = ProjectTemplates.parsePageSpec(if (specRaw.trimStart().startsWith("⚠️")) "" else specRaw, prompt)
+        val pal = ProjectTemplates.palette(prompt)
+        AiActivity.log("🌐 Base de la página «${spec.title}» · color ${pal.primary}",
+            "Menú: ${spec.menu.joinToString(" · ")}\nDestacados: ${spec.features.joinToString(" · ") { it.first }}")
+        val files = ProjectTemplates.pageShell(spec, pal)
+        if (liveCodeActive) updateLiveDraft(projectText(files, true, pal.primary, spec.title, page = true))
+        val secs = (System.currentTimeMillis() - start) / 1000
+        val engine = if (GenieXEngineManager.isLoaded(getActiveModelFile()?.absolutePath)) GenieXEngineManager.engineInfo() else "motor local"
+        return AiReply(projectText(files, true, pal.primary, spec.title, page = true),
+            "🌐 Página web: ${files.size} archivos (base de página) · $engine · ${secs} s")
+    }
+
+    /** Texto del proyecto: lista de archivos, cada uno con su carpeta y su código, y cómo verlo. */
+    private fun projectText(files: List<Pair<String, String>>, web: Boolean, color: String, title: String,
+                            mods: Set<ProjectTemplates.Module> = emptySet(), page: Boolean = false): String {
+        val out = StringBuilder()
+        out.append("🧩 Proyecto «$title» completo en ${files.size} partes, listo para copiar y pegar.\n")
+        out.append(if (page) "🌐 Página web con menú arriba (☰ en el celular), portada con botón, secciones, tarjetas destacadas, " +
+            "contacto con formulario y pie de página (color principal $color).\n"
+        else "🏗️ Trae menú lateral izquierdo ☰, ajustes a la derecha ⚙️, pantalla de inicio con tarjetas y atajos, " +
+            "y barra de escritura con 🎤 micrófono y ➤ enviar (color principal $color).\n")
+        if (mods.isNotEmpty()) out.append("🧩 Módulos incluidos: " + mods.joinToString(" · ") { it.label } + "\n")
+        out.append("\n")
+        files.forEachIndexed { i, (path, _) -> out.append("${i + 1}. $path\n") }
+        val locations = mutableListOf<String>()
+        files.forEachIndexed { i, (path, code) ->
+            val fileName = path.substringAfterLast('/')
+            val folder = when {
+                path.contains('/') -> path.substringBeforeLast('/')
+                web -> "la carpeta de tu página (todos los archivos juntos)"
+                else -> "la raíz del proyecto"
+            }
+            locations += "$fileName → $folder"
+            out.append("\n📄 Parte ${i + 1} de ${files.size} — $fileName\n" +
+                "📁 Este código va en la carpeta: $folder\n" +
+                "   (crea ahí el archivo «$fileName» y pega todo el código)\n" +
+                "```${langFor(path)}\n$code\n```\n")
+        }
+        out.append("\n🗂️ DÓNDE VA CADA ARCHIVO (resumen):\n" + locations.joinToString("\n") { "• $it" } + "\n")
+        out.append(if (web) "\n🖥️ Para verla funcionando, toca «Abrir vista previa» aquí abajo (o ➕ → «Vista previa web»).\n"
+            else "\n📱 Para ver el diseño de las pantallas, toca «Ver maqueta» aquí abajo (o ➕ → «Maqueta de la app»).\n")
+        out.append("\n✅ Copia cada parte en su carpeta con el mismo nombre de archivo. Si quieres que agregue algo (más pantallas, " +
+            "guardar en base de datos, otro diseño, etc.), dime qué y lo sumo al proyecto.")
+        return out.toString()
+    }
+
+    private fun defaultAndroidLogic(pkg: String, camera: Boolean = false) = """package $pkg
+
+import android.content.Context${if (camera) "\nimport android.graphics.Bitmap" else ""}
+
+/** Lógica de la app: responde a los mensajes, al menú y a los ajustes. */
+object AppLogic {
+
+    fun reply(context: Context, text: String): String {
+        val t = text.lowercase()
+        return when {
+            t.contains("hola") -> "¡Hola! ¿En qué te ayudo?"
+            t.contains("ayuda") || t.contains("qué puedes") -> "Puedo ayudarte con lo que muestra el menú ☰ y los atajos de inicio."
+            else -> "Entendido: «" + text + "»."
+        }
+    }
+
+    fun onMenu(context: Context, item: String): String? = "Abriste: " + item
+
+    fun onSetting(context: Context, key: String, on: Boolean): String? =
+        key + if (on) ": activado" else ": desactivado"${if (camera) """
+
+    fun onPhoto(context: Context, photo: Bitmap): String? =
+        "📷 Foto recibida (" + photo.width + "×" + photo.height + ")."""" else ""}
+}"""
+
+    private fun defaultWebLogic(spec: ProjectTemplates.AppSpec) = """// Lógica de la app: responde a los mensajes, al menú y a los ajustes.
+window.App = {
+  async reply(text) {
+    const t = text.toLowerCase();
+    if (t.includes('hola')) return '¡Hola! ¿En qué te ayudo?';
+    if (t.includes('ayuda') || t.includes('qué puedes')) return 'Puedo ayudarte con lo que muestra el menú ☰ y los atajos de inicio.';
+    return 'Entendido: «' + text + '».';
+  },
+  async onMenu(item) { return 'Abriste: ' + item; },
+  async onSetting(key, on) { return key + (on ? ': activado' : ': desactivado'); }
+};"""
+
+    private fun buildProjectInParts(prompt: String, backend: String): AiReply? {
+        // 🏗️ Siempre con la base profesional (menú izquierdo, ajustes a la derecha, barra de escritura con 🎤 y ➤)
+        runCatching { buildProjectFromTemplate(prompt, backend, projectTech(prompt)) }
+            .onFailure { Log.e(TAG, "La base del proyecto falló; sigo con el armado por partes", it) }
+            .getOrNull()?.let { return it }
+        if (stopRequested) return null
+        val start = System.currentTimeMillis()
+        val aiName = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("ai_name", null)?.trim().orEmpty().ifEmpty { "Cumulus" }
+        // 📏 Espacio del CONTEXTO elegido: con poco contexto las instrucciones van cortas para que el archivo quepa entero
+        val ctxTokens = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt("ai_context", 2048).coerceIn(2048, 15000)
+        val sys = if (ctxTokens < 8192)
+            "Eres $aiName, ingeniero de software senior. Escribes código real, COMPLETO, moderno y funcional: " +
+                "nunca una «versión básica» ni partes pendientes."
+        else chatModes.first { it.key == "codigo" }.systemPrompt.replace("Cumulus", aiName) +
+            " Nunca entregues una «versión básica» ni dejes partes pendientes: escribe código real, completo y funcional."
+        val outTok = (ctxTokens / 2).coerceIn(700, 4096)
+        val askBudget = ((ctxTokens - outTok - sys.length / 3 - 80) * 3).coerceAtLeast(1200)   // caracteres
+        // 🧰 La tecnología que eligió el usuario se respeta siempre (un modelo pequeño tiende a hacer todo en Android)
+        val tech = projectTech(prompt)
+        val techLine = when (tech) {
+            "web" -> "Es una app WEB: usa SOLO HTML, CSS y JavaScript (index.html, style.css, script.js y más .html/.css/.js " +
+                "si hace falta). PROHIBIDO Kotlin, Java, XML de Android, AndroidManifest y gradle.\n" +
+                "Que sea MODERNA en lógica y en diseño (CSS moderno, adaptable al celular).\n"
+            "cpp" -> "Es una app Android con IA local: C++ con llama.cpp en app/src/main/cpp (archivos .cpp y CMakeLists.txt) " +
+                "unido por JNI a Kotlin, con sus layouts XML, AndroidManifest.xml, build.gradle de la app y " +
+                "app/src/main/res/values/colors.xml con su paleta de colores (Material Design 3).\n"
+            "android" -> "Es una app Android en Kotlin con sus layouts XML, AndroidManifest.xml, build.gradle de la app y " +
+                "app/src/main/res/values/colors.xml con su paleta de colores. MODERNA en lógica y diseño (Material Design 3).\n"
+            else -> "Usa la tecnología que pidió; si no dijo, una app Android en Kotlin (con sus layouts XML, AndroidManifest.xml " +
+                "y build.gradle de la app).\nQue sea MODERNA en lógica y en diseño (Material Design 3); si es Android incluye también " +
+                "app/src/main/res/values/colors.xml con su paleta de colores.\n"
+        }
+        // 1) Plan: lista de archivos
+        projectProgress("🧩 Planificando el proyecto (lista de archivos)...")
+        val planAsk = "El usuario pidió: «$prompt»\n\n" +
+            "Planifica ese proyecto COMPLETO y funcional (no una versión básica).\n" + techLine +
+            "Usa tu creatividad: piensa qué pantallas, botones y funciones necesita esta app y respeta lo que pidió " +
+            "(por ejemplo «botones azules»). En la descripción de cada diseño (layout) nombra sus botones y elementos.\n" +
+            "Usa rutas COMPLETAS desde la raíz del proyecto y un solo paquete para todo (ej. com.ejemplo.papelera), " +
+            "por ejemplo app/src/main/java/com/ejemplo/papelera/MainActivity.kt o app/src/main/res/layout/activity_main.xml.\n" +
+            "Responde SOLO con la lista de archivos, uno por línea, con este formato exacto:\n" +
+            "ARCHIVO: ruta/del/archivo.ext | qué contiene | búsqueda corta en inglés para encontrar código de ejemplo\n" +
+            "Crea TODOS los archivos que la app necesite, sin límite: los que sean (una app grande tiene más archivos " +
+            "que una chica). Nada más, sin código."
+        val plan = removeThinking(rawGenerate(sys, planAsk, 2048, backend))
+        if (stopRequested) return null
+        val fileRx = Regex("([\\w./-]+\\.(kt|kts|java|xml|gradle|py|js|ts|html|css|json|swift|dart|sql|md|txt|pro|cpp|cc|hpp|cmake|h|c))\\b", RegexOption.IGNORE_CASE)
+        val files = LinkedHashMap<String, String>()
+        val queries = HashMap<String, String>()   // búsqueda en inglés por archivo (para código de internet)
+        val refLinks = mutableListOf<String>()
+        plan.lines().forEach { line ->
+            val m = fileRx.find(line) ?: return@forEach
+            val path = m.value.trim('/', '.', ' ')
+            if (path.length > 2 && !files.containsKey(path)) {   // sin límite de partes: las que la app necesite
+                val cols = line.split("|").map { it.trim() }
+                files[path] = cols.getOrNull(1).orEmpty().take(160)
+                cols.getOrNull(2)?.takeIf { it.length in 4..120 }?.let { queries[path] = it.replace(Regex("[\"«»`*]"), "") }
+            }
+        }
+        // 🧰 Solo archivos de la tecnología elegida
+        val webExt = setOf("html", "htm", "css", "js", "mjs", "json", "md", "txt")
+        when (tech) {
+            "web" -> files.keys.retainAll { it.substringAfterLast('.', "").lowercase(Locale.ROOT) in webExt }
+            "android", "cpp" -> files.keys.removeAll { it.substringAfterLast('.', "").lowercase(Locale.ROOT) in setOf("html", "htm", "css", "js", "mjs") }
+        }
+        if (tech == "web") {
+            if (files.isEmpty()) {
+                files["index.html"] = "la página con toda la interfaz (botones, secciones y textos)"
+                files["style.css"] = "el diseño moderno con los colores que pidió"
+                files["script.js"] = "toda la lógica y lo que hace cada botón"
+            } else if (files.keys.none { it.endsWith(".html", true) || it.endsWith(".htm", true) }) {
+                val rest = LinkedHashMap(files); files.clear()
+                files["index.html"] = "la página con toda la interfaz (botones, secciones y textos)"; files.putAll(rest)
+            }
+        } else if (files.size < 2) {
+            // Plan por defecto (Android Kotlin) si el modelo no dio una lista clara
+            files.clear()
+            files["app/build.gradle"] = "dependencias y configuración de la app"
+            files["app/src/main/AndroidManifest.xml"] = "manifiesto con la actividad y permisos"
+            files["app/src/main/res/layout/activity_main.xml"] = "diseño de la pantalla principal"
+            files["app/src/main/java/com/ejemplo/app/MainActivity.kt"] = "lógica principal de la app"
+            files["app/src/main/java/com/ejemplo/app/Repositorio.kt"] = "datos y lógica de guardado"
+        }
+        // 🎨 Primero los colores, textos y estilos (res/values): así los diseños ya saben qué colores existen
+        //    y la maqueta no queda de un solo color
+        val ordered = if (tech == "web") files.entries.sortedBy {
+            when (it.key.substringAfterLast('.', "").lowercase(Locale.ROOT)) { "html", "htm" -> 0; "css" -> 1; "js", "mjs" -> 2; else -> 3 }
+        } else files.entries.sortedBy { if (it.key.contains("res/values")) 0 else 1 }
+        files.clear()
+        ordered.forEach { files[it.key] = it.value }
+        // 2) Cada archivo por separado, recordando lo ya escrito para que todo encaje
+        val out = StringBuilder()
+        out.append("🧩 Proyecto completo en ${files.size} partes, listo para copiar y pegar:\n\n")
+        files.entries.forEachIndexed { i, (path, desc) -> out.append("${i + 1}. $path — $desc\n") }
+        val summaries = StringBuilder()
+        val valuesNames = StringBuilder()   // 🎨 colores y textos definidos: se recuerdan SIEMPRE (aunque haya muchas partes)
+        val locations = mutableListOf<String>()
+        var done = 0
+        for ((i, entry) in files.entries.withIndex()) {
+            if (stopRequested) break
+            val (path, desc) = entry
+            // 🌐 Código real de internet para este archivo (si el internet está activado)
+            var reference = ""
+            // Con poco contexto no se trae código de internet: no cabría junto con el archivo
+            if (askBudget >= 5000 && isInternetEnabled() && !path.endsWith(".gradle") && !path.endsWith("AndroidManifest.xml")) {
+                projectProgress("🔎 Buscando código en internet para la parte ${i + 1} de ${files.size}: ${path.substringAfterLast('/')} ...")
+                val q = queries[path] ?: "android kotlin " + path.substringAfterLast('/').substringBeforeLast('.') + " " + desc.take(60)
+                runCatching { fetchCodeFromInternet(q, 2500) }.getOrNull()?.let { (txt, links) ->
+                    reference = txt; refLinks += links.take(2)
+                }
+            }
+            projectProgress("🧩 Escribiendo parte ${i + 1} de ${files.size}: $path ...")
+            liveDraftPrefix = out.toString() + "\n"   // 🖥️ la vista previa muestra lo ya hecho + lo que escribe ahora
+            // El pedido se arma según el espacio: lo esencial siempre; lo demás mientras quepa
+            val head = "Proyecto pedido por el usuario: «${prompt.take(600)}»\n"
+            val tail = modernHint(path) +
+                "\nAhora escribe el archivo COMPLETO «$path» ($desc). Debe funcionar junto con los demás archivos. " +
+                "Entrega SOLO el contenido del archivo dentro de un bloque ```${langFor(path)}, completo, sin «...», sin TODO y sin partes pendientes."
+            var room = askBudget - head.length - tail.length
+            fun fit(text: String, cap: Int, fromEnd: Boolean = false): String {
+                if (text.isEmpty() || room < 120) return ""
+                val max = minOf(cap, room)
+                val t = if (text.length <= max) text else if (fromEnd) text.takeLast(max) else text.take(max)
+                room -= t.length
+                return t
+            }
+            val fileList = fit("Archivos del proyecto:\n" + files.entries.joinToString("\n") { "- ${it.key}: ${it.value}" } + "\n", 1500)
+            val valuesTxt = if (valuesNames.isNotEmpty()) fit("Colores y textos que YA existen (úsalos con @color/… y @string/…):\n${valuesNames}\n", 1500) else ""
+            val doneTxt = if (summaries.isNotEmpty()) fit("Lo ya escrito (respeta estos nombres, ids, clases y funciones):\n${summaries}\n", 2500, fromEnd = true) else ""
+            val refTxt = if (reference.isNotEmpty() && room >= 1000) fit("\nCÓDIGO DE REFERENCIA DE INTERNET (úsalo y adáptalo si sirve; no lo copies si no encaja):\n$reference\n", 2500) else ""
+            val ask = head + fileList + valuesTxt + doneTxt + refTxt + tail
+            var raw = removeThinking(rawGenerate(sys, ask, 4096, backend))
+            if (raw.trimStart().startsWith("⚠️")) {
+                // No cupo en el contexto: se pide de nuevo solo con lo esencial
+                raw = removeThinking(rawGenerate(sys, head + tail, 4096, backend))
+                if (raw.trimStart().startsWith("⚠️")) continue
+            }
+            val firstCode = Regex("```[\\w+-]*\\n(.*?)(```|$)", RegexOption.DOT_MATCHES_ALL).find(raw)?.groupValues?.get(1)?.trimEnd()
+                ?: raw.trim()
+            if (firstCode.isBlank()) continue
+            // ✂️ Si se cortó por falta de espacio, se sigue escribiendo desde donde quedó
+            var code = continueCutFile(path, prompt, firstCode, raw, sys, backend, "🧩 Parte ${i + 1} de ${files.size}: ${path.substringAfterLast('/')}")
+            var autoClosed = false
+            if (projectFileLooksCut("", code, path)) {
+                val fixed = closeCutFile(code, path)
+                if (fixed != code) { code = fixed; autoClosed = true }
+            }
+            done++
+            val (folder, fileName) = locationFor(path, code)
+            locations += "$fileName → $folder"
+            out.append("\n📄 Parte ${i + 1} de ${files.size} — $fileName\n" +
+                "📁 Este código va en la carpeta: $folder\n" +
+                "   (crea ahí el archivo «$fileName» y pega todo el código)\n" +
+                (if (autoClosed) "   ⚠️ Este archivo llegó cortado y lo cerré para que funcione; si le falta algo, pídeme «completa $fileName».\n" else "") +
+                "```${langFor(path)}\n$code\n```\n")
+            // Resumen de lo importante para los siguientes archivos (clases, funciones, ids)
+            val keys = code.lines().filter {
+                Regex("\\b(class|interface|object|fun|def|function|android:id|<activity|package|import com\\.|val .*=|const )\\b").containsMatchIn(it) ||
+                    Regex("<(color|string|style) name=").containsMatchIn(it)   // nombres de colores y textos para los diseños
+            }.take(25).joinToString("\n") { it.trim().take(140) }
+            summaries.append("[$path]\n$keys\n")
+            if (path.contains("res/values")) {
+                Regex("<(color|string) name=\"([^\"]+)\"").findAll(code).forEach { valuesNames.append("@${it.groupValues[1]}/${it.groupValues[2]} ") }
+            }
+            if (liveCodeActive) updateLiveDraft(out.toString())
+        }
+        liveDraftPrefix = ""
+        if (done == 0) return null
+        out.append("\n🗂️ DÓNDE VA CADA ARCHIVO (resumen):\n" + locations.joinToString("\n") { "• $it" } + "\n")
+        val hasWeb = files.keys.any { it.endsWith(".html", true) || it.endsWith(".js", true) || it.endsWith(".css", true) }
+        val hasXmlLayout = files.keys.any { it.contains("layout", true) && it.endsWith(".xml", true) }
+        if (hasWeb) out.append("\n🖥️ Para verla funcionando, toca «Abrir vista previa» aquí abajo (o ➕ → «Vista previa web»).\n")
+        if (hasXmlLayout) out.append("\n📱 Para ver el diseño de las pantallas, toca «Ver maqueta» aquí abajo (o ➕ → «Maqueta de la app»).\n")
+        out.append("\n✅ Copia cada parte en su carpeta con el mismo nombre de archivo. Si quieres que agregue algo (más pantallas, " +
+            "guardar en base de datos, diseño, etc.), dime qué y lo sumo al proyecto.")
+        if (refLinks.isNotEmpty()) out.append("\n\n🌐 Código de referencia tomado de internet:\n" + refLinks.distinct().take(8).joinToString("\n") { "• $it" })
+        val secs = (System.currentTimeMillis() - start) / 1000
+        val engine = if (GenieXEngineManager.isLoaded(getActiveModelFile()?.absolutePath)) GenieXEngineManager.engineInfo() else "motor local"
+        return AiReply(out.toString(), "🧩 Proyecto: $done de ${files.size} archivos · $engine · ${secs} s" +
+            (if (refLinks.isNotEmpty()) "\n🌐 Datos de: Stack Overflow (código de referencia)" else ""))
+    }
+
+
+    // ========================================================================
+    // 💻🌐 CÓDIGO DESDE INTERNET (Stack Overflow): ejemplos reales para completar lo que el modelo no sabe
+    // ========================================================================
+    private fun httpGetJsonGz(url: String): org.json.JSONObject? = runCatching {
+              val c = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 8000; readTimeout = 12000
+            setRequestProperty("User-Agent", "CumulusIA/1.0 (Android)")
+        }
+        try {
+            if (c.responseCode !in 200..299) return@runCatching null
+            val bytes = c.inputStream.use { it.readBytes() }
+            // La API de Stack Exchange responde comprimida (gzip)
+            val txt = if (bytes.size > 2 && bytes[0] == 0x1f.toByte() && bytes[1] == 0x8b.toByte())
+                java.util.zip.GZIPInputStream(bytes.inputStream()).bufferedReader().use { it.readText() }
+            else String(bytes, Charsets.UTF_8)
+            org.json.JSONObject(txt)
+        } finally { c.disconnect() }
+    }.getOrNull()
+
+    /** Busca respuestas con código en Stack Overflow. Devuelve (texto con el código, enlaces). */
+    private fun fetchCodeFromInternet(query: String, maxChars: Int = 5000): Pair<String, List<String>>? {
+        if (query.isBlank()) return null
+        AiActivity.analyzing("🔎 Buscando código en Stack Overflow", "«$query»")
+        val search = httpGetJsonGz("https://api.stackexchange.com/2.3/search/advanced?order=desc&sort=relevance&answers=1" +
+            "&site=stackoverflow&pagesize=5&q=${enc(query)}") ?: return null
+        val qs = search.optJSONArray("items") ?: return null
+        val ids = (0 until qs.length()).mapNotNull { qs.optJSONObject(it) }
+            .filter { it.optBoolean("is_answered") }.map { it.optLong("question_id") }.take(4)
+        if (ids.isEmpty()) return null
+        val titles = (0 until qs.length()).mapNotNull { qs.optJSONObject(it) }
+            .associate { it.optLong("question_id") to xmlUnescape(it.optString("title")) }
+        val ans = httpGetJsonGz("https://api.stackexchange.com/2.3/questions/${ids.joinToString(";")}/answers" +
+                     "?order=desc&sort=votes&site=stackoverflow&filter=withbody&pagesize=8") ?: return null
+        val items = ans.optJSONArray("items") ?: return null
+        val sb = StringBuilder(); val links = mutableListOf<String>()
+        for (i in 0 until items.length()) {
+            val a = items.optJSONObject(i) ?: continue
+            if (a.optInt("score") < 1 && !a.optBoolean("is_accepted")) continue
+                        val blocks = Regex("<pre[^>]*><code[^>]*>(.*?)</code></pre>", RegexOption.DOT_MATCHES_ALL)
+                .findAll(a.optString("body")).map { xmlUnescape(it.groupValues[1].replace(Regex("<[^>]+>"), "")) }
+                .filter { it.lines().size >= 3 }.take(2).toList()
+            if (blocks.isEmpty()) continue
+            val link = "https://stackoverflow.com/a/${a.optLong("answer_id")}"
+            val piece = "[Ejemplo de Stack Overflow — «${titles[a.optLong("question_id")] ?: ""}» — $link]\n" +
+                blocks.joinToString("\n") { "```\n${it.trim().take(1800)}\n```" } + "\n\n"
+            if (sb.length + piece.length > maxChars) break
+            sb.append(piece); links += link
+        }
+        return if (sb.isEmpty()) null else sb.toString() to links
+    }
+
+    /** Convierte el pedido en una búsqueda corta en inglés (Stack Overflow responde mucho mejor en inglés). */
+    private fun englishCodeQuery(request: String, backend: String): String {
+        val q = runCatching {
+            removeThinking(rawGenerate("You turn programming requests into short English search queries.",
+                "Request: «${request.take(400)}»\nWrite ONLY a short English search query (max 8 words) to find example code " +
+                    "on Stack Overflow (include the language/platform, e.g. android kotlin). No quotes, no explanation.", 40, getSavedBackend()))
+        }.getOrDefault("")
+        val line = q.lines().firstOrNull { it.isNotBlank() }.orEmpty().replace(Regex("[\"«»`*]"), "").trim()
+        return if (line.length in 4..120) line else request.take(120)
+    }
+
+    /** Limpia la memoria del motor y recarga el modelo activo en el mismo backend. */
+    private fun healEngine(backend: String): Boolean {
+        val model = getActiveModelFile() ?: return false
+        runCatching { nativeResetChatMemory() }
+        val ok = loadModelWithConfiguration(model, backend)
+        isModelLoadedInMemory = ok
+        runOnUiThread { updateLoadModelButton() }
+        Log.i(TAG, "🩹 Motor recargado: $ok")
+        return ok
+    }
+
+    private fun generateAiResponseOnce(
+        prompt: String,
+        backend: String,
+        attachments: List<File> = emptyList(),
+        history: List<Pair<String, String>> = emptyList()
+    ): AiReply {
+        runCatching { ensureActiveModelConfig() }.onFailure { Log.w(TAG, "Config del modelo: ${it.message}") }
+        pushSamplingToNative()
+        if (!triggerAutomaticModelLoadOnFirstMessage()) {
+            if (!isAutoLoadEnabled() && getActiveModelFile() != null) {
+                return AiReply(
+                    "⏸ La carga automática está desactivada.\n\n" +
+                    "Abre el panel ☰ y pulsa «Cargar modelo» para activarlo.",
+                    ""
+                )
+            }
+            return AiReply(
+                "📥 Todavía no tengo ningún modelo cargado en memoria.\n\n" +
+                "1️⃣ Descarga un modelo GGUF desde el panel ☰\n" +
+                "2️⃣ Vuelve a preguntarme: lo activaré automáticamente con tu primer mensaje.\n" +
+                "3️⃣ También puedes pulsar «Cargar modelo» manualmente.",
+                ""
+            )
+        }
+        // 🪪 Preguntas por los nombres: se responden directo con lo de Configuración (exacto e instantáneo)
+        nameAnswer(prompt)?.let { return AiReply(it, "🪪 nombre de Configuración") }
+        crashReportAnswer(prompt)?.let { return AiReply(it, "🩺 diagnóstico de la app") }
+        knowledgeCommand(prompt)?.let { return AiReply(it, "📚 conocimiento guardado") }
+        return try {
+            val activeModel = getActiveModelFile()
+            val usingLiteRt = activeModel?.extension.equals("litertlm", ignoreCase = true)
+            val rawMode = currentChatMode()
+            // Pide a la IA texto limpio: sin asteriscos ni almohadillas
+            // Fecha y hora reales del teléfono (el modelo no sabe en qué fecha estamos)
+            val now = java.text.SimpleDateFormat(
+                "EEEE d 'de' MMMM 'de' yyyy, HH:mm", Locale("es", "ES")
+            ).format(java.util.Date())
+            // Solo el día (sin hora) en las instrucciones: así no cambian cada minuto y el motor reutiliza su memoria
+            val today = java.text.SimpleDateFormat(
+                "EEEE d 'de' MMMM 'de' yyyy", Locale("es", "ES")
+            ).format(java.util.Date())
+            // Nombre de la IA y del usuario elegidos en Configuración
+            val namePrefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val aiName = namePrefs.getString("ai_name", null)?.trim().orEmpty().ifEmpty { "Cumulus" }
+            val userName = namePrefs.getString("user_name", null)?.trim().orEmpty()
+            // Tu personalidad escrita reemplaza el tono por defecto
+            val personality = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString("custom_personality", "")?.trim().orEmpty()
+            val level = thinkLevel()
+            val (thinkText, extraTokens) = thinkInstruction(level)
+            // 🧭 Opción A: instrucciones cortas y claras (rol del modo + nombre, fecha, internet, formato y tono).
+            //    Antes se mandaba una guía larga (más de 1.500 tokens) con reglas que se contradecían.
+            val modeNamed = rawMode.copy(
+                systemPrompt = buildSystemPrompt(rawMode, aiName, userName, today, personality) + "\n" + thinkText.trim(),
+                maxTokens = (rawMode.maxTokens + extraTokens).coerceAtMost(4096)
+            )
+            // 💻 Conversación de código (pedido de código o continuación de un código): respuesta larga permitida,
+            //    para que no corte el código a la mitad aunque estés en el modo General
+            val lastWasCode = history.lastOrNull { it.first == "assistant" }?.second?.contains("```") == true
+            // 🛠️ Pedido de crear una app / página, o trae código pegado como formato
+            val creation = rawMode.key != "traduccion" && rawMode.key != "general" && attachments.isEmpty() && runCatching { isCreationRequest(prompt) }.getOrDefault(false)
+            //    (en el modo General no: ahí no se programa)
+            val codeTalk = rawMode.key == "codigo" || (rawMode.key != "general" && (Regex("(?i)\\b(c[oó]digo|app|aplicaci[oó]n|funci[oó]n|clase|kotlin|java|python|html|css|javascript|script|programa|android|layout|xml)\\b").containsMatchIn(prompt) ||
+                (lastWasCode && isFollowUp(prompt)))) || creation
+            // 📷 Foto de la Cámara en vivo: respuesta corta (se lee en voz alta). Algunos modelos con visión se quedaban
+            //    repitiendo la descripción hasta 2.000-4.000 tokens y la cámara parecía congelada. El pensamiento
+            //    medio/profundo conserva su espacio extra para razonar.
+            val camShot = cameraLiveActive && attachments.any { it.name.startsWith("camara_") }
+            val mode = (if (codeTalk) modeNamed.copy(maxTokens = maxOf(modeNamed.maxTokens, 4096)) else modeNamed)
+                .let { if (camShot) it.copy(maxTokens = minOf(it.maxTokens, 512 + extraTokens)) else it }
+            // ✦ Ventana de actividad: modo y ajustes que se aplican
+            AiActivity.log("🧭 Modo ${mode.label} · pensamiento $level",
+                "Instrucciones: ${mode.systemPrompt.lines().size} líneas (≈${mode.systemPrompt.length / 4} tokens)\n" +
+                    "Historial: ${history.size} mensajes · respuesta de hasta ${mode.maxTokens} tokens")
+            if (creation) AiActivity.analyzing("🛠️ Es un pedido para crear: empiezo a programarlo" +
+                (if (hasPastedCode(prompt)) " con el código que me pasaste como base" else ""))
+            else if (codeTalk) AiActivity.analyzing("💻 Analizando el pedido de código")
+            var usedWeb = false
+            var webSource = "búsqueda web"
+            var webSourceUrls: List<String> = emptyList()
+            var webMissNote = ""   // 🙏 se agrega al mensaje si internet no encontró nada
+            var webCategory: WebSearchRules.Category? = null   // 🌐 tipo de pedido de la búsqueda (portadas, YouTube, aviso médico)
+            var webTriedCategory: WebSearchRules.Category? = null   // se buscó en internet (haya o no resultados)
+            var webResults = ""   // 🛟 lo que trajo internet (por si el modelo dice «no puedo buscar»)
+            var webPlace = ""                                      // ciudad y país usados en la búsqueda
+            var codeUpdateNote = ""                                // 🔄 «Actualización de códigos y programación» usada
+            val askedText = prompt   // lo que escribió el usuario (sin los datos que se agregan después)
+            var prompt = prompt
+            // ▶️ «ponme Bailando de Enrique» parece una continuación («ponme…»), pero es un pedido para YouTube
+            ytPrevKind = runCatching { previousYoutubeKind(history) }.getOrNull()
+            val followUp = isFollowUp(prompt) && WebSearchRules.youtubeRequest(prompt, ytPrevKind, newsCountry()) == null
+            // 🕒 Si preguntas la hora o la fecha, se usa el reloj del teléfono (exacto) y no internet
+            val asksTime = Regex("(?i)\\b(qu[eé] hora|la hora|hora es|hora actual|qu[eé] d[ií]a|fecha|qu[eé] fecha|d[ií]a es hoy|en qu[eé] a[ñn]o|qu[eé] mes)\\b")
+                .containsMatchIn(prompt)
+            val timeNow = java.text.SimpleDateFormat("HH:mm", Locale("es", "ES")).format(java.util.Date())
+            // 🧭 Opción A: la fecha ya va en las instrucciones; la hora exacta solo se agrega cuando la preguntan
+            val datePrefix = if (asksTime)
+                "(Reloj del teléfono: $now, hora $timeNow, zona ${java.util.TimeZone.getDefault().id}. Si pregunta la hora o la fecha, usa este dato exacto.)\n"
+            else ""
+            // 🌐 Modo agente: la IA decide sola qué buscar y qué páginas abrir (motor GGUF, solo texto)
+            // 📅 Pedidos diarios (noticias, clima, dólar, comida): la app trae los datos reales
+            dailyDirect = null
+            dailyDirectHeadlines = emptyList()
+            // 📰 «Más detalles de la 3» justo después de una lista de noticias: se busca ESA noticia (no una lista nueva)
+            val lastAssistantEarly = history.lastOrNull { it.first == "assistant" }?.second
+            val newsItem = if (!creation && mode.key != "traduccion" && mode.key != "codigo" && attachments.isEmpty())
+                runCatching { newsItemAsked(prompt, lastAssistantEarly) }.getOrNull() else null
+            // 🌤️ «¿Y mañana?» justo después del clima: el clima de esa misma ciudad
+            val weatherCity = if (!creation && newsItem == null && !asksTime && mode.key != "traduccion" && mode.key != "codigo" && attachments.isEmpty() && isInternetEnabled())
+                lastAssistantEarly?.let { Regex("^🌤️ Clima en ([^\\n,]+)").find(it.trim())?.groupValues?.get(1)?.trim() }
+                    ?.takeIf {
+                        val startsY = rxAny(prompt, "^\\s*¿?\\s*(y|e|para|qu[eé] tal)\\b")
+                        val dayWord = rxAny(prompt, "ma[ñn]ana", "pasado", "semana", "lunes", "martes", "mi[eé]rcoles", "jueves",
+                            "viernes", "s[aá]bado", "domingo", "\\bhoy\\b", "tarde", "noche")
+                        val weatherWord = rxAny(prompt, "llov", "lluvia", "fr[ií]o", "calor", "temperatura", "grados", "nublado")
+                        val cityChange = rxAny(prompt, "^\\s*¿?\\s*y\\s+(en|para)\\s+\\p{L}")
+                        prompt.trim().split(Regex("\\s+")).size <= 8 && (cityChange || (startsY && dayWord) || weatherWord)
+                    }
+                else null
+            if (newsItem != null) AiActivity.analyzing("📰 Me pides más de una noticia de la lista", newsItem)
+            if (weatherCity != null) AiActivity.analyzing("🌤️ Sigo con el clima de $weatherCity")
+            val dailyData = when {
+                newsItem != null -> null
+                weatherCity != null -> runCatching { weatherContext("$prompt en $weatherCity") }.getOrNull()
+                // 🌍 «Búscalo por internet» justo después de otra pregunta: también se busca (antes se tomaba como «sigue»)
+                (!followUp || runCatching { WebSearchRules.internetSearch(prompt) != null }.getOrDefault(false)) &&
+                    !asksTime && prompt.isNotBlank() && mode.key != "traduccion" ->
+                    // 🛠️ Pedido de crear (o modo código): solo «actualízate en…» y «busca en internet…»; nunca noticias,
+                    //    clima, divisas ni comida (antes «créame una app de noticias» entregaba las noticias de hoy)
+                    runCatching { dailyIntentContext(prompt, codeOnly = creation || mode.key == "codigo",
+                        prevUser = history.lastOrNull { it.first == "user" && it.second.trim() != prompt.trim() }?.second) }.getOrNull()
+                else -> null
+            }
+            if (dailyData != null) {
+                webSource = when {
+                    dailyData.startsWith("Noticias") -> "Google Noticias"
+                    dailyData.startsWith("Clima") -> "Open-Meteo (clima)"
+                    dailyData.startsWith("Tipo de cambio") -> "open.er-api.com (divisas)"
+                    dailyData.startsWith("Resultados de internet") -> "búsqueda web (DuckDuckGo)"
+                    dailyData.startsWith("Videos de YouTube") -> "YouTube"
+                    dailyData.startsWith("Locales para comer") -> "OpenStreetMap (locales) · Bing (fotos)"
+                    else -> ""
+                }
+                if (webSource.isNotEmpty()) usedWeb = true
+                if (dailyData.startsWith("Resultados de internet obtenidos")) webCategory = lastExplicitWebCategory
+                if (dailyData.startsWith("Instrucción: el usuario pidió buscar")) {
+                    webTriedCategory = lastExplicitWebCategory
+                    webPlace = lastSearchPlace.ifBlank { cachedWebPlace?.second.orEmpty() }
+                }
+                // 📋 Opción B: noticias, clima y divisas → la APP arma la respuesta con los datos EXACTOS.
+                //    La IA no los reescribe (así no repite, no mezcla ni inventa); solo agrega un resumen corto a las noticias.
+                val direct = dailyDirect
+                if (direct != null && attachments.isEmpty()) {
+                    dailyDirect = null
+                    AiActivity.log("📋 Armo la respuesta con los datos exactos (la IA no los cambia)")
+                    val summary = if (dailyData.startsWith("Noticias") && !stopRequested) {
+                        AiActivity.log("✍️ La IA escribe un resumen corto de los titulares")
+                        newsSummary(dailyDirectHeadlines, backend)
+                    } else null
+                    // ▶️ Noticias: igual que siempre (con sus fotos) y al final el enlace para verlas en YouTube
+                    val newsYt = if (dailyData.startsWith("Noticias")) runCatching { "\n\n▶️ " + (if (runCatching { WebSearchRules.replyLanguage(askedText, newsCountry()) }.getOrDefault("es") == "es") "Ver estas noticias en YouTube" else "YouTube") + ": " + newsYoutubeLink(askedText) }.getOrDefault("") else ""
+                    return AiReply(
+                        (if (summary != null) "🗞️ En resumen: $summary\n\n" else "") + direct + newsYt,
+                        "📋 Datos exactos armados por la app" + (if (summary != null) " · ✍️ resumen corto de la IA" else "") +
+                            "\n🌐 Datos de: $webSource"
+                    )
+                }
+                prompt = "$dailyData\n\nPregunta del usuario: $prompt"
+            }
+            if (newsItem != null) {
+                val title = newsItem.replace(Regex("\\s*\\([^)]*\\)\\s*$"), "").trim()
+                val web = if (isInternetEnabled()) runCatching { fetchWebContext(title) }.getOrNull() else null
+                prompt = if (web != null) {
+                    usedWeb = true
+                    webSource = "búsqueda web (detalle de la noticia)"
+                    webSourceUrls = Regex("Fuente: (https?://\\S+)").findAll(web).map { it.groupValues[1] }.distinct().take(4).toList()
+                    "Resultados de internet sobre la noticia «$newsItem»:\n\n$web\n\n" +
+                        "Con SOLO estos resultados responde: «$prompt». Cuenta qué pasó, dónde, cuándo y quiénes. " + DELIVER_DATA_RULE
+                } else "$prompt\n\n(Se refiere a la noticia «$newsItem». Solo tienes el titular: no inventes detalles.)"
+            }
+            // 🌐 Igual que LLM Hub: la APP busca siempre en internet y le entrega los resultados al modelo.
+            //    (El "modo agente", donde el modelo decide qué buscar, queda desactivado: los modelos
+            //     pequeños se equivocaban al usar las herramientas y terminaban inventando.)
+            // 🌐😄 «Quiero un chiste (o una paya) de internet»: se busca en internet en cualquier modo
+            val internetJoke = mode.key != "codigo" && humorJokeAsk(prompt) &&
+                (JokeBank.wantsInternet(prompt) || runCatching { WebSearchRules.wantsHumorFromInternet(prompt) }.getOrDefault(false))
+            val agentWeb = WEB_AGENT_MODE && isInternetEnabled() && prompt.isNotBlank() && !asksTime && dailyData == null &&
+                mode.key != "traduccion" &&
+                attachments.none { val k = attachmentKind(it); k == AttachKind.IMAGE || k == AttachKind.AUDIO || k == AttachKind.VIDEO }
+            if (!agentWeb && dailyData == null && newsItem == null && !creation && isInternetEnabled() && prompt.isNotBlank() && mode.key != "traduccion" &&
+                !asksTime && attachments.isEmpty() &&
+                // 😄 Modo humor: con internet encendido, los chistes y payas también se buscan en internet
+                //    («otro» sigue con los que sabe la IA); lo demás, solo si lo pides (busca, noticias, clima, hoy…)
+                (internetJoke || (if (mode.key == "humor") (humorJokeAsk(prompt) && !followUp) ||
+                    (needsWebSearch(prompt) && Regex("(?iu)b[uú]sca|internet|google|noticia|clima|precio|hoy|actual|horario|d[oó]nde").containsMatchIn(prompt))
+                else needsWebSearch(prompt)))) {   // con archivos adjuntos se responde sobre el archivo, sin buscar
+                // En modo código se busca en documentación y foros de programación
+                val webQuery = if (mode.key == "codigo") {
+                    // Solo la pregunta (sin el código pegado) + sitios de programación
+                    val question = prompt.replace(Regex("```.*?```", RegexOption.DOT_MATCHES_ALL), " ")
+                        .lines().firstOrNull { it.isNotBlank() }.orEmpty().take(160)
+                    "$question (documentación OR stackoverflow OR github)"
+                } else if ((mode.key == "humor" && humorJokeAsk(prompt)) || internetJoke) humorSearchQuery(prompt)
+                else cleanSearchQuery(prompt)
+                // 🌐 Reglas de búsqueda: tipo de pedido (31 categorías), fecha, ubicación e idioma (como las noticias)
+                val cat = if (mode.key == "codigo" || (mode.key == "humor" && humorJokeAsk(prompt)) || internetJoke) null else WebSearchRules.detect(prompt)
+                // 📍 Tu ubicación exacta para TODOS los tipos de búsqueda (menos YouTube), o la comuna que nombres
+                val place = if (cat != null) runCatching { searchPlace(cat, prompt) }.getOrDefault("") else ""
+                val rules = if (cat != null) webRulesBlock(cat, place, prompt) else ""
+                val finalQuery = if (cat != null)
+                    WebSearchRules.searchQuery(cat, webQuery, place, java.util.Calendar.getInstance().get(java.util.Calendar.YEAR), newsCountry())
+                else webQuery
+                AiActivity.analyzing()
+                if (cat != null) AiActivity.log("🧭 Tipo de búsqueda: ${cat.title}", "Busco: «$finalQuery»" + (if (place.isNotBlank()) "\n📍 $place" else ""))
+                webTriedCategory = cat
+                webPlace = place
+                // 🔗 Temas de páginas (cine, buses, vuelos, delivery, maquillaje, vacaciones…): solo los enlaces a las páginas,
+                //    sin horarios, precios ni datos. Noticias, clima, YouTube, chistes y código siguen igual que antes.
+                if (cat != null && mode.key != "humor" && mode.key != "codigo" && !stopRequested &&
+                    runCatching { WebSearchRules.linksOnly(cat, askedText) }.getOrDefault(false)) {
+                    val links = runCatching { WebSearchRules.linksOnlyReply(cat, askedText, place, newsCountry()) }.getOrDefault("")
+                    if (links.isNotBlank()) {
+                        AiActivity.log("🔗 Entrego solo los enlaces a las páginas de ${cat.title}")
+                        return AiReply(links, "🔗 Enlaces a las páginas · sin horarios ni precios")
+                    }
+                }
+                // ✈️ «Vuelos horarios y pasajes» sin decir a dónde: se pregunta el destino (antes la IA copiaba el formato)
+                if (cat == WebSearchRules.VUELOS && !stopRequested && runCatching {
+                        WebSearchRules.travelDestination(askedText) == null && !WebSearchRules.isFlightStatus(askedText) &&
+                            !Regex("(?iu)oferta|promoci|barat|econ[oó]mic|descuento|cyber|black").containsMatchIn(askedText) &&
+                            !Regex("(?iu)\\b(?:a|al|hacia|para|desde|de)\\s+\\p{Lu}").containsMatchIn(askedText)
+                    }.getOrDefault(false)) {
+                    val city = place.substringBefore(',').trim()
+                    val link = "https://www.google.com/travel/flights?q=" + java.net.URLEncoder.encode("vuelos" + (if (city.isNotBlank()) " desde $city" else ""), "UTF-8")
+                    return AiReply("✈️ ¿A dónde quieres viajar? Dime el destino (y si quieres, la fecha y desde dónde sales) y te busco " +
+                        "los vuelos con horarios y precios.\n\nEjemplos:\n• «vuelos a Puerto Montt el 20 de octubre»\n" +
+                        "• «pasajes de Concepción a Santiago»\n• «estado del vuelo LA 123»\n\n" +
+                        "🔎 Ver todos los vuelos" + (if (city.isNotBlank()) " desde $city" else "") + " en Google Vuelos: $link",
+                        "✈️ Falta el destino del vuelo")
+                }
+                // 😄 Chistes de internet: menos texto de páginas (con contexto 2048 no cabía todo y el motor se cerraba)
+                val webReserve = rules.length + (if (internetJoke || mode.key == "humor") 1400 else 0)
+                // 😄 Chistes y payas de internet: en páginas de chistes (no en noticias ni en páginas de otros temas)
+                val humorSearch = internetJoke || (mode.key == "humor" && humorJokeAsk(prompt))
+                val web = fetchWebContext(finalQuery, reserveChars = webReserve, cat = cat, humor = humorSearch, code = mode.key == "codigo")
+                    // 🔁 Sin resultados: se prueba solo con el tema («UAPs», «inteligencia artificial»)
+                    ?: run {
+                        val core = runCatching { WebSearchRules.knowledgeTopic(askedText) ?: GeneralFinder.wikiTerm(WebSearchRules.stripRequestWords(askedText)) }.getOrDefault("")
+                        if (stopRequested || core.length < 3 || core.equals(finalQuery, ignoreCase = true)) null else {
+                            AiActivity.log("🔁 Internet no trajo nada: pruebo solo con el tema", "«$core»")
+                            fetchWebContext(core, reserveChars = webReserve, cat = cat, humor = humorSearch, code = mode.key == "codigo")
+                        }
+                    }
+                    // 📖 Y si tampoco: el resumen de Wikipedia (temas que no cambian: ciencia, historia, tecnología…)
+                    ?: if (stopRequested || internetJoke || (cat != null && cat in WebSearchRules.CURRENT)) null else runCatching { wikiAsWebData(askedText) }.getOrNull()
+                // 🌐😄 Pidió un chiste de internet y no llegó nada: se dice y va uno de la colección (la IA no inventa)
+                if (web == null && internetJoke && !stopRequested) {
+                    val local = runCatching { jokeReply(askedText.replace(Regex("(?iu)(?:de|en|por|desde|con)\\s+(?:el\\s+)?internet|de la web|de google|en google"), " "), emptyList()) }.getOrNull()
+                    return AiReply("🌐 Busqué chistes en internet, pero ahora no encontré ninguno que sirva." +
+                        (if (local != null) " Te cuento uno de mi colección:\n\n" + local.text else " Prueba de nuevo en un momento 😄"),
+                        "🌐 Internet no trajo chistes · 😄 de la colección")
+                }
+                if (web == null) {
+                    AiActivity.log("🌐 Internet no trajo nada útil: respondo con lo que sé")
+                    // 🙏 Se le avisa a la IA: si tampoco lo sabe, se disculpa y explica que la búsqueda no encontró nada
+                    webMissNote = "\n\n(Nota: la app buscó en internet y no encontró resultados útiles. Responde con lo que sabes; " +
+                        "si no lo sabes con seguridad, pide disculpas y explica que no encontraste información en internet.)"
+                    // 🛑 Cartelera, precios, horarios, estrenos…: sin resultados reales la IA inventaba títulos y fechas
+                    //    (ej. «The Matrix Resurrections, estrenada hoy»). En esos casos responde la app, sin inventar nada.
+                    if (cat != null && !stopRequested && (cat in WebSearchRules.CURRENT || WebSearchRules.asksCurrent(prompt))) {
+                        AiActivity.log("🛑 Internet no trajo datos actuales: no dejo que la IA los invente")
+                        val links = runCatching { WebSearchRules.serviceLinks(cat, askedText, place, failed = true) }.getOrDefault(emptyList())
+                        // 📋 Los datos reales que la app saca del mapa (cines, paraderos y líneas, hoteles, tiendas con horario,
+                        //    avisos, concesionarias, destinos) se muestran igual: lo primero es que veas la información en pantalla
+                        val appData = if (stopRequested) "" else appDataBlock(cat, askedText, place)
+                        val sb = StringBuilder()
+                        if (appData.isNotBlank()) sb.append("🌐 Internet no trajo resultados ahora, pero aquí tienes los datos reales que encontré:\n\n")
+                            .append(appData)
+                        else sb.append("🌐 Busqué en internet, pero ahora no llegaron resultados sobre esto. ")
+                            .append("Como es información que cambia (fechas, precios, cartelera, horarios…), prefiero no adivinar ")
+                            .append("para no darte datos falsos. Prueba de nuevo en un momento.")
+                        if (links.isNotEmpty()) sb.append("\n\n").append(links.joinToString("\n") { "🔎 ${it.first}: ${it.second}" })
+                        return AiReply(sb.toString(), "🌐 Busqué en internet, pero no llegaron resultados · 🛑 sin datos inventados")
+                    }
+                }
+                if (web != null) {
+                    usedWeb = true
+                    webSource = "búsqueda web"
+                    webResults = web
+                    webSourceUrls = Regex("Fuente: (https?://\\S+)").findAll(web).map { it.groupValues[1] }.distinct().take(4).toList()
+                    val question = prompt
+                    webCategory = cat
+                    // 🧭 Opción A: una sola instrucción clara (antes eran 7 reglas repetidas)
+                    //    + 🌐 las reglas de esta categoría (fecha, ubicación, idioma, qué entregar y formato)
+                    prompt = if ((mode.key == "humor" && humorJokeAsk(question)) || internetJoke)
+                        // 😄 Chistes de internet: elige los buenos y los cuenta con su estilo (si no sirven, cuenta los suyos)
+                        "Chistes encontrados ahora en internet:\n\n$web\n\n" +
+                            "Pedido: «$question». Elige de estos resultados 1 a 3 chistes (o la paya) que sean buenos, sanos y para todo " +
+                            "público, y que no hayas contado antes en esta conversación. Cuéntalos con tu estilo alegre; puedes ajustar las " +
+                            "palabras para que el remate se entienda. Si los resultados no traen chistes que sirvan, cuenta uno tuyo del mismo tipo. " +
+                            "Cuéntalos en el mismo idioma en que te los pidieron."
+                    else "Resultados de internet de ahora mismo:\n\n$web\n\n" +
+                        (if (rules.isNotEmpty()) "$rules\n\n" else "") +
+                        "Con SOLO estos resultados responde: «$question». Primero la respuesta directa y luego los detalles " +
+                        "importantes; usa fechas, cifras y nombres tal cual aparecen. " + DELIVER_DATA_RULE
+                }
+            }
+            // 🧱 Modo código: la app le recuerda a la IA el proyecto que van armando (archivos, pantallas, botones con lógica),
+            //    para que siga la MISMA app aunque el chat sea largo y el modelo tenga poca memoria (no si pide una app nueva)
+            if (mode.key == "codigo" && !usedWeb && attachments.isEmpty() && !askedText.contains("```") &&
+                !Regex("(?iu)\\b(cr[eé]a|haz|hazme|genera|programa)(me)?\\s+(una|un|otra|otro)\\s+(nueva\\s+|nuevo\\s+)?(app|aplicaci|juego|p[aá]gina|programa)").containsMatchIn(askedText))
+                runCatching { PreviewPanel.projectOutline(history.filter { it.first == "assistant" }.map { it.second }.asReversed()) }.getOrNull()
+                    ?.let { prompt = "$it\n\n$prompt" }
+            // 🔄 Actualización de códigos y programación (interruptor del ➕ + Internet + modo Ingeniero de código):
+            //    las versiones de hoy y la documentación al día van junto al pedido
+            if (mode.key == "codigo" && attachments.isEmpty() && !stopRequested)
+                runCatching { codeUpdatesContext(askedText) }.getOrNull()?.let {
+                    prompt = "$it\n\n$prompt"
+                    codeUpdateNote = "\n🔄 Código al día: versiones y documentación de internet"
+                }
+            // 🕒 Día, fecha, hora y año en CADA respuesta con datos de la app o de internet (si aún no vienen)
+            if ((usedWeb || dailyData != null || newsItem != null) && !prompt.contains("[CONTEXTO EN TIEMPO REAL]") && !prompt.contains("[AHORA]"))
+                prompt = "[AHORA] ${webNowText()}. Lo que entregues es para este momento.\n\n$prompt"
+            // 🧹 Igual que LLM Hub: cuando la respuesta usa datos de internet, se responde en un contexto limpio
+            //    (sin la conversación anterior), para que el modelo no mezcle respuestas viejas con los datos nuevos
+            // 🧵 Con datos de internet ya no se borra TODO: se conserva el último intercambio para no perder el hilo
+            val history = if (internetJoke && usedWeb) emptyList()   // 😄 chiste de internet: sin el chat, para que no copie los anteriores
+                else if (usedWeb && dailyData?.startsWith("Contexto:") != true) history.takeLast(2) else history
+            // Separa los adjuntos por tipo
+            val textFiles = attachments.filter { attachmentKind(it) == AttachKind.TEXT }
+            // ✦ Archivos que la IA va a analizar (ventana de actividad)
+            attachments.filter { attachmentKind(it) == AttachKind.IMAGE }.let { imgs ->
+                if (imgs.isNotEmpty()) AiActivity.analyzing("🖼️ Mirando ${imgs.size} imagen(es)", imgs.joinToString("\n") { it.name.substringAfter('_') })
+            }
+            textFiles.forEach {
+                val what = if (isArchiveFile(it)) "📦 Abriendo el comprimido" else "📄 Leyendo el archivo"
+                AiActivity.analyzing("$what «${it.name.substringAfter('_')}»", "${(it.length() + 1023) / 1024} KB")
+            }
+            if (attachments.any { attachmentKind(it) == AttachKind.VIDEO }) AiActivity.analyzing("🎬 Sacando cuadros del video para mirarlo")
+            // 🎬 Videos: se sacan cuadros repartidos en el tiempo y la IA los ve como imágenes en orden
+            val videoInfo = StringBuilder()
+            val videoFrames = attachments.filter { attachmentKind(it) == AttachKind.VIDEO }.flatMap { v ->
+                val (frames, desc) = extractVideoFrames(v)
+                if (frames.isNotEmpty()) videoInfo.append(desc).append('\n')
+                frames
+            }
+            val mediaFiles = attachments.filter { attachmentKind(it) == AttachKind.AUDIO } +
+                // 🖼️ Toda imagen (WEBP, HEIC, AVIF, RAW, GIF...) se convierte a JPG para que el motor la lea siempre bien
+                attachments.filter { attachmentKind(it) == AttachKind.IMAGE }.map { normalizeImageForModel(it) } +
+                videoFrames
+            val unsupported = attachments.filter {
+                val k = attachmentKind(it)
+                k == AttachKind.OTHER || (k == AttachKind.VIDEO && videoFrames.isEmpty())
+            }
+            // Archivos de texto/código: se leen y van dentro del mensaje
+            var fullPrompt = if (videoInfo.isNotEmpty())
+                videoInfo.toString() + "Mira los cuadros en orden como si fuera el video y responde: " +
+                    prompt.ifBlank { "¿Qué pasa en este video? Descríbelo de principio a fin." }
+            else prompt + webMissNote
+            if (textFiles.isNotEmpty()) {
+                // Cuánto texto de archivos cabe según el CONTEXTO elegido
+                val ctxTokens = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getInt("ai_context", 2048).coerceIn(2048, 15000)
+                val totalChars = ((ctxTokens - 1200) * 2.5).toInt().coerceIn(4000, 70000)
+                val perFile = (totalChars / textFiles.size).coerceAtLeast(800)
+                val joined = textFiles.joinToString("\n\n") { f ->
+                    val content = readAttachmentText(f, perFile).take(perFile)
+                    "Archivo adjunto «${f.name.substringAfter('_')}»:\n```\n$content\n```"
+                }
+                fullPrompt = joined + "\n\n" + prompt.ifBlank {
+                    if (textFiles.size > 1) "Analiza estos archivos." else "Analiza este archivo."
+                }
+            }
+            if (videoFrames.isNotEmpty()) AiActivity.log("🎞️ ${videoFrames.size} cuadros del video listos")
+            if (unsupported.isNotEmpty()) AiActivity.log("⚠️ ${unsupported.size} adjunto(s) que todavía no puedo leer",
+                unsupported.joinToString("\n") { it.name.substringAfter('_') })
+            val unsupportedNote = if (unsupported.isNotEmpty()) {
+                "\n\n⚠️ No pude leer ${unsupported.size} adjunto(s) (videos u otros formatos todavía no son compatibles)."
+            } else ""
+
+            val hasText = fullPrompt.isNotBlank()
+            // 🧭 Opción A: el mensaje va limpio. Ya no se pegan notas entre corchetes ([Dato interno…], [Modo activo…],
+            //    [Regla…]): nombre, fecha, modo e internet ya están en las instrucciones cortas del sistema.
+            //    Solo se agrega lo que de verdad sirve: la hora exacta si la preguntas y tus notas aprendidas del tema.
+            val learned = if (pendingLearnTopic == null) knowledgeFor(prompt) else ""
+            if (learned.isNotBlank()) AiActivity.log("📚 Uso las notas que aprendiste de internet sobre este tema")
+            fullPrompt = datePrefix + learned + fullPrompt
+            // 🧵 Continuación: «ok expándelo», «agrégale la lógica»… La conversación va con sus ROLES reales
+            //    (usuario / asistente), así que la respuesta anterior ya está en el historial: no se vuelve a pegar
+            //    (antes se pegaba dos veces y llenaba el contexto). Solo se agrega un recordatorio corto al final.
+            val lastAssistant = history.lastOrNull { it.first == "assistant" }?.second
+            val lastUserMsg = history.lastOrNull { it.first == "user" }?.second
+            // 🧩 ENTREGA POR PARTES: «créame una app … dámela por partes» → Parte 1, luego «siguiente» → Parte 2…
+            val partsRegex = Regex("(?i)(por partes|en partes|parte por parte|por etapas|paso a paso|de a poco|dividid[oa])")
+            val partsHere = partsRegex.containsMatchIn(prompt)
+            val partsIdx = history.indexOfLast { it.first == "user" && partsRegex.containsMatchIn(it.second) }
+            val partsOngoing = !partsHere && newsItem == null && partsIdx >= 0 && (followUp ||
+                Regex("(?i)\\b(siguiente|pr[oó]xim[ao]|sigue|contin[uú]a|parte\\s*\\d+|la que sigue|otra parte|m[aá]s)\\b").containsMatchIn(prompt))
+            if (partsHere) {
+                fullPrompt += "\n\n(Entrégalo por partes: primero un plan corto con 4 a 6 partes numeradas y luego SOLO la «Parte 1» " +
+                    "completa. Al final di qué trae la Parte 2 y que escriba «siguiente» para continuar.)"
+            } else if (partsOngoing) {
+                val original = history[partsIdx].second.take(400)
+                val delivered = history.drop(partsIdx + 1).count { it.first == "assistant" }.coerceAtLeast(1)
+                fullPrompt += "\n\n(Entrega por partes del pedido «$original»: ya entregaste $delivered. Ahora entrega SOLO la " +
+                    "«Parte ${delivered + 1}», nueva y conectada con lo anterior, empezando con «Parte ${delivered + 1}:». " +
+                    "Si ya está todo, dilo y explica cómo unir las partes.)"
+            }
+            // 🛠️ Pedido para CREAR: que empiece de inmediato y entregue todo (no preguntas, no «versión básica»)
+            if (creation && !followUp && !partsOngoing) {
+                fullPrompt += "\n\n(Es un pedido para CREAR: empieza ya y entrega el código completo y funcional, sin preguntar y sin «versión básica»." +
+                    (if (hasPastedCode(askedText)) " Usa el código que te pasó el usuario como base y respeta su formato." else "") + ")"
+            }
+            // 🖥️/📱 App web o Android: código completo y separado por archivo, para verlo en la vista previa o la maqueta
+            if (codeTalk && attachments.isEmpty() && !partsOngoing) when (runCatching { codePreviewKind(askedText, lastAssistant) }.getOrNull()) {
+                "web" -> fullPrompt += "\n\n(Entrega el código COMPLETO y funcional, cada archivo en su propio bloque: index.html, style.css y script.js. " +
+                    "Se va a probar en la vista previa web.)"
+                "app" -> fullPrompt += "\n\n(Además del código Kotlin, incluye el diseño XML de cada pantalla (res/layout) para verlo en la maqueta de la app.)"
+            }
+            if (!partsHere && !partsOngoing && followUp && newsItem == null && !lastAssistant.isNullOrBlank()) {
+                fullPrompt += "\n\n(Sigue sobre tu respuesta anterior" +
+                    (if (!lastUserMsg.isNullOrBlank()) " al pedido «${lastUserMsg.take(200)}»" else "") +
+                    ": continúa, amplía o modifica eso mismo. Si es código, entrégalo COMPLETO y ya actualizado.)"
+            }
+            // 💻🌐 Código con internet: si pides crear/implementar algo y el internet está activado, la app busca
+            //    ejemplos reales en Stack Overflow y se los da a la IA como referencia (no reemplaza tu conversación)
+            if (codeTalk && !followUp && !usedWeb && isInternetEnabled() && attachments.isEmpty() && prompt.isNotBlank() &&
+                Regex("(?i)\\b(cr[eé]a|cr[eé]ame|haz|hazme|genera|implementa|agrega|a[ñn]ade|ejemplo|c[oó]mo (hago|se hace|puedo|hacer)|necesito|quiero|busca|usa|integra|conecta)\\b").containsMatchIn(prompt)) {
+                projectProgress("🔎 Buscando código de referencia en internet...")
+                val ref = runCatching { fetchCodeFromInternet(englishCodeQuery(prompt, backend)) }.getOrNull()
+                AiActivity.log(if (ref != null) "📄 Encontré ${ref.second.size} ejemplo(s) de código en Stack Overflow" else "🌐 Stack Overflow no trajo ejemplos útiles",
+                    ref?.second?.take(4)?.joinToString("\n").orEmpty())
+                if (ref != null) {
+                    usedWeb = true
+                    webSource = "Stack Overflow (código de referencia)"
+                    webSourceUrls = ref.second.take(4)
+                    fullPrompt = "Código de referencia de Stack Overflow (adáptalo si sirve; si no encaja, no lo copies):\n" +
+                        ref.first + "\n" + fullPrompt
+                }
+            }
+            // ✦ Ventana de actividad: motor y ajustes con los que se escribe la respuesta
+            runCatching {
+                val p = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val engineNow = when {
+                    usingLiteRt -> LiteRtLmEngineManager.engineInfo()
+                    GenieXEngineManager.isLoaded(activeModel?.absolutePath) -> GenieXEngineManager.engineInfo()
+                    else -> runCatching { nativeEngineInfo() }.getOrDefault("💻 CPU")
+                }
+                AiActivity.log("⚙️ Motor: $engineNow",
+                    "Modelo: ${activeModel?.name ?: "—"}\n" +
+                        "Contexto: ${p.getInt("ai_context", 2048).coerceIn(2048, 15000)} · temperatura ${p.getFloat("ai_temperature", 0.7f)} · " +
+                        "respuesta de hasta ${mode.maxTokens} tokens\n" +
+                        "Tu mensaje con datos: ≈${fullPrompt.length / 4} tokens" + (if (mediaFiles.isNotEmpty()) " · ${mediaFiles.size} imagen(es)/audio(s)" else ""))
+                AiActivity.log("✍️ Escribiendo la respuesta...")
+            }
+            // 🩺 Si la app se cierra mientras mira una foto, «¿por qué se cerró la app?» dirá qué estaba haciendo
+            val lookingAt = if (usingLiteRt) null
+                else mediaFiles.firstOrNull { it.extension.lowercase() in setOf("jpg", "jpeg", "png", "webp", "bmp") }
+            if (lookingAt != null) noteVisionWork(lookingAt, activeModel, camShot)
+            // ⏹️ Detenido mientras se preparaba (búsquedas, actualización de código…): no se empieza a escribir
+            if (stopRequested) return AiReply("", "")
+            val modelRaw = if (usingLiteRt) {
+                if (mediaFiles.isNotEmpty()) {
+                    "⚠️ Las imágenes y audios solo funcionan con modelos GGUF que tengan su mmproj."
+                } else if (!hasText) {
+                    unsupportedNote.trim()
+                } else {
+                    // ⚡ LiteRT (GPU/NPU): mismo cerebro que el motor GGUF — modos, memoria, internet con agente
+                    val sysText = mode.systemPrompt +
+                        (if (agentWeb) agentToolInstructions(mode.key == "codigo") else "")
+                    val liteGen: (List<String>, List<String>) -> String = { rl, ct ->
+                        // 🧵 Opción A: conversación con ROLES NATIVOS (sistema / usuario / modelo), igual que CPU y GenieX
+                        (runCatching { runBlocking { LiteRtLmEngineManager.generateChat(sysText, rl, ct) } }.getOrElse { e ->
+                            Log.w(TAG, "LiteRT con roles nativos falló (${e.message}); uso el formato de texto")
+                            val conv = StringBuilder()
+                            conv.append("[Instrucciones del sistema: ").append(sysText).append("]\n\n")
+                            val n = rl.size
+                            if (n > 1) conv.append("[Conversación hasta ahora]\n")
+                            for (i in 0 until n) {
+                                if (i == n - 1 && rl[i] == "user") {
+                                    if (n > 1) conv.append("\n[Mensaje actual del usuario]\n")
+                                    conv.append(ct[i])
+                                } else {
+                                    conv.append(if (rl[i] == "user") "Usuario: " else "Asistente: ")
+                                        .append(ct[i]).append("\n")
+                                }
+                            }
+                            runBlocking { LiteRtLmEngineManager.generateFresh(conv.toString()) }
+                        }).also { AiActivity.live(it) }   // 👁️ LiteRT no escribe en vivo: se muestra al terminar
+                    }
+                    val trimmed = trimHistory(history, historyCharBudget() - fullPrompt.length)
+                    val rl = (trimmed.map { it.first } + "user").toMutableList()
+                    val ct = (trimmed.map { it.second } + fullPrompt).toMutableList()
+                    if (agentWeb) {
+                        val (answer, actions) = runWebAgent(rl, ct, prompt, liteGen)
+                        if (actions > 0) usedWeb = true
+                        answer + unsupportedNote
+                    } else {
+                        liteGen(rl, ct) + unsupportedNote
+                    }
+                }
+            } else {
+                cpuSetChatMode(
+                    if (agentWeb) mode.systemPrompt + agentToolInstructions(mode.key == "codigo") else mode.systemPrompt,
+                    mode.maxTokens
+                )
+                val usingGenieX = GenieXEngineManager.isLoaded(activeModel?.absolutePath)
+                when {
+                    // ⚡ GenieX (GGUF en NPU/GPU): mismo cerebro — modos, memoria, internet con agente
+                    // 👁️ Visión en NPU/GPU (modelo cargado con su mmproj): fotos, cuadros de video y cámara
+                    usingGenieX && mediaFiles.isNotEmpty() && GenieXEngineManager.hasVision() &&
+                        mediaFiles.any { it.extension.lowercase() in setOf("jpg", "jpeg", "png", "webp", "bmp") } -> {
+                        val imgs = mediaFiles.filter { it.extension.lowercase() in setOf("jpg", "jpeg", "png", "webp", "bmp") }
+                        val temp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getFloat("ai_temperature", 0.7f)
+                        // 🎙️ Si además hay audios, van como texto (transcripción) junto a las imágenes
+                        val auds = mediaFiles.filter { it.extension.lowercase() in AUDIO_EXTS }
+                        val heard = if (auds.isNotEmpty()) audiosToText(auds) else ""
+                        // 🛡️ Que el texto + las fotos + la respuesta quepan en el contexto (si no, el motor NPU/GPU se cierra)
+                        val imgChars = imgs.size * 1800   // ~600 tokens por foto
+                        val visAsk = fitToContext(fullPrompt.ifBlank { "Describe la imagen." } + heard, mode.systemPrompt.length + imgChars)
+                        val visMax = safeMaxTokens(mode.systemPrompt.length + imgChars + visAsk.length, mode.maxTokens)
+                        runBlocking {
+                            GenieXEngineManager.generateWithImages(mode.systemPrompt, visAsk,
+                                imgs.map { it.absolutePath }, visMax, temp)
+                        } + unsupportedNote
+                    }
+                    // 🎙️ Audios en NPU/GPU: se transcriben y el modelo responde sobre el texto
+                    usingGenieX && mediaFiles.isNotEmpty() &&
+                        mediaFiles.any { it.extension.lowercase() in AUDIO_EXTS } -> {
+                        val auds = mediaFiles.filter { it.extension.lowercase() in AUDIO_EXTS }
+                        val heard = audiosToText(auds)
+                        val temp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getFloat("ai_temperature", 0.7f)
+                        val ask = fullPrompt.ifBlank { "Resume y responde a lo que se dice en el audio." } + heard
+                        val imgNote = if (auds.size < mediaFiles.size)
+                            "\n\n⚠️ Para ver imágenes en NPU/GPU elige el mmproj del modelo (☰ → botón mmproj) y vuelve a cargar el modelo." else ""
+                        // 🛡️ Un audio largo no puede pasarse del contexto (si no, el motor NPU/GPU se cierra)
+                        val audAsk = fitToContext(ask, mode.systemPrompt.length)
+                        val audMax = safeMaxTokens(mode.systemPrompt.length + audAsk.length, mode.maxTokens)
+                        runBlocking { GenieXEngineManager.generate(mode.systemPrompt, listOf("user"), listOf(audAsk), audMax, temp) } +
+                            imgNote + unsupportedNote
+                    }
+                    // 🎛️ El motor elegido no pudo cargar la visión de este modelo: se explica por qué.
+                    //    La app ya NO pasa las fotos a otro motor (CPU/GPU) por su cuenta: eso lo decides tú en ☰.
+                    usingGenieX && mediaFiles.isNotEmpty() ->
+                        GenieXEngineManager.visionSkippedReason()?.let { "⚠️ $it" }
+                            ?: "⚠️ Para ver imágenes en NPU/GPU elige el mmproj del modelo (☰ → botón mmproj) y vuelve a cargar el modelo."
+                    usingGenieX && hasText -> {
+                        val sysText = mode.systemPrompt +
+                            (if (agentWeb) agentToolInstructions(mode.key == "codigo") else "")
+                        val temp = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getFloat("ai_temperature", 0.7f)
+                        // 🛡️ Que todo quepa en el contexto: instrucciones + chat + mensaje + respuesta.
+                        //    Si no cabe, el motor NPU/GPU se cierra (no avisa con un error): se acorta la respuesta máxima.
+                        val gxGen: (List<String>, List<String>) -> String = { rl, ct ->
+                            val gxMax = safeMaxTokens(sysText.length + ct.sumOf { it.length }, mode.maxTokens)
+                            runBlocking { GenieXEngineManager.generate(sysText, rl, ct, gxMax, temp) }
+                        }
+                        // 🛡️ El mensaje (con los datos de internet) se acorta si no cabe, y el chat anterior se ajusta
+                        //    a lo que queda libre, dejando espacio para la respuesta
+                        val gxPrompt = fitToContext(fullPrompt, sysText.length)
+                        val trimmedGx = trimHistory(history, minOf(historyCharBudget() - gxPrompt.length,
+                            contextRoomChars(sysText.length + gxPrompt.length)))
+                        val rl = (trimmedGx.map { it.first } + "user").toMutableList()
+                        val ct = (trimmedGx.map { it.second } + gxPrompt).toMutableList()
+                        if (agentWeb) {
+                            val (answer, actions) = runWebAgent(rl, ct, prompt, gxGen)
+                            if (actions > 0) usedWeb = true
+                            answer + unsupportedNote
+                        } else gxGen(rl, ct) + unsupportedNote
+                    }
+                    mediaFiles.isNotEmpty() && !nativeHasVision() ->
+                        "⚠️ Para leer imágenes o audios necesitas un modelo multimodal con su mmproj. " +
+                            "Elígelo en ☰ → botón mmproj."
+                    mediaFiles.isNotEmpty() ->
+                        nativeRunInferenceWithMediaList(
+                            fullPrompt, mediaFiles.map { it.absolutePath }.toTypedArray()
+                        ) + unsupportedNote
+                    // 🧠 Texto: se envía con el historial para que recuerde la conversación
+                    hasText -> {
+                        val budget = historyCharBudget() - fullPrompt.length
+                        val trimmed = trimHistory(history, budget)
+                        if (agentWeb) {
+                            val (answer, actions) = runWebAgent(
+                                (trimmed.map { it.first } + "user").toMutableList(),
+                                (trimmed.map { it.second } + fullPrompt).toMutableList(),
+                                prompt
+                            )
+                            if (actions > 0) usedWeb = true
+                            answer + unsupportedNote
+                        } else {
+                            cpuRunChat(
+                                (trimmed.map { it.first } + "user").toTypedArray(),
+                                (trimmed.map { it.second } + fullPrompt).toTypedArray()
+                            ) + unsupportedNote
+                        }
+                    }
+                    else -> "⚠️ Por ahora puedo leer imágenes, audios y archivos de texto o código. " +
+                        "Videos y otros archivos todavía no son compatibles."
+                }
+            }
+            if (lookingAt != null) clearVisionWork()
+            // 🛟 Si la app SÍ trajo datos de internet pero el modelo dice que no tiene acceso,
+            //    se entregan los datos directamente (el usuario nunca se queda sin su respuesta)
+            val rawBase = if (dailyData != null && usedWeb && !stopRequested &&
+                (Regex("(?i)(no tengo acceso|no puedo acceder|no tengo (la )?informaci[oó]n|no dispongo|activa(r)? (el )?internet|no puedo (darte|entregarte|ver) (las )?(noticias|el clima)|no est[aá] disponible)").containsMatchIn(modelRaw) ||
+                    modelRefusesWeb(removeThinking(modelRaw)))
+            ) dailyFallback(dailyData).also { AiActivity.log("🛟 El modelo dijo que no tenía acceso: entrego los datos directo") } else (
+                // 🛟 La app SÍ buscó en internet, pero el modelo contestó «no tengo la capacidad de buscar…»:
+                //    se entregan los resultados reales (títulos, resumen y enlace) en vez de esa disculpa
+                if (internetJoke && !stopRequested && modelRefusesWeb(removeThinking(modelRaw)))
+                    (runCatching { jokeReply(askedText.replace(Regex("(?iu)(?:de|en|por|desde|con)\\s+(?:el\\s+)?internet|de la web|de google|en google|b[uú]sca(?:me|nos|r)?"), " "), emptyList()) }.getOrNull()
+                        ?.let { "🌐 En internet no encontré un chiste que sirva ahora. Te cuento uno de mi colección:\n\n" + it.text }
+                        ?: modelRaw)
+                else if (webResults.isNotEmpty() && !stopRequested && modelRefusesWeb(removeThinking(modelRaw)))
+                    webResultsFallback(webResults, webCategory, askedText, webPlace)
+                        .also { AiActivity.log("🛟 El modelo dijo que no podía buscar: entrego lo que trajo internet") }
+                else modelRaw
+            ).let { rLooped ->
+                // 🔁 «sin dato — sin dato — sin dato…» repetido: queda una sola vez
+                val rModel = runCatching { WebSearchRules.collapseRepeats(rLooped) }.getOrDefault(rLooped)
+                // 🔍 Tarifas, precios y paraderos que NO salen en lo que trajo internet → «Sin dato (revisa el enlace)»
+                //    (antes: «Tarifa: $20» cuando la micro vale $580, y avenidas inventadas)
+                val webSrc = webResults.ifEmpty { if (usedWeb) dailyData.orEmpty() else "" }
+                val rChecked = if (webSrc.isNotBlank() && !stopRequested && !internetJoke)
+                    runCatching { WebSearchRules.verifyAgainstSource(rModel, webSrc, webCategory ?: webTriedCategory) }.getOrDefault(rModel)
+                        .also { if (it != rModel) AiActivity.log("🔍 Quité datos que no estaban en los resultados de internet") }
+                else rModel
+                // 🧹 La IA copió las instrucciones («1. Aerolínea — fecha — salida → llegada…», «Tu prioridad es entregar…»):
+                //    se quitan; si no queda nada útil, se muestran directo los resultados que trajo internet
+                val r0 = if (webSrc.isNotBlank() && !stopRequested && !internetJoke) runCatching {
+                    val clean = WebSearchRules.stripPromptEcho(rChecked, lastWebRules + "\n" + DELIVER_DATA_RULE + "\n" + ECHO_INSTRUCTIONS, askedText)
+                    when {
+                        // Casi todo «sin dato» (el modelo no supo leer los resultados): se muestran los resultados reales
+                        WebSearchRules.mostlyNoData(clean) && webResults.isNotEmpty() ->
+                            webResultsFallback(webResults, webCategory, askedText, webPlace)
+                                .also { AiActivity.log("🛟 La respuesta era casi solo «sin dato»: entrego lo que trajo internet") }
+                        clean == rChecked -> rChecked
+                        WebSearchRules.hasRealContent(clean) -> clean.also { AiActivity.log("🧹 Quité instrucciones que la IA copió en la respuesta") }
+                        webResults.isNotEmpty() -> webResultsFallback(webResults, webCategory, askedText, webPlace)
+                            .also { AiActivity.log("🧹 La IA solo copió las instrucciones: entrego lo que trajo internet") }
+                        else -> dailyFallback(dailyData.orEmpty())
+                    }
+                }.getOrDefault(rChecked) else rChecked
+                // 🎬🎵 Portadas/afiches (debajo) y enlaces de YouTube de cada título · ⚕️ aviso médico (los pone la app)
+                val cat = webCategory
+                val r = if (cat == null || !usedWeb || stopRequested) r0 else {
+                    val media = if (cat.media != null) runCatching { webMediaExtras(cat, askedText, removeThinking(r0), webResults, webPlace) }.getOrDefault("") else ""
+                    var t = r0.trimEnd()
+                    if (media.isNotEmpty()) t += "\n\n" + media
+                    t
+                }
+                // 🎟️ Cine: debajo de la cartelera, los cines más cercanos con su dirección y el enlace a su página
+                // 🧳 Viajes y vacaciones: foto de cada destino y enlaces a vuelos, hoteles, paquetes y requisitos
+                val linkCat = webCategory ?: webTriedCategory
+                val rC = when {
+                    stopRequested -> r
+                    linkCat == WebSearchRules.CINE -> {
+                        val b = runCatching { cinemaBlock(askedText) }.getOrDefault("")
+                        if (b.isBlank()) r else r.trimEnd() + "\n\n" + b
+                    }
+                    linkCat == WebSearchRules.VIAJES || linkCat == WebSearchRules.VACACIONES -> {
+                        var t = r
+                        // 🏞️ Vacaciones en un lugar concreto («qué hacer en Valdivia», «lugares turísticos cerca»): atractivos del mapa
+                        if (linkCat == WebSearchRules.VACACIONES && NearbyFinder.wantsLocalAttractions(askedText)) {
+                            val a = runCatching { attractionsBlock(askedText) }.getOrDefault("")
+                            if (a.isNotBlank()) t = t.trimEnd() + "\n\n" + a
+                        }
+                        val b = runCatching { travelBlock(askedText, if (usedWeb) removeThinking(r0) else "", webPlace) }.getOrDefault("")
+                        if (b.isBlank()) t else t.trimEnd() + "\n\n" + b
+                    }
+                    // 🏨 Hoteles: los alojamientos reales del lugar con su enlace a precios y disponibilidad
+                    linkCat == WebSearchRules.HOTELES -> {
+                        val b = runCatching { hotelsBlock(askedText) }.getOrDefault("")
+                        if (b.isBlank()) r else r.trimEnd() + "\n\n" + b
+                    }
+                    // 🚌 Buses: la línea pedida con sus paraderos, los paraderos cercanos y cómo llegar
+                    linkCat == WebSearchRules.BUSES -> {
+                        val b = runCatching { transitBlock(askedText) }.getOrDefault("")
+                        if (b.isBlank()) r else r.trimEnd() + "\n\n" + b
+                    }
+                    // 🔭 Astronomía: el cielo calculado para tu ubicación (Luna, planetas, lluvias de estrellas, eclipses) y su tarjeta
+                    linkCat == WebSearchRules.ASTRONOMIA -> {
+                        val b = runCatching { skyBlock(askedText) }.getOrDefault("")
+                        if (b.isBlank()) r else r.trimEnd() + "\n\n" + b
+                    }
+                    // ⚕️ Medicina: aviso preventivo arriba; MedlinePlus, fuentes oficiales, farmacias/urgencias y emergencias abajo
+                    linkCat == WebSearchRules.MEDICINA -> {
+                        val b = runCatching { healthBlock(askedText) }.getOrDefault("")
+                        withTopNote(r, HealthFinder.TOP_NOTE) + if (b.isBlank()) "" else "\n\n" + b
+                    }
+                    // 🔎 Consulta general: Wikipedia con foto, sitios oficiales del trámite, tutoriales de YouTube o resultados y tabla
+                    linkCat == WebSearchRules.GENERAL -> {
+                        val b = runCatching { generalBlock(askedText, webPlace) }.getOrDefault("")
+                        if (b.isBlank()) r else r.trimEnd() + "\n\n" + b
+                    }
+                    // 🏠 Arriendos: avisos con foto, portales de tu país y corredoras cerca
+                    linkCat == WebSearchRules.ARRIENDOS -> {
+                        val b = runCatching { rentBlock(askedText, webPlace) }.getOrDefault("")
+                        if (b.isBlank()) r else r.trimEnd() + "\n\n" + b
+                    }
+                    // 🚗 Vehículos: foto del modelo, avisos, portales, tasación, ficha técnica y concesionarias (o rent a car)
+                    linkCat == WebSearchRules.VEHICULOS -> {
+                        val b = runCatching { carBlock(askedText, webPlace) }.getOrDefault("")
+                        if (b.isBlank()) r else r.trimEnd() + "\n\n" + b
+                    }
+                    // 🏬🛒 Tiendas y supermercados (y ropa, belleza o tecnología si pregunta por un local): los locales reales
+                    //    cerca, con su horario de hoy y si están 🟢 abiertos o 🔴 cerrados ahora
+                    linkCat == WebSearchRules.TIENDAS || linkCat == WebSearchRules.SUPERMERCADOS ||
+                        (linkCat in setOf(WebSearchRules.VESTUARIO, WebSearchRules.MAQUILLAJE, WebSearchRules.TECNOLOGIA) &&
+                            StoreFinder.asksForStore(askedText)) -> {
+                        val b = runCatching { storesBlock(askedText, linkCat) }.getOrDefault("")
+                        if (b.isBlank()) r else r.trimEnd() + "\n\n" + b
+                    }
+                    else -> r
+                }
+                // 🔎 Enlaces para ver más (Google Vuelos, Google Hoteles, el mapa…). Si internet no trajo nada, siempre.
+                val r2 = if (linkCat == null || stopRequested) rC else {
+                    val links = runCatching { WebSearchRules.serviceLinks(linkCat, askedText, webPlace, failed = !usedWeb) }.getOrDefault(emptyList())
+                    if (links.isEmpty()) rC else rC.trimEnd() + "\n\n" + links.joinToString("\n") { "🔎 ${it.first}: ${it.second}" }
+                }
+                // ▶️ Tecnología, astronomía, medicina y reino animal: al final, el enlace para ver videos de eso en YouTube
+                val ytTopic = if (stopRequested || mode.key == "humor" || mode.key == "codigo" || !isInternetEnabled()) null
+                    else runCatching { WebSearchRules.youtubeTopicLink(linkCat ?: WebSearchRules.detect(askedText), askedText, newsCountry()) }.getOrNull()
+                val r3 = if (ytTopic == null) r2 else r2.trimEnd() + "\n\n" + ytTopic.first + ": " + ytTopic.second
+                // 📎 Fuentes reales (las pone la app, así nunca son inventadas)
+                if (webSourceUrls.isEmpty() || stopRequested) r3
+                else r3.trimEnd() + "\n\nFuentes:\n" + webSourceUrls.joinToString("\n") { "• $it" }
+            }
+            val raw = if (mode.key == "humor" && !stopRequested) runCatching { humorize(rawBase, askedText) }.getOrDefault(rawBase) else rawBase
+            val tokenCount = raw.split(" ").size
+            val gxActive = !usingLiteRt && GenieXEngineManager.isLoaded(activeModel?.absolutePath)
+            val engine = if (gxActive) GenieXEngineManager.engineInfo() else if (usingLiteRt) {
+                LiteRtLmEngineManager.engineInfo()
+            } else {
+                try { nativeEngineInfo() } catch (t: Throwable) { "💻 CPU (NEON)" }
+            }
+            AiReply(removeRepeatedLines(stripMarkdownSymbols(removeThinking(raw))), "$tokenCount tokens · $engine · 💭 $level" +
+                (if (gxActive) GenieXEngineManager.lastStats().let { if (it.isNotEmpty()) " · $it" else "" }
+                 else if (!usingLiteRt) runCatching { " · " + nativeLastStats() }.getOrDefault("")
+                 else LiteRtLmEngineManager.lastStats().let { if (it.isNotEmpty()) " · $it" else "" }) + when {
+                    usedWeb -> "\n🌐 Datos de: $webSource"
+                    // Se buscó, pero internet no trajo resultados (antes decía «no hizo falta buscar»)
+                    webTriedCategory != null -> "\n🌐 Busqué en internet, pero no llegaron resultados"
+                    // Internet encendido pero la pregunta no necesitaba buscar (ej. «hola, ¿cómo te llamas?")
+                    isInternetEnabled() -> "\n🌐 Internet activado · no hizo falta buscar"
+                    else -> "\n⚠️ Sin datos de internet"
+                } + codeUpdateNote)
+        } catch (t: Throwable) {
+            clearVisionWork()
+            Log.e(TAG, "Fallo del motor nativo: ${t.message}")
+            // Se muestra el motivo real del error (antes solo salía "RuntimeException")
+            val why = generateSequence(t) { it.cause }.mapNotNull { it.message?.takeIf { m -> m.isNotBlank() } }
+                .distinct().take(2).joinToString(" → ").take(300)
+            AiReply(ENGINE_FAIL_MARK + " (${t.javaClass.simpleName})" +
+                (if (why.isNotEmpty()) ":\n$why" else ".") +
+                "\n\nSi se repite, toca «Nuevo chat» o vuelve a cargar el modelo.", "")
+        }
+    }
+
+    private fun getSavedBackend(): String {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val saved = prefs.getString("selected_ai_backend", "💻 CPU (NEON)") ?: "💻 CPU (NEON)"
+        return if (saved == "🎮 GPU (Vulkan)") "🎮 GPU (Adreno)" else saved
+    }
+        
+    private fun saveBackend(backend: String) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putString("selected_ai_backend", backend).apply()
+        Log.d(TAG, "💾 Backend guardado: $backend")
+    }
+
+    private fun applyBackendToEngine(backend: String) {
+        Log.d(TAG, "═══════════════════════════════════════════════════")
+        Log.d(TAG, "🔧 Aplicando backend al motor nativo: $backend")
+        try {
+            nativeSetBackend(backend)
+            Log.d(TAG, "✅ Backend aplicado exitosamente: $backend")
+        } catch (t: Throwable) {
+            Log.e(TAG, "❌ Error aplicando backend: ${t.message}")
+            t.printStackTrace()
+        }
+        Log.d(TAG, "═══════════════════════════════════════════════════")
+    }
+
+    private fun applyParamsToEngine() {
+        val ctx = (seekContext?.progress ?: 2048).coerceAtLeast(2048)
+        val temp = (seekTemperature?.progress ?: 70) / 100f
+        Log.d(TAG, "Aplicando parámetros: ctx=$ctx, temp=$temp")
+        try {
+            nativeSetParams(ctx, temp)
+            Log.d(TAG, "✅ Parámetros aplicados exitosamente")
+        } catch (t: Throwable) {
+            Log.e(TAG, "❌ Error aplicando parámetros: ${t.message}")
+        }
+    }
+
+    // 📋 Últimas líneas importantes del registro (la app solo puede leer las suyas)
+    // ========================================================================
+    // 🩺 DIAGNÓSTICO DE CIERRES: guarda por qué se cerró la app (error, motor nativo, memoria, congelada)
+    //    Pregunta en el chat «¿por qué se cerró la app?» para verlo.
+    // ========================================================================
+    private fun installCrashRecorder() {
+        if (crashRecorderInstalled) return
+        crashRecorderInstalled = true
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        val app = applicationContext
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            runCatching { saveCrashText(app, t, e) }
+            if (t !== android.os.Looper.getMainLooper().thread && appReady) {
+                // 🛟 Un error en una tarea de fondo (buscar en internet, leer una página, crear un video…)
+                //    ya NO cierra la app: se avisa en el chat y la app sigue funcionando
+                Log.e(TAG, "🛟 Error en segundo plano atrapado (la app sigue abierta)", e)
+                current?.get()?.let { a -> a.runOnUiThread { runCatching { a.recoverFromError(e) } } }
+            } else {
+                prev?.uncaughtException(t, e) ?: android.os.Process.killProcess(android.os.Process.myPid())
+            }
+        }
+        // 🛟 Errores en la pantalla: se atrapan y la app sigue (salvo que falle una y otra vez seguidas)
+        installMainLoopGuard()
+    }
+
+    private fun saveCrashText(app: Context, t: Thread, e: Throwable) {
+        val sw = java.io.StringWriter()
+        e.printStackTrace(java.io.PrintWriter(sw))
+        val date = java.text.SimpleDateFormat("d 'de' MMMM, HH:mm:ss", Locale("es", "ES")).format(java.util.Date())
+        app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString("last_java_crash", "$date · hilo «${t.name}»\n" + sw.toString().lines().take(18).joinToString("\n"))
+            .putString("last_caught_error", "$date · ${e.javaClass.simpleName}: ${e.message.orEmpty().take(200)}")
+            .commit()
+    }
+
+    /**
+     * 🛟 Si algo falla mientras se usa la app (tocar un botón, mostrar una respuesta…), el error se atrapa aquí
+     * y la app sigue abierta. Si falla en bucle (más de 4 veces en 5 segundos) se deja cerrar para no quedar pegada.
+     */
+    private fun installMainLoopGuard() {
+        if (mainLoopGuardInstalled) return
+        mainLoopGuardInstalled = true
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            val recent = ArrayDeque<Long>()
+            while (true) {
+                try {
+                    android.os.Looper.loop()
+                } catch (e: Throwable) {
+                    val now = android.os.SystemClock.uptimeMillis()
+                    recent.addLast(now)
+                    while (recent.isNotEmpty() && now - recent.first() > 5000) recent.removeFirst()
+                    val lifecycle = e.stackTrace.any {
+                        it.methodName.contains("performLaunchActivity") || it.methodName.contains("handleBindApplication")
+                    }
+                    if (!appReady || lifecycle || recent.size > 4) throw e
+                    runCatching { saveCrashText(applicationContext, Thread.currentThread(), e) }
+                    Log.e(TAG, "🛟 Error en la pantalla atrapado (la app sigue abierta)", e)
+                    current?.get()?.let { a -> runCatching { a.recoverFromError(e) } }
+                }
+            }
+        }
+    }
+
+    /** 😅 Mensaje amable cuando algo falla (en vez de cerrar la app). */
+    private fun friendlyErrorText(e: Throwable): String {
+        val why = e.message?.takeIf { it.isNotBlank() }?.take(140)
+        return "😅 Disculpa, algo falló mientras trabajaba en tu pedido y no logré terminarlo.\n\n" +
+            "Ya me recuperé: vuelve a pedírmelo, o dímelo con otras palabras y lo intento de nuevo." +
+            "\n\n(motivo: ${e.javaClass.simpleName}" + (if (why != null) ": $why" else "") + ")"
+    }
+
+    /** 🛟 Deja la app lista para seguir: termina «Pensando...», muestra la disculpa y libera el botón de enviar. */
+    private fun recoverFromError(e: Throwable) {
+        val idx = AiActivity.activeIndex.takeIf { it >= 0 } ?: streamingIndex
+        runCatching { stopLiveCode() }
+        runCatching { AiActivity.log("⚠️ Error atrapado: la app sigue abierta", "${e.javaClass.simpleName}: ${e.message.orEmpty().take(200)}") }
+        runCatching { AiActivity.finish("Me recuperé de un error") }
+        if (isAiBusy && idx in chatMessages.indices && !chatMessages[idx].isUser) {
+            chatMessages[idx] = ChatMessage(text = friendlyErrorText(e), isUser = false, sender = "Cumulus", tokens = "")
+            runCatching { saveCurrentChat() }
+        }
+        isAiBusy = false
+        runCatching { updateSendButtonIcon() }
+        runCatching { chatAdapter?.notifyDataSetChanged() }
+    }
+
+    /** Pone la respuesta en su burbuja solo si esa burbuja sigue existiendo (por ejemplo, si no cambiaste de chat). */
+    private fun putAiBubble(index: Int, msg: ChatMessage): Boolean {
+        if (index !in chatMessages.indices || chatMessages[index].isUser) {
+            Log.w(TAG, "La burbuja $index ya no existe (cambiaste de chat): no se muestra la respuesta")
+            return false
+        }
+        chatMessages[index] = msg
+        chatAdapter?.notifyItemChanged(index)
+        return true
+    }
+
+    /** Android 11+: Android dice el motivo real del último cierre (también si fue el motor nativo o falta de RAM). */
+    private fun recordLastExitReason() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // 🩺 Qué estaba haciendo la IA cuando se cerró (por ejemplo, mirando una foto de la cámara con tal modelo)
+        val busyWhat = prefs.getString("busy_what", null)
+        if (busyWhat != null) prefs.edit().remove("busy_what").apply()
+        // 🩺 Lo que anotó el motor: en qué paso iba (y lo último que dijo) y el error exacto si se detuvo por uno
+        val enginePhase = readAndDeleteNote("native_phase.txt")
+        val engineAbort = readAndDeleteNote("native_abort.txt")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val am = getSystemService(android.app.ActivityManager::class.java) ?: return
+        val info = am.getHistoricalProcessExitReasons(packageName, 0, 1).firstOrNull() ?: return
+        if (info.timestamp <= prefs.getLong("last_exit_seen_ts", 0L)) return
+        prefs.edit().putLong("last_exit_seen_ts", info.timestamp).apply()
+        val reason = when (info.reason) {
+            android.app.ApplicationExitInfo.REASON_CRASH -> "error en el código de la app (Kotlin)"
+            android.app.ApplicationExitInfo.REASON_CRASH_NATIVE -> "error del motor nativo (llama.cpp / GenieX / LiteRT)"
+            android.app.ApplicationExitInfo.REASON_ANR -> "la app se quedó congelada y Android la cerró"
+            android.app.ApplicationExitInfo.REASON_LOW_MEMORY -> "Android la cerró por falta de memoria RAM"
+            android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "usó demasiados recursos del teléfono"
+            android.app.ApplicationExitInfo.REASON_SIGNALED -> "el sistema la detuvo (señal ${info.status})"
+            android.app.ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "falló al iniciar"
+            // 🧊 La cerraste tú justo mientras la IA miraba una foto (seguramente se veía congelada): se anota igual
+            else -> if (busyWhat != null) "la cerraste tú mientras la IA miraba una foto (¿se veía congelada?)" else return
+        }
+        val date = java.text.SimpleDateFormat("d 'de' MMMM, HH:mm:ss", Locale("es", "ES")).format(java.util.Date(info.timestamp))
+        // Pistas del error (texto legible del informe del sistema: librerías y funciones donde se cayó)
+        val clues = runCatching {
+            info.traceInputStream?.use { input ->
+                val bytes = input.readBytes()
+                Regex("[\\x20-\\x7E]{6,}").findAll(String(bytes, Charsets.ISO_8859_1)).map { it.value.trim() }
+                    .filter { Regex("(\\.so|Abort|abort|signal|SIG[A-Z]+|Exception|Error|ggml|llama|GGML_ASSERT|JNI|UTF|at com\\.)").containsMatchIn(it) }
+                    .distinct().take(14).joinToString("\n") { it.take(160) }
+            }
+        }.getOrNull().orEmpty()
+        val javaCrash = if (info.reason == android.app.ApplicationExitInfo.REASON_CRASH)
+            prefs.getString("last_java_crash", null).orEmpty() else ""
+        val report = "🩺 La app se cerró el $date\nMotivo: $reason" +
+            (info.description?.takeIf { it.isNotBlank() }?.let { "\nDetalle: ${it.take(200)}" } ?: "") +
+            "\nMemoria que usaba: ${info.pss / 1024} MB" +
+            (if (busyWhat != null) "\n\nEstaba haciendo:\n$busyWhat" else "") +
+            (if (engineAbort.isNotBlank()) "\n\nError exacto del motor:\n" + engineAbort.lines().filter { it.isNotBlank() }
+                .let { l -> (l.take(1) + l.drop(1).takeLast(8)) }.joinToString("\n") { it.take(180) } else "") +
+            (if (enginePhase.isNotBlank()) "\n\nPaso del motor:\n" + enginePhase.lines().filter { it.isNotBlank() }
+                .let { l -> l.filter { it.startsWith("▶") }.takeLast(6) + l.filterNot { it.startsWith("▶") }.takeLast(8) }
+                .joinToString("\n") { it.take(180) } else "") +
+            (if (javaCrash.isNotBlank()) "\n\nError:\n$javaCrash" else "") +
+            (if (clues.isNotBlank()) "\n\nPistas del sistema:\n$clues" else "")
+        prefs.edit().putString("last_exit_report", report).apply()
+        Log.w(TAG, report)
+    }
+
+    /** Lee una nota del motor (y la borra para que no se repita en el próximo informe). */
+    private fun readAndDeleteNote(name: String): String = runCatching {
+        val f = File(filesDir, name)
+        if (!f.exists()) return@runCatching ""
+        val t = if (f.length() > 300_000) "" else f.readText()
+        f.delete()
+        t.trim()
+    }.getOrDefault("")
+
+    /** «¿Por qué se cerró la app?» → el último motivo guardado. */
+    private fun crashReportAnswer(prompt: String): String? {
+        val p = prompt.lowercase(Locale.ROOT)
+        if (!Regex("(por ?qu[eé]|motivo|raz[oó]n|causa).{0,30}(se (me )?(cerr[oó]|cay[oó]|crashe[oó]|sali[oó])|cierre|crash)").containsMatchIn(p)) return null
+        val report = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("last_exit_report", null)
+        return report?.let { "$it\n\n📸 Mándale una captura de esto a tu desarrollador para arreglarlo." }
+            ?: "🩺 No tengo registrado ningún cierre inesperado de la app. Si vuelve a cerrarse sola, ábrela y pregúntame de nuevo: el motivo queda guardado."
+    }
+
+    private fun readCrashLog(): String = runCatching {
+        val proc = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-t", "3000", "-v", "brief"))
+        val lines = proc.inputStream.bufferedReader().readLines()
+        val clean = { l: String -> l.replace(Regex("\\s+"), " ").take(200) }
+        // Inicio del último cierre (encabezado + primeros pasos de la pila)
+        val start = lines.indexOfLast { it.contains("*** *** ***") || it.contains("Build fingerprint") }
+        // Sin registro de cierre real (la app solo se cerró a mano o Android la sacó): no hay nada que mostrar
+        if (start < 0) return@runCatching ""
+        val crash = if (start >= 0) lines.drop(start).filter {
+            it.contains("signal") || it.contains("Abort message") || it.contains("Cause") ||
+                Regex("#0[0-9] ").containsMatchIn(it) || it.contains("#1[0-2] ")
+        }.take(16).map(clean) else emptyList()
+        // Mensajes del motor antes del cierre
+        val keys = Regex("ggml|hex|htp|HTP|LiteRt|Qnn|QNN|Dispatch|CumulusNative|AdrenoVK|vulkan")
+        val engine = lines.take(if (start >= 0) start else lines.size)
+            .filter { keys.containsMatchIn(it) }.takeLast(18).map(clean)
+        (crash + listOf("— motor —") + engine).joinToString("\n")
+    }.getOrDefault("")
+
+    /** 🛡️ ¿La app se cayó de verdad la última vez? Android lo anota (ApplicationExitInfo). */
+    private fun lastExitWasCrash(): Boolean = runCatching {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val info = am.getHistoricalProcessExitReasons(packageName, 0, 1).firstOrNull() ?: return@runCatching false
+        when (info.reason) {
+            android.app.ApplicationExitInfo.REASON_CRASH,
+            android.app.ApplicationExitInfo.REASON_CRASH_NATIVE -> true
+            // Señales de error (SIGILL, SIGABRT, SIGBUS, SIGFPE, SIGSEGV)
+            android.app.ApplicationExitInfo.REASON_SIGNALED -> info.status in setOf(4, 6, 7, 8, 11)
+            // Se quedó sin memoria MIENTRAS la usabas (modelo demasiado grande)
+            android.app.ApplicationExitInfo.REASON_LOW_MEMORY ->
+                info.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+            else -> false   // la cerraste tú, se actualizó, o Android la sacó de memoria en segundo plano
+        }
+    }.getOrDefault(false)
+
+    /** 🛡️ Aviso: un modelo cerró la app en NPU/GPU; esa combinación no se vuelve a cargar sola (el motor no se cambia). */
+    private fun showGenieXCrashNotice(what: String) {
+        if (isFinishing || isDestroyed) return
+        AlertDialog.Builder(this)
+            .setTitle("🛡️ La app se cerró con este modelo")
+            .setMessage("La última vez la app se cerró usando $what.\n\n" +
+                "Para que no se cierre en bucle, no lo volveré a cargar así hasta que tú decidas. " +
+                "La app NO cambia de motor sola: toca «Volver a intentar» para probar de nuevo, " +
+                "o elige otro motor (NPU, GPU o CPU) en ☰. Los demás modelos siguen igual.\n\n" +
+                "Suele pasar con modelos que no son Q4_0, con modelos muy grandes para la memoria o con la visión (mmproj).")
+            .setPositiveButton("Entendido", null)
+            .setNegativeButton("Volver a intentar") { _, _ ->
+                runCatching { GenieXEngineManager.clearBlocked(this) }
+            }
+            .show().also { styleGrayDialog(it) }
+    }
+
+    // 🛡️ Se activa si la app se cerró cargando o usando el modelo: esa vez no se carga solo
+    private var skipAutoLoadOnce = false
+    // Ya se mostró por qué no se pudo cargar (para no mostrar dos ventanas de error)
+    @Volatile private var loadErrorShown = false
+
+    /** 🛡️ La app se cerró con el modelo cargado: no se cambia de motor, solo se avisa y se espera a que decidas. */
+    private fun showEngineCrashNotice() {
+        if (isFinishing || isDestroyed) return
+        AlertDialog.Builder(this)
+            .setTitle("🛡️ La app se cerró la última vez")
+            .setMessage("La app se cerró mientras cargaba o usaba el modelo en ${getSavedBackend()}.\n\n" +
+                "Esta vez no lo cargué solo, para que no se cierre en bucle. Tu motor sigue elegido igual: " +
+                "toca «Cargar modelo» para intentarlo de nuevo, o elige otro motor en ☰.\n\n" +
+                "Para ver el motivo, pregúntame en el chat «¿por qué se cerró la app?».")
+            .setPositiveButton("Entendido", null)
+            .show().also { styleGrayDialog(it) }
+    }
+
+    // Muestra el motor REAL: los GGUF siempre van en CPU; los .litertlm dicen qué usó LiteRT
+    private fun realEngineLabel(modelFile: File, backend: String): String =
+        if (modelFile.extension.equals("litertlm", true)) LiteRtLmEngineManager.engineInfo()
+        else if (GenieXEngineManager.isLoaded(modelFile.absolutePath)) GenieXEngineManager.engineInfo()
+        else "💻 CPU" + if (backend.contains("GPU", true) || backend.contains("NPU", true)) " (respaldo)" else ""
+
+    private fun loadModelWithConfiguration(modelFile: File, backend: String): Boolean {
+        // ⏳ Un modelo que todavía se está descargando está incompleto: no se carga (antes daba
+        //    «model is corrupted or incomplete» y la ventana de error)
+        if (ActiveDownloads.paths.contains(modelFile.absolutePath)) {
+            Log.w(TAG, "No se carga ${modelFile.name}: la descarga aún no termina")
+            runOnUiThread { tvModelLoadedName?.text = "Modelo: ${modelFile.name} (⏳ esperando que termine la descarga)" }
+            return false
+        }
+        // 🛡️ Si cargar el modelo cierra la app, al volver a abrirla se avisa (el motor NO se cambia solo)
+        loadErrorShown = false
+        val risky = true  // siempre se vigila: si se cierra, al volver se muestra el motivo
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (risky) prefs.edit().putBoolean("gpu_run_pending", true).commit()
+        try {
+            return loadModelWithConfigurationInner(modelFile, backend)
+        } finally {
+            if (risky) prefs.edit().putBoolean("gpu_run_pending", false).commit()
+        }
+    }
+
+    private fun loadModelWithConfigurationInner(modelFile: File, backend: String): Boolean {
+
+        if (modelFile.extension.equals("litertlm", ignoreCase = true)) {
+            // 🛡️ Modelos compilados para la NPU de OTRO chip cierran la app: se bloquean antes
+            val n = modelFile.name.lowercase()
+            val otherChip = Regex("mediatek|\\bmt6\\d{3}|google_tensor|tensor_g\\d|intel_|qcs\\d{4}|exynos").find(n)
+            val mySoc = (if (android.os.Build.VERSION.SDK_INT >= 31) android.os.Build.SOC_MODEL else android.os.Build.HARDWARE).lowercase()
+            val qcomOther = Regex("sm(\\d{4})").find(n)?.groupValues?.get(1)?.let { !mySoc.contains(it) } ?: false
+            // LiteRT ya no usa la NPU (la NPU es de GenieX): modelos solo-NPU se bloquean
+            if (n.contains("qualcomm") || n.contains("_npu") || n.contains("-npu")) {
+                runOnUiThread {
+                    AlertDialog.Builder(this)
+                        .setTitle("ℹ️ Modelo solo para NPU")
+                        .setMessage("«${modelFile.name}» es un .litertlm compilado para NPU.\n\n" +
+                            "La NPU ahora se usa con GenieX y modelos GGUF Q4_0.\n" +
+                            "Para .litertlm usa uno normal o -gpu en GPU (Adreno).")
+                        .setPositiveButton("OK", null).show().also { styleGrayDialog(it) }
+                }
+                return false
+            }
+            if (otherChip != null || qcomOther) {
+                runOnUiThread {
+                    AlertDialog.Builder(this)
+                        .setTitle("⚠️ Modelo para otro chip")
+                        .setMessage("«${modelFile.name}» está compilado para la NPU de otro procesador " +
+                            "(${otherChip?.value ?: "otro Snapdragon"}) y cerraría la app en este teléfono ($mySoc).\n\n" +
+                            "Usa un .litertlm normal o -gpu (GPU), o uno hecho para tu chip.")
+                        .setPositiveButton("OK", null).show().also { styleGrayDialog(it) }
+                }
+                return false
+            }
+            // 🎛️ El motor lo eliges TÚ: un .litertlm no se cambia solo de la NPU a la GPU
+            if (backend.contains("NPU", true)) {
+                loadErrorShown = true
+                runOnUiThread {
+                    AlertDialog.Builder(this)
+                        .setTitle("⚠️ No se pudo cargar en la NPU")
+                        .setMessage("«${modelFile.name}» es un .litertlm, y en esta app la NPU se usa con modelos GGUF (GenieX).\n\n" +
+                            "La app no cambia de motor sola: si quieres usar este modelo, elige GPU o CPU en ☰ y vuelve a cargarlo.")
+                        .setPositiveButton("OK", null).show().also { styleGrayDialog(it) }
+                }
+                return false
+            }
+            nativeReleaseModel()
+            return runBlocking {
+                LiteRtLmEngineManager.load(applicationContext, modelFile.absolutePath, backend, "main_activity")
+            }
+        }
+        runBlocking { LiteRtLmEngineManager.release("main_activity") }
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val contextSize = prefs.getInt("ai_context", 2048).coerceIn(2048, 15000)
+        val temperature = prefs.getFloat(
+            "ai_temperature",
+            (seekTemperature?.progress ?: 70) / 100f
+        )
+        // ⚡ GGUF en NPU/GPU → GenieX (llama.cpp con los parches de Qualcomm)
+        if (backend.contains("GPU", true) || backend.contains("NPU", true)) {
+            nativeReleaseModel()
+            val ok = runCatching {
+                runBlocking { GenieXEngineManager.load(modelFile.absolutePath, backend, contextSize, getSelectedMmprojFile()?.absolutePath) }
+            }.getOrDefault(false)
+            // 🎛️ El motor lo eliges TÚ: se queda en el que elegiste (ya no hay aviso «NPU → GPU»)
+            if (ok) return true
+            // ❌ No se pudo en el motor que elegiste: se explica por qué y NO se cambia solo a la CPU
+            val why = GenieXEngineManager.lastLoadErrors()
+            val unitName = if (backend.contains("NPU", true)) "la NPU" else "la GPU"
+            loadErrorShown = true
+            runOnUiThread {
+                val full = "Modelo: ${modelFile.name}\nMotor elegido: $backend\n\n$why\n" +
+                    "La app no cambia de motor sola: si quieres, elige otro motor en ☰ y vuelve a cargar.\n\n" +
+                    GenieXEngineManager.diagnostics(this)
+                AlertDialog.Builder(this)
+                    .setTitle("⚠️ No se pudo cargar en $unitName")
+                    .setMessage(full)
+                    .setPositiveButton("Copiar") { _, _ ->
+                        val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        cm.setPrimaryClip(android.content.ClipData.newPlainText("GenieX error", full))
+                    }
+                    .setNegativeButton("Cerrar", null)
+                    .show().also { styleGrayDialog(it) }
+            }
+            return false
+        }
+        runCatching { runBlocking { GenieXEngineManager.release() } }
+        nativeSetMmproj(getSelectedMmprojFile()?.absolutePath ?: "")
+        return nativeConfigureAndLoadModel(
+            modelFile.absolutePath,
+            "💻 CPU (NEON)",
+            contextSize,
+            temperature
+        )
+    }
+
+    private fun reloadModelWithBackend(backend: String) {
+        val modelFile = getActiveModelFile() ?: return
+        Log.d(TAG, "═══════════════════════════════════════════════════")
+        Log.d(TAG, "🔄 Recargando modelo con nuevo backend: $backend")
+        Log.d(TAG, "Archivo: ${modelFile.absolutePath}")
+        Log.d(TAG, "═══════════════════════════════════════════════════")
+        
+        cumulusToast(this, "Recargando modelo en $backend...", Toast.LENGTH_SHORT).show()
+        thread {
+            val success = loadModelWithConfiguration(modelFile, backend)
+            runOnUiThread {
+                isModelLoadedInMemory = success
+                updateLoadModelButton()
+                if (success) {
+                    tvModelLoadedName?.text = "Modelo: ${modelFile.name} [${realEngineLabel(modelFile, backend)} - Cargado]" + mediaCapsLabel()
+                    cumulusToast(this, "✅ Modelo recargado exitosamente en $backend", Toast.LENGTH_LONG).show()
+                    Log.d(TAG, "✅ Modelo recargado exitosamente en $backend")
+                } else {
+                    tvModelLoadedName?.text = "Modelo: ${modelFile.name} (error al recargar en $backend)"
+                    cumulusToast(this, "❌ Error al recargar modelo en $backend", Toast.LENGTH_LONG).show()
+                    Log.e(TAG, "❌ Error al recargar modelo en $backend")
+                }
+            }
+        }
+    }
+
+    private fun resetAiNameToDefault(showToast: Boolean) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getString("ai_name", "Cumulus") == "Cumulus" && !showToast) {
+            tvAiName?.text = "Cumulus"
+            return
+        }
+        prefs.edit().remove("ai_name").apply()
+        tvAiName?.text = "Cumulus"
+        chatAdapter?.notifyDataSetChanged()
+        if (showToast) {
+            cumulusToast(this, "Nombre restablecido a Cumulus", Toast.LENGTH_SHORT).show()
+        }
+        refreshSaveChecks()
+    }
+
+    /** ✔ negro en GUARDAR de personalidad, nombre de la IA y nombre del usuario cuando lo escrito ya está guardado. */
+    private fun refreshSaveChecks() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        fun same(saved: String?, typed: CharSequence?) =
+            !saved.isNullOrBlank() && saved.trim() == typed?.toString()?.trim()
+        setButtonCheck(btnSaveCustomPersonality, same(prefs.getString("custom_personality", null), etPersonalityCustom?.text))
+        setButtonCheck(btnSaveAiName, same(prefs.getString("ai_name", null), etAiNameCustom?.text?.toString()?.take(10)))
+        setButtonCheck(btnSaveUserName, same(prefs.getString("user_name", null), etUserName?.text))
+    }
+
+    private fun watchForSaveChecks(et: EditText?) {
+        et?.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) { refreshSaveChecks() }
+        })
+    }
+
+    private fun setupNameConfig() {
+        // ✔ Si cambias lo escrito, el visto bueno se quita hasta que vuelvas a guardar
+        watchForSaveChecks(etAiNameCustom); watchForSaveChecks(etUserName); watchForSaveChecks(etPersonalityCustom)
+        etAiNameCustom?.post { refreshSaveChecks() }
+        // Al borrar todo el nombre personalizado, vuelve a "Cumulus"
+        etAiNameCustom?.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) {
+                if (s.isNullOrBlank() && etAiNameCustom?.hasFocus() == true) {
+                    val saved = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("ai_name", null)
+                    if (saved != null) resetAiNameToDefault(showToast = true)
+                }
+            }
+        })
+        btnSaveAiName?.setOnClickListener {
+            // El nombre de arriba admite como máximo 10 letras
+            val name = (etAiNameCustom?.text?.toString()?.trim() ?: "").take(10).trim()
+            if (name.isEmpty()) {
+                resetAiNameToDefault(showToast = true)
+                return@setOnClickListener
+            }
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit().putString("ai_name", name).apply()
+            tvAiName?.text = name
+            chatAdapter?.notifyDataSetChanged()
+            cumulusToast(this, "Nombre de la IA guardado", Toast.LENGTH_SHORT).show()
+            refreshSaveChecks()
+        }
+
+        // 🗑 Eliminar nombre de la IA → vuelve a "Cumulus"
+        findViewById<View>(R.id.btn_delete_ai_name)?.setOnClickListener {
+            resetAiNameToDefault(showToast = true)
+            etAiNameCustom?.text?.clear()
+            refreshSaveChecks()
+        }
+
+        // 🗑 Eliminar nombre del usuario
+        findViewById<View>(R.id.btn_delete_user_name)?.setOnClickListener {
+            etUserName?.text?.clear()
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().remove("user_name").apply()
+            chatAdapter?.notifyDataSetChanged()
+            cumulusToast(this, "Nombre de usuario eliminado", Toast.LENGTH_SHORT).show()
+            refreshSaveChecks()
+        }
+
+        btnSaveUserName?.setOnClickListener {
+            val name = etUserName?.text?.toString()?.trim() ?: ""
+            if (name.isEmpty()) {
+                cumulusToast(this, "Escribe un nombre de usuario", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit().putString("user_name", name).apply()
+            chatAdapter?.notifyDataSetChanged()
+            cumulusToast(this, "Nombre de usuario guardado", Toast.LENGTH_SHORT).show()
+            refreshSaveChecks()
+        }
+    }
+
+    private fun setupImageAndVoiceConfig() {
+        btnChooseBubbleImage?.setOnClickListener {
+            // 🖼️ Abre DIRECTO la app Galería del teléfono (antes abría el selector de archivos «Abrir desde»)
+            val gallery = Intent(Intent.ACTION_PICK).apply {
+                setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*")
+            }
+            // En Samsung va directo a su Galería (sin preguntar con qué app abrir); si no está, la galería que tengas
+            val samsung = Intent(gallery).setPackage("com.sec.android.gallery3d")
+            try {
+                try {
+                    startActivityForResult(samsung, PICK_IMAGE_REQUEST)
+                } catch (e: android.content.ActivityNotFoundException) {
+                    startActivityForResult(gallery, PICK_IMAGE_REQUEST)
+                }
+                chatImageFromGallery = true
+            } catch (e: Exception) {
+                // Sin app de galería: se usa el selector de archivos de siempre
+                openChatImageFilePicker()
+            }
+        }
+
+        btnRestoreChatImage?.setOnClickListener {
+            useDefaultBubbleImage()
+        }
+
+        btnChooseVoices?.setOnClickListener {
+            showVoiceSelectionDialog()
+        }
+    }
+
+    // ========================================================================
+    // 📂 SUBIR GGUF / SUBIR TTS desde la memoria del teléfono
+    //    Se copia el archivo a la carpeta de modelos de la app (la misma de las descargas), así aparece en
+    //    «Nombre del modelo», en «mmproj» o en «Voces guardadas» igual que uno descargado.
+    //    La copia se hace con barra de progreso y se puede cancelar. Al terminar, puedes borrar el original.
+    // ========================================================================
+    /** Qué se está subiendo: un modelo (GGUF o LiteRT-LM), un mmproj (visión) o una voz TTS. */
+    private enum class LocalImport { MODEL, MMPROJ, TTS }
+
+    private fun openLocalFilePicker(requestCode: Int) {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"   // los .gguf, .litertlm y .onnx no tienen un tipo propio en Android
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)   // ej. el modelo y su mmproj de una vez
+        }
+        try {
+            startActivityForResult(intent, requestCode)
+        } catch (e: Exception) {
+            showImportResult("Subir archivo", "No se pudo abrir la memoria del teléfono.")
+        }
+    }
+
+    /** Nombre y tamaño del archivo elegido (el que se ve en la memoria del teléfono). */
+    private fun queryNameAndSize(uri: Uri): Pair<String, Long> {
+        var name = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "archivo"
+        var size = -1L
+        runCatching {
+            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE),
+                null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    c.getString(0)?.takeIf { it.isNotBlank() }?.let { name = it }
+                    if (!c.isNull(1)) size = c.getLong(1)
+                }
+            }
+        }
+        return name.replace(Regex("[\\\\/:*?\"<>|]"), "_") to size
+    }
+
+    private fun sizeLabel(bytes: Long): String = when {
+        bytes >= 1L shl 30 -> String.format(Locale("es"), "%.1f GB", bytes / (1L shl 30).toDouble())
+        bytes >= 1L shl 20 -> String.format(Locale("es"), "%.0f MB", bytes / (1L shl 20).toDouble())
+        else -> String.format(Locale("es"), "%.0f KB", bytes / 1024.0)
+    }
+
+    /** Deja el modelo subido elegido y cargado (aunque la carga automática esté apagada: así queda listo para usar). */
+    private fun activateImportedModel(model: File, mmproj: File?) {
+        setSelectedModelFile(model)
+        mmproj?.let { mm ->
+            setSelectedMmproj(mm)
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putString("mmproj_for_" + model.name, mm.absolutePath).apply()
+        }
+        checkStoredModelStatus()
+        if (isAutoLoadEnabled() || isManualModelPinned()) autoLoadModel() else loadModelIntoMemoryManual()
+    }
+
+    /** Deja el mmproj subido emparejado con el modelo activo y listo para ver imágenes. */
+    private fun activateImportedMmproj(mm: File) {
+        val model = getActiveModelFile()
+        if (model != null && isModelLoadedInMemory) {
+            onGgufDownloadFinished(mm)   // modelo ya cargado: se aplica el mmproj al tiro (NPU/GPU o CPU)
+        } else {
+            setSelectedMmproj(mm)
+            model?.let { m ->
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                    .putString("mmproj_for_" + m.name, mm.absolutePath).apply()
+                // El modelo no estaba cargado: se carga ahora con su mmproj
+                if (isAutoLoadEnabled() || isManualModelPinned()) autoLoadModel() else loadModelIntoMemoryManual()
+            }
+        }
+    }
+
+    private fun showImportResult(title: String, message: String) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("Listo", null)
+            .show().also { styleGrayDialog(it) }
+    }
+
+    private fun importLocalFiles(uris: List<Uri>, kind: LocalImport) {
+        val tts = kind == LocalImport.TTS
+        val allowed = when (kind) {
+            LocalImport.TTS -> listOf(".onnx", ".bin", ".zip", ".json")
+            LocalImport.MMPROJ -> listOf(".gguf")
+            LocalImport.MODEL -> listOf(".gguf", ".litertlm")
+        }
+        val targetDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir
+        if (!targetDir.exists()) targetDir.mkdirs()
+        val title = when (kind) {
+            LocalImport.TTS -> "Subir voz TTS"
+            LocalImport.MMPROJ -> "Cargar mmproj"
+            LocalImport.MODEL -> "Subir modelo GGUF / LiteRT-LM"
+        }
+        val d = resources.displayMetrics.density
+        val textColor = if (isLightMode()) pillTextDark else Color.WHITE
+        // Ventana con la barra de progreso (la copia de un modelo de varios GB tarda unos segundos)
+        val label = TextView(this).apply {
+            textSize = 14f
+            setTextColor(textColor)
+            text = "Preparando…"
+        }
+        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 1000
+            progressTintList = ColorStateList.valueOf(textColor)
+            progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor(if (isLightMode()) "#C7C7CC" else "#3A3A3C"))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .apply { topMargin = (12 * d).toInt() }
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((24 * d).toInt(), (12 * d).toInt(), (24 * d).toInt(), (4 * d).toInt())
+            addView(label)
+            addView(bar)
+        }
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(box)
+            .setCancelable(false)
+            .setNegativeButton("Cancelar", null)
+            .show().also { styleGrayDialog(it) }
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE)?.setOnClickListener { b ->
+            cancelled.set(true)
+            b.isEnabled = false
+            label.text = "Cancelando…"
+        }
+        thread {
+            val copied = mutableListOf<File>()
+            val problems = mutableListOf<String>()
+            for ((index, uri) in uris.withIndex()) {
+                if (cancelled.get()) break
+                val (name, size) = queryNameAndSize(uri)
+                val lower = name.lowercase(Locale.ROOT)
+                if (allowed.none { lower.endsWith(it) }) {
+                    problems += "«$name» no es " + when (kind) {
+                        LocalImport.TTS -> "una voz TTS (.onnx, .bin o .zip)"
+                        LocalImport.MMPROJ -> "un mmproj (.gguf)"
+                        LocalImport.MODEL -> "un modelo .gguf o .litertlm"
+                    }
+                    continue
+                }
+                // Ya estaba (mismo nombre y mismo tamaño): no se copia de nuevo
+                val same = File(targetDir, name)
+                if (same.exists() && size > 0 && same.length() == size) { copied += same; continue }
+                // ¿Cabe? (se deja un margen de 200 MB para que el teléfono siga funcionando)
+                val free = runCatching { android.os.StatFs(targetDir.path).availableBytes }.getOrDefault(Long.MAX_VALUE)
+                if (size > 0 && size + (200L shl 20) > free) {
+                    problems += "«$name» no cabe: necesita ${sizeLabel(size)} y quedan ${sizeLabel(free)} libres"
+                    continue
+                }
+                var dest = same
+                var n = 2
+                while (dest.exists()) {
+                    dest = File(targetDir, name.substringBeforeLast('.') + " ($n)." + name.substringAfterLast('.'))
+                    n++
+                }
+                // Se copia con otro nombre y se renombra al final: nunca aparece un modelo a medio copiar
+                val temp = File(targetDir, dest.name + ".importando")
+                try {
+                    val input = contentResolver.openInputStream(uri) ?: throw java.io.IOException("no se pudo abrir")
+                    input.use { inp ->
+                        temp.outputStream().use { out ->
+                            val buf = ByteArray(1 shl 20)
+                            var total = 0L
+                            var lastUi = 0L
+                            while (true) {
+                                if (cancelled.get()) throw InterruptedException()
+                                val r = inp.read(buf)
+                                if (r < 0) break
+                                out.write(buf, 0, r)
+                                total += r
+                                val now = android.os.SystemClock.uptimeMillis()
+                                if (now - lastUi > 250) {
+                                    lastUi = now
+                                    val t = total
+                                    runOnUiThread {
+                                        val part = if (uris.size > 1) " (${index + 1} de ${uris.size})" else ""
+                                        label.text = if (size > 0)
+                                            "Copiando «$name»$part\n${(t * 100 / size)} % · ${sizeLabel(t)} de ${sizeLabel(size)}"
+                                        else "Copiando «$name»$part\n${sizeLabel(t)}"
+                                        if (size > 0) bar.progress = (t * 1000 / size).toInt() else bar.isIndeterminate = true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Un .gguf de verdad empieza con las letras GGUF
+                    if (lower.endsWith(".gguf")) {
+                        val head = ByteArray(4)
+                        val ok = temp.inputStream().use { it.read(head) == 4 } && String(head, Charsets.ISO_8859_1) == "GGUF"
+                        if (!ok) {
+                            temp.delete()
+                            problems += "«$name» no es un archivo GGUF válido (está dañado o incompleto)"
+                            continue
+                        }
+                    }
+                    if (!temp.renameTo(dest)) {
+                        temp.copyTo(dest, overwrite = true)
+                        temp.delete()
+                    }
+                    copied += dest
+                } catch (t: Throwable) {
+                    temp.delete()
+                    if (!cancelled.get()) problems += "«$name»: no se pudo copiar (${t.message ?: t.javaClass.simpleName})"
+                }
+            }
+            // Modelos primero y después los mmproj (así el mmproj queda emparejado con su modelo)
+            val models = if (tts) emptyList() else copied.filter { !isMmprojFile(it) }
+            val mmprojs = if (tts) emptyList() else copied.filter { isMmprojFile(it) }
+            // «Cargar mmproj»: si eligió un modelo en vez de un mmproj, se avisa (no se activa como modelo)
+            if (kind == LocalImport.MMPROJ) models.forEach {
+                problems += "«${it.name}» no es un mmproj (proyector de visión). Si es un modelo, súbelo con SUBIR GGUF."
+            }
+            val voices = if (tts) copied.filter { !it.name.endsWith(".json", ignoreCase = true) } else emptyList()
+            runOnUiThread {
+                runCatching { dialog.dismiss() }
+                val sb = StringBuilder()
+                if (cancelled.get()) sb.append("Se canceló la copia.\n\n")
+                val ready = when (kind) {
+                    LocalImport.TTS -> voices
+                    LocalImport.MMPROJ -> mmprojs
+                    LocalImport.MODEL -> models + mmprojs
+                }
+                if (ready.isNotEmpty()) {
+                    sb.append("✅ Cargado y listo para usar:\n").append(ready.joinToString("\n") { "• ${it.name} (${sizeLabel(it.length())})" })
+                    sb.append(when (kind) {
+                        LocalImport.TTS -> "\n\nYa es tu voz activa (aparece marcada en ☰ → Voces guardadas)."
+                        LocalImport.MMPROJ -> "\n\nYa es el mmproj del modelo activo: puedes enviarle imágenes."
+                        LocalImport.MODEL -> "\n\nYa es tu modelo activo y se está cargando en tu motor." +
+                            (if (mmprojs.isNotEmpty()) " Su mmproj quedó emparejado." else "")
+                    })
+                    sb.append("\nYa puedes borrar el archivo original del teléfono si quieres ahorrar espacio.")
+                }
+                if (problems.isNotEmpty()) {
+                    if (sb.isNotEmpty()) sb.append("\n\n")
+                    sb.append("⚠️ ").append(problems.joinToString("\n⚠️ "))
+                }
+                if (sb.isEmpty()) sb.append("No se copió ningún archivo.")
+                showImportResult(title, sb.toString())
+                when (kind) {
+                    // 🗣️ La voz queda elegida (igual que tocarla en Voces guardadas)
+                    LocalImport.TTS -> voices.firstOrNull()?.let { v ->
+                        saveSelectedTtsVoice("", SelectableTtsVoice(
+                            id = v.absolutePath, displayName = v.name, source = VoiceSource.DOWNLOADED, localPath = v.absolutePath))
+                    }
+                    // 👁️ El mmproj queda emparejado con el modelo activo y se aplica (si el modelo no estaba cargado, se carga)
+                    LocalImport.MMPROJ -> mmprojs.firstOrNull()?.let { mm -> activateImportedMmproj(mm) }
+                    // 🧠 El modelo queda elegido y se carga en TU motor (NPU/CPU/GPU), con su mmproj si lo subiste
+                    LocalImport.MODEL -> models.firstOrNull()?.let { m -> activateImportedModel(m, mmprojs.firstOrNull()) }
+                        ?: mmprojs.firstOrNull()?.let { mm -> activateImportedMmproj(mm) }
+                }
+                runCatching { updateMmprojButton() }
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        // 📂 Modelo GGUF / voz TTS elegidos desde la memoria del teléfono
+        if (requestCode == PICK_LOCAL_GGUF_REQUEST || requestCode == PICK_LOCAL_TTS_REQUEST || requestCode == PICK_LOCAL_MMPROJ_REQUEST) {
+            if (resultCode != RESULT_OK) return
+            val uris = mutableListOf<Uri>()
+            data?.clipData?.let { clip -> for (n in 0 until clip.itemCount) uris.add(clip.getItemAt(n).uri) }
+            if (uris.isEmpty()) data?.data?.let { uris.add(it) }
+            val kind = when (requestCode) {
+                PICK_LOCAL_TTS_REQUEST -> LocalImport.TTS
+                PICK_LOCAL_MMPROJ_REQUEST -> LocalImport.MMPROJ
+                else -> LocalImport.MODEL
+            }
+            if (uris.isNotEmpty()) importLocalFiles(uris, kind)
+            return
+        }
+        if (requestCode == TAKE_PHOTO_REQUEST) {
+            val uri = cameraPhotoUri
+            cameraPhotoUri = null
+            if (uri == null) return
+            if (resultCode != RESULT_OK) {
+                runCatching { contentResolver.delete(uri, null, null) }
+                return
+            }
+            thread {
+                val copied = copyAttachmentToCache(uri)
+                runOnUiThread {
+                    if (copied != null) setPendingAttachment(copied)
+                    else cumulusToast(this, "No se pudo leer la foto", Toast.LENGTH_SHORT).show()
+                }
+            }
+            return
+        }
+        if (requestCode == PICK_ATTACHMENT_REQUEST && resultCode == RESULT_OK) {
+            val uris = mutableListOf<Uri>()
+            data?.clipData?.let { clip -> for (n in 0 until clip.itemCount) uris.add(clip.getItemAt(n).uri) }
+            if (uris.isEmpty()) data?.data?.let { uris.add(it) }
+            if (uris.isEmpty()) return
+            val fromGallery = attachFromGallery
+            attachFromGallery = false
+            thread {
+                val copied = uris.take(25).mapNotNull { copyAttachmentToCache(it) }
+                runOnUiThread {
+                    // La Galería no dejó leer las fotos: se abre el selector de siempre para elegirlas ahí
+                    if (copied.isEmpty() && fromGallery) {
+                        openAttachmentPicker(arrayOf("image/*"))
+                        return@runOnUiThread
+                    }
+                    copied.forEach { addAttachment(it) }
+                    if (copied.size < uris.size) {
+                        cumulusToast(this, "Algunos archivos no se pudieron abrir", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            return
+        }
+        if (requestCode == PICK_IMAGE_REQUEST && resultCode == RESULT_OK && data != null) {
+            val selectedUri = data.data ?: return
+            // La Galería solo presta la foto por un momento: se guarda una copia PRIVADA dentro de la app
+            // (no en tu galería), así la imagen del chat sigue ahí aunque cierres y abras la app
+            val fromGallery = chatImageFromGallery
+            chatImageFromGallery = false
+            thread {
+                val saved = saveChatImageCopy(selectedUri)
+                runOnUiThread {
+                    // La Galería no dejó leer la foto: se abre el selector de siempre para elegirla ahí
+                    if (saved == null && fromGallery) {
+                        openChatImageFilePicker()
+                        return@runOnUiThread
+                    }
+                    val finalUri = saved?.let { Uri.fromFile(it) } ?: run {
+                        runCatching {
+                            contentResolver.takePersistableUriPermission(selectedUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }.onFailure { Log.w(TAG, "No se pudo conservar el permiso de lectura de la imagen: ${it.message}") }
+                        selectedUri
+                    }
+                    bubbleImageUri = finalUri
+                    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    prefs.edit().putString("bubble_image_uri", finalUri.toString()).apply()
+                    updateBubbleImageEverywhere()
+                    cumulusToast(this, "Imagen personalizada aplicada al chat", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /** Selector de archivos para la imagen del chat (solo si la Galería no está o no dejó leer la foto). */
+    private fun openChatImageFilePicker() {
+        chatImageFromGallery = false
+        val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            type = "image/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
+        runCatching { startActivityForResult(picker, PICK_IMAGE_REQUEST) }
+    }
+
+    /** Copia privada de la imagen del chat (máx. 512 px, suficiente para el avatar). null si no se pudo leer. */
+    private fun saveChatImageCopy(src: Uri): File? = runCatching {
+        val bmp = android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(contentResolver, src)) { decoder, info, _ ->
+            decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
+            val w = info.size.width; val h = info.size.height
+            val f = minOf(1f, 512f / maxOf(w, h))
+            if (f < 1f) decoder.setTargetSize((w * f).toInt().coerceAtLeast(1), (h * f).toInt().coerceAtLeast(1))
+        }
+        // Nombre nuevo cada vez (así la imagen se actualiza al instante) y se borran las copias anteriores
+        val out = File(filesDir, "imagen_chat_${System.currentTimeMillis()}.png")
+        out.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        bmp.recycle()
+        filesDir.listFiles()?.filter { it.name.startsWith("imagen_chat_") && it.name != out.name }?.forEach { it.delete() }
+        out
+    }.onFailure { Log.w(TAG, "No se pudo copiar la imagen del chat: ${it.message}") }.getOrNull()
+
+    private fun useDefaultBubbleImage() {
+        bubbleImageUri = null
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove("bubble_image_uri")
+            .apply()
+        updateBubbleImageEverywhere()
+        cumulusToast(this, "Imagen predeterminada restaurada en el chat", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun updateBubbleImageButton() {
+        btnRestoreChatImage?.isEnabled = bubbleImageUri != null
+    }
+
+    private fun updateBubbleImageEverywhere() {
+        updateBubbleImageButton()
+        updateChatAvatars()
+    }
+
+    // 🔵 Lista de voces: cada voz encerrada en un recuadro con línea azul y esquinas curvas
+    private fun voiceListAdapter(labels: Array<String>): ArrayAdapter<String> =
+        object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_single_choice, labels) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getView(position, convertView, parent)
+                val d = resources.displayMetrics.density
+                v.background = android.graphics.drawable.InsetDrawable(
+                    android.graphics.drawable.GradientDrawable().apply {
+                        cornerRadius = 14 * d
+                        setColor(Color.TRANSPARENT)
+                        setStroke((1.5f * d).toInt(), Color.parseColor("#3D5AFE"))
+                    }, (12 * d).toInt(), (5 * d).toInt(), (12 * d).toInt(), (5 * d).toInt())
+                (v as? TextView)?.apply {
+                    setTextColor(if (isLightMode()) Color.parseColor("#111111") else Color.WHITE)
+                    setPadding((26 * d).toInt(), (14 * d).toInt(), (26 * d).toInt(), (14 * d).toInt())
+                }
+                // 🔵 Círculo de selección: azul cuando está elegida, gris cuando no
+                (v as? android.widget.CheckedTextView)?.checkMarkTintList = ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                    intArrayOf(Color.parseColor("#3D5AFE"), Color.parseColor("#9A9A9A"))
+                )
+                return v
+            }
+        }
+
+    private fun showVoiceSelectionDialog() {
+        val appPrefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val apiKey = appPrefs.getString("eleven_api_key", "")?.trim().orEmpty()
+        val downloadedVoices = getDownloadedTtsChoices()
+
+        val proceed: (List<SelectableTtsVoice>) -> Unit = proceed@{ systemVoices ->
+            if (apiKey.isEmpty()) {
+                showUnifiedVoiceSelectionDialog(
+                    systemVoices = systemVoices,
+                    downloadedVoices = downloadedVoices,
+                    elevenLabsVoices = emptyList(),
+                    elevenLabsApiKey = "",
+                    elevenLabsError = "Guarda una API Key para consultar las voces de ElevenLabs."
+                )
+                return@proceed
+            }
+
+            val progressDialog = ProgressDialog(this).apply {
+                setTitle("Voces disponibles")
+                setMessage("Consultando voces reales de ElevenLabs...")
+                setCancelable(false)
+                show()
+                styleGrayDialog(this)   // 🩶 gris de los botones, curvo y sin línea
+            }
+
+            thread {
+                val result = try {
+                    Result.success(fetchElevenLabsVoices(apiKey))
+                } catch (t: Throwable) {
+                    Result.failure<List<ElevenLabsVoice>>(t)
+                }
+
+                runOnUiThread {
+                    progressDialog.dismiss()
+                    result.onSuccess { voices ->
+                        showUnifiedVoiceSelectionDialog(
+                            systemVoices = systemVoices,
+                            downloadedVoices = downloadedVoices,
+                            elevenLabsVoices = voices,
+                            elevenLabsApiKey = apiKey,
+                            elevenLabsError = null
+                        )
+                    }.onFailure { error ->
+                        showUnifiedVoiceSelectionDialog(
+                            systemVoices = systemVoices,
+                            downloadedVoices = downloadedVoices,
+                            elevenLabsVoices = emptyList(),
+                            elevenLabsApiKey = apiKey,
+                            elevenLabsError = "No se pudieron consultar las voces de ElevenLabs: ${error.message ?: "error de conexión"}"
+                        )
+                    }
+                }
+            }
+            Unit
+        }
+        proceed(emptyList())
+    }
+
+    private fun querySystemVoices(onReady: (List<SelectableTtsVoice>) -> Unit) {
+        voiceBrowserTts?.shutdown()
+        voiceBrowserTts = null
+        voiceBrowserTts = TextToSpeech(applicationContext, object : TextToSpeech.OnInitListener {
+            override fun onInit(status: Int) {
+                val systemVoices = if (status == TextToSpeech.SUCCESS) {
+                    voiceBrowserTts?.voices.orEmpty()
+                        .filter { it.name.isNotBlank() }
+                        .distinctBy { it.name }
+                        .map { voice ->
+                            val networkTag = if (voice.isNetworkConnectionRequired) {
+                                " · requiere red"
+                            } else {
+                                ""
+                            }
+                            SelectableTtsVoice(
+                                id = voice.name,
+                                displayName = "${voice.name} · ${voice.locale.displayName}$networkTag",
+                                source = VoiceSource.SYSTEM
+                            )
+                        }
+                        .sortedBy { it.displayName.lowercase(Locale.getDefault()) }
+                } else {
+                    emptyList()
+                }
+
+                runOnUiThread {
+                    voiceBrowserTts?.shutdown()
+                    voiceBrowserTts = null
+                    onReady(systemVoices)
+                }
+            }
+        })
+    }
+
+    private fun getDownloadedTtsChoices(): List<SelectableTtsVoice> {
+        val managedVoices = runCatching {
+            VoiceManager(this).getDownloadedVoices()
+        }.getOrDefault(emptyList())
+
+        val downloadsDirectory = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        val downloadedFiles = downloadsDirectory?.listFiles { _, name ->
+            name.endsWith(".onnx", ignoreCase = true) ||
+                name.endsWith(".bin", ignoreCase = true) ||
+                name.endsWith(".zip", ignoreCase = true)
+        }.orEmpty()
+
+        return (managedVoices.map { voice ->
+            voice.filePath to voice.name
+        } + downloadedFiles.map { file ->
+            file.absolutePath to file.name
+        })
+            .distinctBy { it.first }
+            .map { (path, name) ->
+                SelectableTtsVoice(
+                    id = path,
+                    displayName = name,
+                    source = VoiceSource.DOWNLOADED,
+                    localPath = path
+                )
+            }
+            .sortedBy { it.displayName.lowercase(Locale.getDefault()) }
+    }
+
+    private fun showUnifiedVoiceSelectionDialog(
+        systemVoices: List<SelectableTtsVoice>,
+        downloadedVoices: List<SelectableTtsVoice>,
+        elevenLabsVoices: List<ElevenLabsVoice>,
+        elevenLabsApiKey: String,
+        elevenLabsError: String?
+    ) {
+        val choices = buildList {
+            add(
+                SelectableTtsVoice(
+                    id = "__system_default__",
+                    displayName = "Voz predeterminada del teléfono",
+                    source = VoiceSource.SYSTEM
+                )
+            )
+            addAll(downloadedVoices)
+            addAll(elevenLabsVoices.filter { voice ->
+                val category = voice.category.lowercase(Locale.US)
+                category != "premade" && category != "default"
+            }.map { voice ->
+                SelectableTtsVoice(
+                    id = voice.id,
+                    displayName = voice.name,
+                    source = VoiceSource.ELEVEN_LABS
+                )
+            })
+        }
+
+        if (choices.isEmpty()) {
+            cumulusToast(this, "No hay voces disponibles para seleccionar", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        if (!elevenLabsError.isNullOrBlank()) {
+            cumulusToast(this, elevenLabsError, Toast.LENGTH_LONG).show()
+        }
+
+        val ttsPrefs = getSharedPreferences("TtsPrefs", Context.MODE_PRIVATE)
+        val selectedId = when (ttsPrefs.getString("selected_provider", null)) {
+            "ANDROID_DEFAULT" -> "__system_default__"
+            "LOCAL_DOWNLOADED" -> ttsPrefs.getString("local_voice_path", null)
+            "ELEVEN_LABS" -> ttsPrefs.getString("elevenlabs_voice_id", null)
+            else -> null
+        }
+        val selectedIndex = choices.indexOfFirst { it.id == selectedId }
+        val labels = choices.map { choice ->
+            val sourceLabel = when (choice.source) {
+                VoiceSource.SYSTEM -> "Teléfono"
+                VoiceSource.DOWNLOADED -> "TTS descargada"
+                VoiceSource.ELEVEN_LABS -> "ElevenLabs"
+            }
+            "$sourceLabel · ${choice.displayName}"
+        }.toTypedArray()
+
+        // 🔵 Lista hecha a mano: cada voz en su recuadro azul, con "Eliminar" debajo
+        val d = resources.displayMetrics.density
+        val dp = { v: Int -> (v * d).toInt() }
+        val light = isLightMode()
+        val textColor = if (light) Color.parseColor("#111111") else Color.WHITE
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+        }
+        val scroll = android.widget.ScrollView(this).apply { addView(list) }
+        lateinit var dialog: AlertDialog
+
+        choices.forEachIndexed { i, choice ->
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(16), dp(12), dp(12), dp(10))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 14 * d
+                    // ⚪ Línea blanca alrededor del nombre de la voz (oscura en modo claro)
+                    setStroke((1.5f * d).toInt(), if (light) pillTextDark else Color.WHITE)
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(5); bottomMargin = dp(5) }
+            }
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+            }
+            row.addView(TextView(this).apply {
+                text = labels[i]
+                textSize = 17f
+                setTextColor(textColor)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            // Círculo: azul relleno si es la voz elegida, gris vacío si no
+            row.addView(View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginStart = dp(10) }
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    if (i == selectedIndex) {
+                        setColor(Color.parseColor("#3D5AFE")); setStroke(dp(2), Color.parseColor("#3D5AFE"))
+                    } else setStroke(dp(2), Color.parseColor("#9A9A9A"))
+                }
+            })
+            box.addView(row)
+            // Elegir la voz tocando el recuadro
+            box.setOnClickListener {
+                saveSelectedTtsVoice(elevenLabsApiKey, choice)
+                cumulusToast(this, "Voz activa: ${choice.displayName}", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+            }
+            // 🗑 Eliminar (no aplica a la voz del teléfono)
+            if (choice.source != VoiceSource.SYSTEM) {
+                box.addView(TextView(this).apply {
+                    text = "🗑 Eliminar"
+                    textSize = 14f
+                    setTextColor(Color.parseColor("#E53935"))
+                    setPadding(0, dp(8), dp(4), dp(2))
+                    setOnClickListener {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("Eliminar voz")
+                            .setMessage("¿Eliminar «${choice.displayName}»?" +
+                                if (choice.source == VoiceSource.ELEVEN_LABS) "\nSe borrará también de tu cuenta de ElevenLabs." else "")
+                            .setNegativeButton("Cancelar", null)
+                            .setPositiveButton("Eliminar") { _, _ ->
+                                deleteSavedVoice(choice, elevenLabsApiKey) { ok ->
+                                    if (ok) {
+                                        list.removeView(box)
+                                        cumulusToast(this@MainActivity, "🗑 Voz eliminada", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                            .show().also { styleGrayDialog(it) }
+                    }
+                })
+            }
+            list.addView(box)
+        }
+
+        dialog = AlertDialog.Builder(this)
+            .setTitle("Voces guardadas")
+            .setView(scroll)
+            .setNegativeButton("Cancelar", null)
+            .create()
+        dialog.show()
+        styleGrayDialog(dialog)   // 🩶 gris de los botones, curvo, sin línea y «Cancelar» en blanco
+    }
+
+    // Borra una voz: las de ElevenLabs en tu cuenta (internet); las descargadas, del teléfono
+    private fun deleteSavedVoice(choice: SelectableTtsVoice, apiKey: String, done: (Boolean) -> Unit) {
+        val ttsPrefs = getSharedPreferences("TtsPrefs", Context.MODE_PRIVATE)
+        when (choice.source) {
+            VoiceSource.DOWNLOADED -> {
+                val ok = choice.localPath?.let { File(it).delete() } ?: false
+                if (ttsPrefs.getString("local_voice_path", null) == choice.localPath) {
+                    ttsPrefs.edit().remove("local_voice_path").putString("selected_provider", "ANDROID_DEFAULT").apply()
+                }
+                if (!ok) cumulusToast(this, "No se pudo borrar el archivo", Toast.LENGTH_SHORT).show()
+                done(ok)
+            }
+            VoiceSource.ELEVEN_LABS -> thread {
+                val ok = runCatching {
+                    val c = (URL("https://api.elevenlabs.io/v1/voices/${choice.id}").openConnection() as HttpURLConnection).apply {
+                        requestMethod = "DELETE"
+                        setRequestProperty("xi-api-key", apiKey)
+                        connectTimeout = 20000; readTimeout = 20000
+                    }
+                    val code = c.responseCode
+                    c.disconnect()
+                    code in 200..299
+                }.getOrDefault(false)
+                runOnUiThread {
+                    if (ok && ttsPrefs.getString("elevenlabs_voice_id", null) == choice.id) {
+                        ttsPrefs.edit().remove("elevenlabs_voice_id").putString("selected_provider", "ANDROID_DEFAULT").apply()
+                        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().remove("eleven_active_voice_id").apply()
+                    }
+                    if (!ok) cumulusToast(this, "❌ No se pudo eliminar en ElevenLabs (revisa internet o la API key)", Toast.LENGTH_LONG).show()
+                    done(ok)
+                }
+            }
+            else -> done(false)
+        }
+    }
+
+    private fun fetchElevenLabsVoices(apiKey: String): List<ElevenLabsVoice> {
+        val connection = (URL("https://api.elevenlabs.io/v1/voices").openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 30000
+            readTimeout = 30000
+            setRequestProperty("xi-api-key", apiKey)
+            setRequestProperty("Accept", "application/json")
+            connect()
+        }
+
+        try {
+            val responseCode = connection.responseCode
+            val responseStream = if (responseCode in 200..299) {
+                connection.inputStream
+            } else {
+                connection.errorStream ?: throw Exception("HTTP $responseCode")
+            }
+            val responseBody = responseStream.bufferedReader().use { it.readText() }
+            if (responseCode !in 200..299) {
+                throw Exception(describeElevenLabsError(responseCode, responseBody))
+            }
+
+            val voicesJson = JSONObject(responseBody).optJSONArray("voices") ?: JSONArray()
+            return buildList {
+                for (index in 0 until voicesJson.length()) {
+                    val voice = voicesJson.optJSONObject(index) ?: continue
+                    val id = voice.optString("voice_id").trim()
+                    val name = voice.optString("name").trim()
+                    if (id.isEmpty() || name.isEmpty()) continue
+
+                    val labelsJson = voice.optJSONObject("labels")
+                    val labels = labelsJson?.keys()?.asSequence()
+                        ?.mapNotNull { key ->
+                            val value = labelsJson.optString(key).trim()
+                            if (value.isBlank()) null else "$key: $value"
+                        }
+                        ?.joinToString(" · ")
+                        .orEmpty()
+
+                    add(
+                        ElevenLabsVoice(
+                            id = id,
+                            name = name,
+                            category = voice.optString("category").trim(),
+                            labels = labels
+                        )
+                    )
+                }
+            }.sortedBy { it.name.lowercase(Locale.getDefault()) }
+        } finally {
+            connection.disconnect()
+        }
+    }
+    private fun saveSelectedTtsVoice(apiKey: String, voice: SelectableTtsVoice) {
+        val ttsPrefs = getSharedPreferences("TtsPrefs", Context.MODE_PRIVATE)
+        val appPrefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        when (voice.source) {
+            VoiceSource.SYSTEM -> {
+                ttsPrefs.edit()
+                    .putString("selected_provider", "ANDROID_DEFAULT")
+                    .remove("android_voice_name")
+                    .remove("local_voice_path")
+                    .apply()
+            }
+            VoiceSource.DOWNLOADED -> {
+                val localPath = voice.localPath ?: voice.id
+                VoiceManager(this).saveSelectedVoice(localPath)
+                ttsPrefs.edit()
+                    .putString("selected_provider", "LOCAL_DOWNLOADED")
+                    .putString("local_voice_path", localPath)
+                    .apply()
+            }
+            VoiceSource.ELEVEN_LABS -> {
+                appPrefs.edit()
+                    .putString("eleven_active_voice_id", voice.id)
+                    .apply()
+                ttsPrefs.edit()
+                    .putString("elevenlabs_api_key", apiKey)
+                    .putString("elevenlabs_voice_id", voice.id)
+                    .putString("selected_provider", "ELEVEN_LABS")
+                    .apply()
+            }
+        }
+        // Si estaba hablando, se calla con la voz anterior (y no queda marcada como «hablando»)
+        markAiCutForMic()
+        isTtsSpeaking = false
+        replyTtsActive = false
+        chatTtsEngine?.release()
+        chatTtsEngine = TtsEngineManager(this)
+    }
+    // ▶️/⏹️ Botón Probar de ElevenLabs: gris «Probar» ↔ rojo «Parar»
+    private var elevenTestPlaying = false
+    private var elevenTestTint: android.content.res.ColorStateList? = null
+    private var elevenTestLabel: CharSequence? = null
+
+    private fun setElevenTestButton(playing: Boolean) {
+        val b = btnElevenTest ?: return
+        if (elevenTestLabel == null) { elevenTestLabel = b.text; elevenTestTint = b.backgroundTintList }
+        elevenTestPlaying = playing
+        if (playing) {
+            b.text = "Parar"
+            b.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#D32F2F"))
+        } else {
+            b.text = elevenTestLabel
+            b.backgroundTintList = elevenTestTint
+        }
+        stylePill(b)   // 💊 sigue siendo píldora (gris ↔ roja)
+    }
+
+    private fun stopElevenTest() {
+        runCatching { mediaPlayer?.let { if (it.isPlaying) it.stop(); it.release() } }
+        mediaPlayer = null
+        setElevenTestButton(false)
+    }
+
+    /**
+     * 🔕 Avisos emergentes desactivados: ya no aparece ninguno (quedan solo en el registro interno).
+     * Todas las acciones siguen funcionando igual; solo se quita el aviso.
+     */
+    private class QuietToast(private val toast: Toast?) { fun show() { toast?.show() } }
+
+    private fun cumulusToast(ctx: Context, text: CharSequence?, duration: Int): QuietToast {
+        val t = text?.toString().orEmpty()
+        // 🔕 Sin avisos emergentes: la app ya es estable (el usuario lo pidió). Las acciones siguen igual.
+        Log.d(TAG, "Aviso (oculto): $t")
+        return QuietToast(null)
+    }
+
+    private fun isImportantNotice(t: String): Boolean {
+        val low = t.lowercase(Locale.ROOT)
+        val keys = listOf("⚠", "❌", "error", "no se pudo", "no pude", "no puedo", "falta", "primero",
+            "da permiso", "permiso", "no disponible", "no hay ", "sin conexión", "no tiene conexión", "revisa",
+            "inténtalo", "intentalo", "no corresponde", "no responde", "falló", "fallo", "detén", "necesito",
+            "escribe", "espera a", "introduce", "ya está en curso", "todavía no", "no encontr", "no existe")
+        return keys.any { low.contains(it) }
+    }
+
+    /** Permite ajustar la barra deslizando el dedo: bloquea el panel lateral y el scroll mientras arrastras. */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun enableSlideDrag(sb: SeekBar) {
+        sb.setOnTouchListener { v, ev ->
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE -> {
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                    drawerLayout?.let { d ->
+                        for (g in intArrayOf(androidx.core.view.GravityCompat.START, androidx.core.view.GravityCompat.END))
+                            if (d.isDrawerOpen(g)) d.setDrawerLockMode(androidx.drawerlayout.widget.DrawerLayout.LOCK_MODE_LOCKED_OPEN, g)
+                    }
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
+                    drawerLayout?.let { d ->
+                        for (g in intArrayOf(androidx.core.view.GravityCompat.START, androidx.core.view.GravityCompat.END))
+                            if (d.getDrawerLockMode(g) == androidx.drawerlayout.widget.DrawerLayout.LOCK_MODE_LOCKED_OPEN)
+                                d.setDrawerLockMode(androidx.drawerlayout.widget.DrawerLayout.LOCK_MODE_UNLOCKED, g)
+                    }
+                }
+            }
+            false   // la barra sigue recibiendo el toque y se mueve con el dedo
+        }
+    }
+
+    private fun setupDrawerControls() {
+        val drawer = drawerLayout ?: return
+
+        // Los paneles laterales absorben los toques: así tocar un espacio vacío
+        // del panel ya no activa el micrófono ni el menú de modos del chat de atrás.
+        for (i in 0 until drawer.childCount) {
+            val child = drawer.getChildAt(i)
+            val lp = child.layoutParams as? androidx.drawerlayout.widget.DrawerLayout.LayoutParams ?: continue
+            if (lp.gravity != android.view.Gravity.NO_GRAVITY) {
+                child.isClickable = true
+                child.isFocusable = false
+                child.setOnTouchListener { _, _ -> false }
+                child.setOnClickListener { }
+            }
+        }
+
+        // ✨ Tres rayas y llave sin fondo: solo queda el ícono (al tocarlos aparece un círculo suave)
+        val borderlessBg = android.util.TypedValue().also {
+            theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, it, true)
+        }.resourceId
+        listOf(R.id.btn_open_left_drawer, R.id.btn_open_right_drawer).forEach { id ->
+            findViewById<ImageButton>(id)?.setBackgroundResource(borderlessBg)
+        }
+        // ⚙️ Tuerca de líneas finas en vez de la llave (res/drawable/ic_settings_gear.xml)
+        findViewById<ImageButton>(R.id.btn_open_right_drawer)?.apply {
+            setImageResource(R.drawable.ic_settings_gear)
+            scaleType = ImageView.ScaleType.CENTER
+        }
+        // ☰ Tres rayas blancas del mismo estilo y color que la tuerca (antes el ícono del sistema se veía gris)
+        findViewById<ImageButton>(R.id.btn_open_left_drawer)?.apply {
+            setImageDrawable(MenuLinesIcon((28 * resources.displayMetrics.density).toInt()))
+            scaleType = ImageView.ScaleType.CENTER
+        }
+
+        findViewById<ImageButton>(R.id.btn_open_left_drawer)?.setOnClickListener {
+            if (drawer.isDrawerOpen(GravityCompat.END)) {
+                drawer.closeDrawer(GravityCompat.END)
+            }
+            drawer.openDrawer(GravityCompat.START)
+        }
+
+        findViewById<ImageButton>(R.id.btn_open_right_drawer)?.setOnClickListener {
+            if (drawer.isDrawerOpen(GravityCompat.START)) {
+                drawer.closeDrawer(GravityCompat.START)
+            }
+            // La tuerca siempre abre la pantalla principal de configuración.
+            showSettingsPage(PAGE_SETTINGS)
+            drawer.openDrawer(GravityCompat.END)
+        }
+    }
+
+
+
+
+    private fun setupRightDrawerActions() {
+        btnOpenGgufDownloads?.setOnClickListener {
+            showSettingsPage(PAGE_GGUF_DOWNLOAD)
+        }
+
+        btnOpenTtsDownloads?.setOnClickListener {
+            showSettingsPage(PAGE_TTS_DOWNLOAD)
+        }
+
+        // 📂 SUBIR GGUF / SUBIR TTS: abre la memoria del teléfono para elegir un archivo que ya tienes
+        btnUploadGguf?.setOnClickListener { openLocalFilePicker(PICK_LOCAL_GGUF_REQUEST) }
+        btnUploadTts?.setOnClickListener { openLocalFilePicker(PICK_LOCAL_TTS_REQUEST) }
+        btnUploadMmproj?.setOnClickListener { openLocalFilePicker(PICK_LOCAL_MMPROJ_REQUEST) }
+
+        btnBackFromGgufDownload?.setOnClickListener {
+            showSettingsPage(PAGE_SETTINGS)
+        }
+
+        btnBackFromTtsDownload?.setOnClickListener {
+            showSettingsPage(PAGE_SETTINGS)
+        }
+
+        val backends = arrayOf("⚡ NPU (Hexagon)", "💻 CPU (NEON)", "🎮 GPU (Adreno)")
+        // Lista NPU/CPU/GPU: fondo blanco en modo claro, negro en modo oscuro (esquinas curvas y borde gris)
+        val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, backends) {
+            override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getDropDownView(position, convertView, parent)
+                (v as? TextView)?.apply {
+                    setTextColor(if (isLightMode()) Color.parseColor("#111111") else Color.WHITE)
+                    setBackgroundColor(Color.TRANSPARENT)
+                }
+                return v
+            }
+        }
+        spinnerBackend?.adapter = adapter
+        fun refreshSpinnerPopup() {
+            val d = resources.displayMetrics.density
+            val light = isLightMode()
+            // 🩶 Lista NPU/CPU/GPU: mismo gris de los botones y sin línea alrededor
+            spinnerBackend?.setPopupBackgroundDrawable(android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 16 * d
+                setColor(if (light) pillGrayLight else pillGrayDark)
+            })
+        }
+        refreshSpinnerPopup()
+        // Antes de abrir la lista se revisa el modo (por si cambiaste de claro a oscuro)
+        spinnerBackend?.setOnTouchListener { _, ev ->
+            if (ev.action == android.view.MotionEvent.ACTION_DOWN) refreshSpinnerPopup()
+            false
+        }
+
+        val savedIndex = backends.indexOf(getSavedBackend())
+        if (savedIndex >= 0) spinnerBackend?.setSelection(savedIndex)
+
+        spinnerBackend?.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val selected = parent?.getItemAtPosition(position)?.toString() ?: return
+                if (selected != getSavedBackend()) {
+                    Log.d(TAG, "═══════════════════════════════════════════════════")
+                    Log.d(TAG, "🔄 Usuario cambió backend: $selected")
+                    Log.d(TAG, "═══════════════════════════════════════════════════")
+                    
+                    saveBackend(selected)
+                    applyBackendToEngine(selected)
+                    
+                    if (selected == "⚡ NPU (Hexagon)") {
+                        // ✅ MEJORADO: Mensaje más claro sobre NPU
+                        cumulusToast(
+                            this@MainActivity, 
+                            "⚡ NPU activada — GGUF Q4_0 con GenieX de Qualcomm, o .litertlm hechos para tu chip.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    } else if (selected == "🎮 GPU (Adreno)") {
+                        cumulusToast(this@MainActivity, "🎮 GPU activada — GGUF con GenieX (Qualcomm) o modelos .litertlm (LiteRT).", Toast.LENGTH_LONG).show()
+                            
+                        
+                    } else if (selected == "💻 CPU (NEON)") {
+                        cumulusToast(this@MainActivity, "💻 CPU activada — modo compatible universal", Toast.LENGTH_SHORT).show()
+                    }
+                    
+                    if (isModelLoadedInMemory) {
+                        reloadModelWithBackend(selected)
+                    }
+                }
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        btnModelName?.setOnClickListener {
+            showSelectModelDialog()
+        }
+
+        btnBackend?.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Seleccionar Backend")
+                .setItems(backends) { _, which ->
+                    spinnerBackend?.setSelection(which)
+                    cumulusToast(this, "Backend seleccionado: ${backends[which]}", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("Cancelar", null)
+                .show().also { styleGrayDialog(it) }
+        }
+
+        btnAddGgufUrl?.setOnClickListener {
+            val urlString = etGgufUrl?.text?.toString()?.trim() ?: ""
+            if (urlString.isEmpty()) {
+                cumulusToast(this, "Introduce una URL GGUF o LiteRT-LM válida", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val slot = createDownloadSlot(DownloadType.GGUF)
+            if (slot == null) {
+                cumulusToast(this, "No se pudo crear la tarjeta de descarga", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            ggufSlots.add(slot)
+            updateEmptyDownloadState(DownloadType.GGUF)
+            startManagedDownload(
+                slot = slot,
+                url = urlString,
+                fileName = if (
+                    urlString.substringBefore('?').endsWith(".litertlm", ignoreCase = true)
+                ) "model.litertlm" else "model.gguf",
+                title = "Descargando Modelo de IA",
+                onDone = { downloadedFile ->
+                    // Se recuerda de qué carpeta de Hugging Face vino (para emparejar modelo y mmproj)
+                    Regex("huggingface\\.co/([^/]+/[^/]+)").find(urlString)?.groupValues?.get(1)?.let { repo ->
+                        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                            .putString("repo_of_" + downloadedFile.name, repo.lowercase(Locale.ROOT)).apply()
+                    }
+                    onGgufDownloadFinished(downloadedFile)
+                }
+            )
+            etGgufUrl?.text?.clear()
+        }
+
+        btnAddTtsUrl?.setOnClickListener {
+            val urlString = etTtsUrl?.text?.toString()?.trim() ?: ""
+            if (urlString.isEmpty()) {
+                cumulusToast(this, "Introduce una URL TTS válida", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val slot = createDownloadSlot(DownloadType.TTS)
+            if (slot == null) {
+                cumulusToast(this, "No se pudo crear la tarjeta de descarga", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            ttsSlots.add(slot)
+            updateEmptyDownloadState(DownloadType.TTS)
+            startManagedDownload(
+                slot = slot,
+                url = urlString,
+                fileName = "voces_tts.onnx",
+                title = "Descargando Voces TTS",
+                onDone = { downloadedFile ->
+                    cumulusToast(this, "Voces TTS descargadas: ${downloadedFile.name}", Toast.LENGTH_LONG).show()
+                }
+            )
+            etTtsUrl?.text?.clear()
+        }
+
+        btnLoadModel?.setOnClickListener {
+            if (isModelLoadedInMemory || (!isAutoLoadEnabled() && isManualModelPinned())) {
+                // Manual: tocar "MODELO ACTIVO" lo desactiva (también si aún se estaba recargando)
+                setManualModelPinned(false)
+                releaseModelFromMemory()
+                updateLoadModelButton()
+            } else {
+                loadModelIntoMemoryManual()
+            }
+        }
+        
+        tvModelLoadedName?.setOnClickListener {
+            loadModelIntoMemoryManual()
+        }
+    }
+
+    private fun showSettingsPage(page: Int) {
+        settingsPageFlipper?.displayedChild = page
+        // 📥 Los botones MODELOS GGUF / LITERT-LM y VOCES TTS solo se ven en la pantalla de MODELO ACTIVO:
+        //    al tocarlos se entra a esa descarga y ahí ya no aparecen (se vuelve con la flecha ← o con Atrás)
+        (btnOpenGgufDownloads?.parent as? View)?.visibility = if (page == PAGE_SETTINGS) View.VISIBLE else View.GONE
+    }
+
+    private fun restoreSavedDownloads() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val records = try {
+            JSONArray(prefs.getString(KEY_DOWNLOADS, "[]") ?: "[]")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Registros de descargas dañados; se ignorarán", t)
+            JSONArray()
+        }
+
+        for (index in 0 until records.length()) {
+            val record = records.optJSONObject(index) ?: continue
+            val type = when (record.optString("type")) {
+                DownloadType.GGUF.name -> DownloadType.GGUF
+                DownloadType.TTS.name -> DownloadType.TTS
+                else -> continue
+            }
+            val url = record.optString("url").trim()
+            val path = record.optString("filePath").trim()
+            if (url.isEmpty() || path.isEmpty()) continue
+
+            val slot = createDownloadSlot(type) ?: continue
+            slot.id = record.optString("id").ifBlank { slot.id }
+            slot.url = url
+            slot.title = record.optString(
+                "title",
+                if (type == DownloadType.GGUF) "Descargando Modelo de IA" else "Descargando Voces TTS"
+            )
+            slotsFor(type).add(slot)
+            updateEmptyDownloadState(type)
+
+            val file = File(path)
+            val savedState = runCatching {
+                ResumableDownloader.State.valueOf(
+                    record.optString("state", ResumableDownloader.State.DOWNLOADING.name)
+                )
+            }.getOrDefault(ResumableDownloader.State.DOWNLOADING)
+
+            startManagedDownload(
+                slot = slot,
+                url = url,
+                fileName = file.name,
+                title = slot.title,
+                onDone = { downloadedFile ->
+                    if (type == DownloadType.GGUF) {
+                        if (isMmprojFile(downloadedFile)) {
+                            if (getSelectedMmprojFile() == null) setSelectedMmproj(downloadedFile)
+                        } else {
+                            setSelectedModelFile(downloadedFile)
+                            checkStoredModelStatus()
+                        }
+                    }
+                },
+                existingFile = file,
+                initialState = savedState
+            )
+        }
+    }
+
+    private fun persistDownloadRecord(
+        slot: DownloadSlot,
+        url: String = slot.url,
+        file: File? = null,
+        title: String = slot.title,
+        state: ResumableDownloader.State
+    ) {
+        val targetFile = file ?: slot.file ?: return
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val records = try {
+            JSONArray(prefs.getString(KEY_DOWNLOADS, "[]") ?: "[]")
+        } catch (_: Throwable) {
+            JSONArray()
+        }
+
+        var existingIndex = -1
+        for (index in 0 until records.length()) {
+            if (records.optJSONObject(index)?.optString("id") == slot.id) {
+                existingIndex = index
+                break
+            }
+        }
+
+        val record = JSONObject()
+            .put("id", slot.id)
+            .put("type", slot.type.name)
+            .put("url", url)
+            .put("filePath", targetFile.absolutePath)
+            .put("title", title)
+            .put("state", state.name)
+
+        if (existingIndex >= 0) {
+            records.put(existingIndex, record)
+        } else {
+            records.put(record)
+        }
+        prefs.edit().putString(KEY_DOWNLOADS, records.toString()).apply()
+    }
+
+    private fun removeDownloadRecord(slot: DownloadSlot) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val oldRecords = try {
+            JSONArray(prefs.getString(KEY_DOWNLOADS, "[]") ?: "[]")
+        } catch (_: Throwable) {
+            JSONArray()
+        }
+        val records = JSONArray()
+        for (index in 0 until oldRecords.length()) {
+            val record = oldRecords.optJSONObject(index) ?: continue
+            if (record.optString("id") != slot.id) records.put(record)
+        }
+        prefs.edit().putString(KEY_DOWNLOADS, records.toString()).apply()
+    }
+
+    private fun createDownloadSlot(type: DownloadType): DownloadSlot? {
+        val container = when (type) {
+            DownloadType.GGUF -> ggufDownloadsContainer
+            DownloadType.TTS -> ttsDownloadsContainer
+        } ?: return null
+
+        val itemView = layoutInflater.inflate(
+            when (type) {
+                DownloadType.GGUF -> R.layout.download_item_gguf
+                DownloadType.TTS -> R.layout.download_item_tts
+            },
+            container,
+            false
+        )
+        val ids = when (type) {
+            DownloadType.GGUF -> intArrayOf(
+                R.id.tv_download_title_gguf,
+                R.id.tv_download_status_gguf,
+                R.id.progress_download_gguf,
+                R.id.btn_pause_gguf,
+                R.id.btn_resume_gguf,
+                R.id.btn_delete_gguf,
+                R.id.tv_download_kind_gguf,
+                R.id.tv_download_label_gguf,
+                R.id.tv_download_percent_gguf
+            )
+            DownloadType.TTS -> intArrayOf(
+                R.id.tv_download_title_tts,
+                R.id.tv_download_status_tts,
+                R.id.progress_download_tts,
+                R.id.btn_pause_tts,
+                R.id.btn_resume_tts,
+                R.id.btn_delete_tts,
+                R.id.tv_download_kind_tts,
+                R.id.tv_download_label_tts,
+                R.id.tv_download_percent_tts
+            )
+        }
+        val ui = DownloadUi(
+            itemView,
+            itemView.findViewById(ids[0]),
+            itemView.findViewById(ids[1]),
+            itemView.findViewById(ids[2]),
+            itemView.findViewById(ids[3]),
+            itemView.findViewById(ids[4]),
+            itemView.findViewById(ids[5]),
+            itemView.findViewById(ids[6]),
+            itemView.findViewById(ids[7]),
+            itemView.findViewById(ids[8])
+        )
+        // Textos de los botones escritos aquí para evitar símbolos raros (Â, ðŸ)
+        ui.btnPause.text = LanguageManager.text(this, "Pausar")
+        ui.btnResume.text = LanguageManager.text(this, "Reanudar")
+        ui.btnDelete.text = LanguageManager.text(this, "Eliminar")
+        ui.label?.text = LanguageManager.text(this, if (type == DownloadType.TTS) "Nombre de la voz" else "Nombre del modelo")
+        // ⬛ Tarjeta gris oscuro (un poco más oscura que antes, pero más clara que los botones), esquinas bien curvas
+        val dpx = resources.displayMetrics.density
+        itemView.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 24 * dpx
+            setColor(Color.parseColor("#262628"))
+        }
+        container.addView(itemView)
+        // 🔘 Pausar / Reanudar / Eliminar con esquinas más curvas
+        listOf(ui.btnPause, ui.btnResume, ui.btnDelete).forEach { b ->
+            val r = 14 * resources.displayMetrics.density
+            if (b is MaterialButton) b.cornerRadius = r.toInt()
+            else b.background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = r
+                setColor(Color.WHITE)   // el color real lo pone su backgroundTint (azul, rojo o negro)
+            }
+        }
+        stylePillsIn(itemView, isLightMode(), onCard = true)   // 💊 píldoras grises
+        applyTapRipple(itemView)                               // 💧 destello azul al tocar
+        // 📏 Pausar, Reanudar y Eliminar: los tres del mismo tamaño y en una sola línea.
+        //    Si la letra del teléfono es grande, el texto se achica un poco en vez de cortarse («REANUD-AR»).
+        listOf(ui.btnPause, ui.btnResume, ui.btnDelete).forEach { b ->
+            b.maxLines = 1
+            b.layoutParams = b.layoutParams.apply { height = (50 * dpx).toInt() }
+            b.setAutoSizeTextTypeUniformWithConfiguration(8, 13, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+        }
+        if (isLightMode()) recolorTree(itemView, true)   // ⬜ botón Pausar blanco en modo claro
+        // 🔵 Barra de progreso azul oscuro con puntas redondas: la parte llena crece como una píldora
+        val barColor = Color.parseColor("#3949AB")   // mismo azul oscuro de los botones
+        val barTrack = Color.parseColor("#40000000")   // riel: un poco más oscuro que la tarjeta
+        ui.progress.progressDrawable = android.graphics.drawable.LayerDrawable(arrayOf(
+            android.graphics.drawable.GradientDrawable().apply { cornerRadius = 99 * dpx; setColor(barTrack) },
+            android.graphics.drawable.ScaleDrawable(
+                android.graphics.drawable.GradientDrawable().apply { cornerRadius = 99 * dpx; setColor(barColor) },
+                android.view.Gravity.START, 1f, -1f
+            )
+        )).apply { setId(0, android.R.id.background); setId(1, android.R.id.progress) }
+        ui.progress.progressTintList = ColorStateList.valueOf(barColor)
+        ui.progress.progressBackgroundTintList = ColorStateList.valueOf(barTrack)
+        setDownloadProgress(ui, ui.progress.progress)
+        if (isLightMode()) recolorTree(itemView, true)
+        return DownloadSlot(type, ui)
+    }
+
+    // ========================================================================
+    // 🔖 URL GGUF GUARDADAS: el usuario guarda las URL que le funcionan bien para usarlas después.
+    //    Botón gris «GUARDAR URL GGUF» junto al título MODELOS GGUF → ventana con la barra de la URL,
+    //    los botones GUARDAR · BORRAR · COPIAR, y una tarjeta por cada URL guardada (igual a las de descarga).
+    // ========================================================================
+    private fun setupSavedGgufUrlButton() {
+        val header = btnBackFromGgufDownload?.parent as? LinearLayout ?: return
+        val d = resources.displayMetrics.density
+        header.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))   // empuja el botón a la derecha
+        val btn = MaterialButton(this).apply {
+            text = "GUARDAR URL GGUF"
+            textSize = 11f
+            maxLines = 2
+            minHeight = 0; minimumHeight = 0
+            setPadding((14 * d).toInt(), (8 * d).toInt(), (14 * d).toInt(), (8 * d).toInt())
+            insetTop = 0; insetBottom = 0
+            setOnClickListener { showSavedGgufUrls() }
+        }
+        header.addView(btn, LinearLayout.LayoutParams((128 * d).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT))
+        stylePill(btn)
+        applyTapRipple(btn)
+    }
+
+    private fun savedGgufUrls(): MutableList<String> = runCatching {
+        val arr = org.json.JSONArray(getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("saved_gguf_urls", "[]"))
+        (0 until arr.length()).map { arr.getString(it) }.toMutableList()
+    }.getOrDefault(mutableListOf())
+
+    private fun storeSavedGgufUrls(list: List<String>) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString("saved_gguf_urls", org.json.JSONArray(list).toString()).apply()
+    }
+
+    private fun copyText(label: String, text: String) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+    }
+
+    /** Nombre del archivo que trae la URL (sin carpetas, sin «?download=true» y sin la extensión). */
+    private fun fileNameFromUrl(url: String): String {
+        val raw = url.substringBefore('?').substringBefore('#').trimEnd('/').substringAfterLast('/')
+        val name = runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+        return name.substringBeforeLast('.').ifBlank { name.ifBlank { url } }
+    }
+
+    private fun showSavedGgufUrls() {
+        val d = resources.displayMetrics.density
+        val light = isLightMode()
+        // Dentro de la ventana gris: tarjetas y botones un poco más claros para que se vean
+        val cardColor = if (light) Color.WHITE else Color.parseColor("#2C2C2E")
+        val btnColor = if (light) Color.parseColor("#D1D1D6") else Color.parseColor("#3A3A3C")
+        val textMain = if (light) pillTextDark else Color.WHITE
+        val textSoft = if (light) Color.parseColor("#6E6E73") else Color.parseColor("#9A9A9A")
+        fun pill(label: String, onClick: () -> Unit) = MaterialButton(this).apply {
+            text = label
+            textSize = 12f
+            maxLines = 1
+            insetTop = 0; insetBottom = 0
+            setTextColor(textMain)
+            backgroundTintList = ColorStateList.valueOf(btnColor)
+            strokeWidth = 0
+            cornerRadius = (24 * d).toInt()
+            setOnClickListener { onClick() }
+            setAutoSizeTextTypeUniformWithConfiguration(8, 12, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+        }
+        fun row(vararg buttons: MaterialButton) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            buttons.forEachIndexed { i, b ->
+                addView(b, LinearLayout.LayoutParams(0, (46 * d).toInt(), 1f).apply {
+                    if (i > 0) marginStart = (8 * d).toInt()
+                })
+            }
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((20 * d).toInt(), (20 * d).toInt(), (20 * d).toInt(), (16 * d).toInt())
+        }
+        var dialog: AlertDialog? = null
+        // ⬆️ Arriba de la barra: el título y el botón SALIR
+        val top = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+        }
+        top.addView(TextView(this).apply {
+            text = "🔖 URL GGUF guardadas"
+            textSize = 17f; setTextColor(textMain); setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(pill("SALIR") { dialog?.dismiss() },
+            LinearLayout.LayoutParams((96 * d).toInt(), (42 * d).toInt()).apply { marginStart = (8 * d).toInt() })
+        root.addView(top, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = (12 * d).toInt() })
+        val input = EditText(this).apply {
+            hint = "Pega la URL del modelo (.gguf / .litertlm)"
+            setHintTextColor(textSoft); setTextColor(textMain)
+            textSize = 13f
+            inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI or android.text.InputType.TYPE_CLASS_TEXT
+            maxLines = 3
+            setPadding((14 * d).toInt(), (12 * d).toInt(), (14 * d).toInt(), (12 * d).toInt())
+            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 16 * d; setColor(cardColor) }
+        }
+        root.addView(input, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = (10 * d).toInt() })
+        val note = TextView(this).apply { textSize = 12f; setTextColor(textSoft); visibility = View.GONE }
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val empty = TextView(this).apply {
+            text = "Todavía no guardas ninguna URL. Pega una que te funcione bien y toca GUARDAR."
+            textSize = 12f; setTextColor(textSoft); gravity = android.view.Gravity.CENTER
+            setPadding(0, (16 * d).toInt(), 0, (8 * d).toInt())
+        }
+        fun say(msg: String) { note.text = msg; note.visibility = View.VISIBLE }
+
+        lateinit var render: () -> Unit
+        render = {
+            list.removeAllViews()
+            val urls = savedGgufUrls()
+            empty.visibility = if (urls.isEmpty()) View.VISIBLE else View.GONE
+            urls.forEachIndexed { i, url ->
+                // 🗂️ Tarjeta igual a la de descarga: número, nombre del modelo, la URL y sus botones
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding((16 * d).toInt(), (14 * d).toInt(), (16 * d).toInt(), (14 * d).toInt())
+                    background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 24 * d; setColor(cardColor) }
+                }
+                card.addView(TextView(this).apply {
+                    text = "${i + 1}. " + (if (url.substringBefore('?').endsWith(".litertlm", true)) "Modelo LiteRT-LM" else "Modelo GGUF")
+                    textSize = 16f; setTextColor(textMain); setTypeface(typeface, android.graphics.Typeface.BOLD)
+                })
+                card.addView(TextView(this).apply {
+                    text = "Nombre del modelo"; textSize = 12f; setTextColor(textSoft)
+                    setPadding(0, (6 * d).toInt(), 0, 0)
+                })
+                card.addView(TextView(this).apply {
+                    text = fileNameFromUrl(url); textSize = 15f; setTextColor(textMain)
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                })
+                card.addView(TextView(this).apply {
+                    text = url; textSize = 11f; setTextColor(textSoft); maxLines = 2
+                    ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                    setPadding(0, (4 * d).toInt(), 0, (10 * d).toInt())
+                })
+                card.addView(row(
+                    pill("COPIAR") { copyText("URL GGUF", url); say("📋 URL copiada.") },
+                    // ⬇️ DESCARGAR: empieza la descarga de una vez (igual que pegarla y tocar AÑADIR) y cierra la ventana
+                    pill("DESCARGAR") {
+                        etGgufUrl?.setText(url)
+                        btnAddGgufUrl?.performClick()
+                        dialog?.dismiss()
+                    },
+                    pill("ELIMINAR") {
+                        storeSavedGgufUrls(savedGgufUrls().also { it.remove(url) })
+                        say("🗑️ URL eliminada.")
+                        render()
+                    }
+                ))
+                list.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = (12 * d).toInt() })
+            }
+            applyTapRipple(list)
+        }
+
+        root.addView(row(
+            pill("GUARDAR") {
+                val url = input.text.toString().trim()
+                when {
+                    url.isEmpty() -> say("✍️ Primero pega la URL del modelo.")
+                    !Regex("(?i)^https?://\\S+$").matches(url) -> say("⚠️ Eso no parece una URL (debe empezar con https://).")
+                    savedGgufUrls().contains(url) -> say("ℹ️ Esa URL ya estaba guardada.")
+                    else -> {
+                        storeSavedGgufUrls(savedGgufUrls().also { it.add(url) })
+                        input.text.clear()
+                        say("✅ URL guardada.")
+                        render()
+                    }
+                }
+            },
+            pill("BORRAR") { input.text.clear(); note.visibility = View.GONE },
+            pill("COPIAR") {
+                val url = input.text.toString().trim()
+                if (url.isEmpty()) say("✍️ No hay nada escrito para copiar.") else { copyText("URL GGUF", url); say("📋 URL copiada.") }
+            }
+        ), LinearLayout.LayoutParams(-1, -2))
+        root.addView(note, LinearLayout.LayoutParams(-1, -2).apply { topMargin = (8 * d).toInt() })
+        root.addView(empty, LinearLayout.LayoutParams(-1, -2))
+        root.addView(list, LinearLayout.LayoutParams(-1, -2).apply { topMargin = (14 * d).toInt() })
+        render()
+        applyTapRipple(root)
+
+        val scroll = android.widget.ScrollView(this).apply { addView(root) }
+        // 🗂️ Cada URL guardada se apila abajo de la anterior (la más nueva queda al final)
+        dialog = AlertDialog.Builder(this)
+            .setView(scroll)
+            .show().also { styleGrayDialog(it) }
+    }
+
+    // 🔢 Numera las descargas: 1, 2, 3... (si borras una, las demás se vuelven a numerar)
+    private fun renumberDownloads(type: DownloadType) {
+        slotsFor(type).forEachIndexed { i, sl ->
+            val name = sl.file?.name ?: return@forEachIndexed
+            setDownloadNames(sl, i + 1, name)
+        }
+    }
+
+    // 📥 Arriba de la tarjeta: «1. Modelo GGUF» (o LiteRT-LM / Voces TTS), «Nombre del modelo» y el nombre del archivo
+    private fun setDownloadNames(slot: DownloadSlot, number: Int, fileName: String) {
+        val ui = slot.ui
+        val kind = ui.kind
+        if (kind == null) {   // tarjeta antigua (sin los textos nuevos)
+            ui.title.text = "$number. ${slot.title}: $fileName"
+            return
+        }
+        val kindText = when {
+            slot.type == DownloadType.TTS -> "Voces TTS"
+            fileName.endsWith(".litertlm", ignoreCase = true) -> "Modelo LiteRT-LM"
+            else -> "Modelo GGUF"
+        }
+        kind.text = "$number. ${LanguageManager.text(this, kindText)}"
+        ui.title.text = fileName.substringBeforeLast('.').ifBlank { fileName }
+    }
+
+    // ⏸ «En pausa»: el emoji amarillo se cambia por un ícono de líneas gris, igual que el botón de copiar.
+    //    (El texto se sigue traduciendo: el ícono queda en el lugar del ⏸.)
+    private fun pausedStatusText(target: TextView): CharSequence {
+        val sp = android.text.SpannableString("⏸ En pausa — pulsa Reanudar para continuar")
+        val size = (target.textSize * 1.25f).toInt()
+        val icon = PauseLineIcon(Color.parseColor("#9A9A9A")).apply { setBounds(0, 0, size, size) }
+        sp.setSpan(android.text.style.ImageSpan(icon, android.text.style.DynamicDrawableSpan.ALIGN_CENTER),
+            0, 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return sp
+    }
+
+    // Dos barras redondeadas de trazo fino (mismo estilo que los íconos de copiar y compartir)
+    private class PauseLineIcon(color: Int) : android.graphics.drawable.Drawable() {
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            style = android.graphics.Paint.Style.STROKE
+            strokeJoin = android.graphics.Paint.Join.ROUND
+        }
+        override fun draw(canvas: android.graphics.Canvas) {
+            val b = bounds
+            val u = b.width() / 24f
+            paint.strokeWidth = 2f * u
+            val r = 1.5f * u
+            canvas.drawRoundRect(b.left + 6 * u, b.top + 4 * u, b.left + 10 * u, b.top + 20 * u, r, r, paint)
+            canvas.drawRoundRect(b.left + 14 * u, b.top + 4 * u, b.left + 18 * u, b.top + 20 * u, r, r, paint)
+        }
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) { paint.colorFilter = colorFilter }
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+    }
+
+    // 🔵 Barra azul oscuro y el porcentaje a su derecha
+    private fun setDownloadProgress(ui: DownloadUi, percent: Int) {
+        ui.progress.progress = percent
+        ui.percent?.text = "${percent.coerceIn(0, 100)}%"
+    }
+
+    private fun slotsFor(type: DownloadType): MutableList<DownloadSlot> {
+        return when (type) {
+            DownloadType.GGUF -> ggufSlots
+            DownloadType.TTS -> ttsSlots
+        }
+    }
+
+    private fun updateEmptyDownloadState(type: DownloadType) {
+        val slots = slotsFor(type)
+        val emptyLabel = when (type) {
+            DownloadType.GGUF -> tvEmptyGgufDownloads
+            DownloadType.TTS -> tvEmptyTtsDownloads
+        }
+        emptyLabel?.visibility = if (slots.isEmpty()) View.VISIBLE else View.GONE
+    }
+
+    private fun removeDownloadSlot(slot: DownloadSlot) {
+        removeDownloadRecord(slot)
+        slotsFor(slot.type).remove(slot)
+        (slot.ui.panel.parent as? ViewGroup)?.removeView(slot.ui.panel)
+        renumberDownloads(slot.type)
+        updateEmptyDownloadState(slot.type)
+    }
+
+    private fun createUniqueDownloadFile(targetDir: File, url: String, fallbackName: String): File {
+        val urlName = runCatching {
+            Uri.parse(url).lastPathSegment?.substringAfterLast('/')?.trim().orEmpty()
+        }.getOrDefault("")
+        val rawName = if (urlName.isBlank()) fallbackName else urlName
+        val safeName = rawName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .ifBlank { fallbackName }
+        var candidate = File(targetDir, safeName)
+        var index = 2
+        while (candidate.exists()) {
+            val dotIndex = candidate.name.lastIndexOf('.')
+            val stem = if (dotIndex > 0) candidate.name.substring(0, dotIndex) else candidate.name
+            val extension = if (dotIndex > 0) candidate.name.substring(dotIndex) else ""
+            candidate = File(targetDir, "${stem}_$index$extension")
+            index++
+        }
+        return candidate
+    }
+
+    private fun startManagedDownload(
+        slot: DownloadSlot,
+        url: String,
+        fileName: String,
+        title: String,
+        onDone: (File) -> Unit,
+        existingFile: File? = null,
+        initialState: ResumableDownloader.State = ResumableDownloader.State.DOWNLOADING
+    ) {
+        val ui = slot.ui
+
+        if (slot.downloader?.state == ResumableDownloader.State.DOWNLOADING) {
+            cumulusToast(this, "Esta descarga ya está en curso", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        slot.downloader?.cancel(true)
+
+        val targetDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: filesDir
+        if (!targetDir.exists()) targetDir.mkdirs()
+        val file = existingFile ?: createUniqueDownloadFile(targetDir, url, fileName)
+        slot.file = file
+        slot.url = url
+        slot.title = title
+
+        ui.panel.visibility = View.VISIBLE
+        setDownloadNames(slot, (slotsFor(slot.type).indexOf(slot) + 1).coerceAtLeast(1), file.name)
+        renumberDownloads(slot.type)
+        ui.status.text = if (file.exists() && file.length() > 0) {
+            "Descarga guardada — preparando reanudación..."
+        } else {
+            "Conectando con el servidor..."
+        }
+        setDownloadProgress(ui, 0)
+        ui.btnPause.isEnabled = false
+        ui.btnResume.isEnabled = false
+        ui.btnDelete.isEnabled = true
+
+        // 📥 Si esta descarga siguió trabajando con la app cerrada, se reconecta a ella (no se empieza otra)
+        val alreadyRunning = ActiveDownloads.map[slot.id]?.takeIf {
+            it.state == ResumableDownloader.State.DOWNLOADING || it.state == ResumableDownloader.State.PAUSED
+        }
+        val downloader = alreadyRunning ?: ResumableDownloader()
+        ActiveDownloads.map[slot.id] = downloader
+        if (initialState != ResumableDownloader.State.FINISHED || !file.exists()) ActiveDownloads.paths.add(file.absolutePath)
+        slot.downloader = downloader
+        persistDownloadRecord(slot, state = alreadyRunning?.state ?: initialState)
+        // Permiso para mostrar el progreso en la barra de notificaciones (Android 13+)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, "android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+            runCatching { ActivityCompat.requestPermissions(this, arrayOf("android.permission.POST_NOTIFICATIONS"), 4713) }
+        }
+
+        downloader.listener = object : ResumableDownloader.Listener {
+            private var lastUi = 0L
+            private var lastPct = -2
+            override fun onProgress(downloaded: Long, total: Long, percent: Int) {
+                // ⚡ Antes se actualizaba cada 8 KB (cientos de veces por segundo) y la app y la barra
+                //    de notificaciones se pegaban. Ahora máximo ~4 veces por segundo.
+                val now = System.currentTimeMillis()
+                if (percent == lastPct && now - lastUi < 250) return
+                if (now - lastUi < 250 && percent != 100) return
+                lastUi = now; lastPct = percent
+                // 🔔 Progreso en la barra de notificaciones (sigue aunque salgas o cierres la app)
+                DownloadService.onProgress(applicationContext, slot.id, file.name, percent)
+                if (!slotsFor(slot.type).contains(slot)) return
+                runOnUiThread {
+                    if (percent in 0..100) setDownloadProgress(ui, percent)
+                    val mb = downloaded / (1024 * 1024)
+                    val totalMb = total / (1024 * 1024)
+                    // El % ya se ve a la derecha de la barra; aquí van los MB
+                    ui.status.text = if (percent >= 0 && total > 0) {
+                        if (ui.percent != null) "Descargando: $mb / $totalMb MB" else "Descargando: $percent% ($mb / $totalMb MB)"
+                    } else {
+                        "Descargando: $mb MB"
+                    }
+                }
+            }
+
+            // 🔁 Se cortó (internet, servidor): la descarga se reconecta sola y sigue desde donde quedó
+            override fun onRetry(attempt: Int, downloaded: Long) {
+                if (!slotsFor(slot.type).contains(slot)) return
+                val mb = downloaded / (1024 * 1024)
+                runOnUiThread { ui.status.text = "🔁 Se cortó la conexión: reconectando y siguiendo desde $mb MB (intento $attempt)…" }
+            }
+
+            override fun onStateChanged(state: ResumableDownloader.State) {
+                when (state) {
+                    ResumableDownloader.State.DOWNLOADING -> DownloadService.onProgress(applicationContext, slot.id, file.name, -1)
+                    ResumableDownloader.State.FINISHED -> {
+                        DownloadService.onStopped(applicationContext, slot.id, file.name)
+                        ActiveDownloads.map.remove(slot.id)
+                        ActiveDownloads.paths.remove(file.absolutePath)
+                    }
+                    ResumableDownloader.State.PAUSED -> DownloadService.onStopped(applicationContext, slot.id)
+                    else -> {
+                        DownloadService.onStopped(applicationContext, slot.id)
+                        ActiveDownloads.map.remove(slot.id)
+                    }
+                }
+                if (!slotsFor(slot.type).contains(slot)) return
+                persistDownloadRecord(slot, state = state)
+                runOnUiThread {
+                    when (state) {
+                        ResumableDownloader.State.DOWNLOADING -> {
+                            ui.btnPause.isEnabled = true
+                            ui.btnResume.isEnabled = false
+                            ui.status.setTextColor(Color.parseColor("#808080"))
+                        }
+                        ResumableDownloader.State.PAUSED -> {
+                            ui.btnPause.isEnabled = false
+                            ui.btnResume.isEnabled = true
+                            ui.status.setTextColor(Color.parseColor("#808080"))
+                            ui.status.text = pausedStatusText(ui.status)
+                        }
+                        ResumableDownloader.State.FINISHED -> {
+                            ui.btnPause.isEnabled = false
+                            ui.btnResume.isEnabled = false
+                            setDownloadProgress(ui, 100)
+                            ui.status.setTextColor(
+                                Color.parseColor(
+                                    if (slot.type == DownloadType.TTS) (if (isLightMode()) "#1C1C1E" else "#FFFFFF") else "#808080"
+                                )
+                            )
+                            ui.status.text = "✅ Descarga completada. Pulsa 🗑 Eliminar para borrar el archivo."
+                            onDone(file)
+                        }
+                        ResumableDownloader.State.FAILED -> {
+                            ui.btnPause.isEnabled = false
+                            ui.btnResume.isEnabled = false
+                            ui.status.setTextColor(Color.parseColor("#808080"))
+                            ui.status.text = "❌ No se pudo seguir descargando (sin internet por mucho rato o el enlace ya no existe). " +
+                                "Al volver a abrir la app se reintenta sola desde donde quedó, o pulsa 🗑 Eliminar para cerrar."
+                        }
+                        ResumableDownloader.State.IDLE -> ui.panel.visibility = View.GONE
+                    }
+                }
+            }
+        }
+
+        ui.btnPause.setOnClickListener { downloader.pause() }
+        ui.btnResume.setOnClickListener { downloader.resume() }
+        ui.btnDelete.setOnClickListener {
+            slot.downloader?.cancel(true)
+            ActiveDownloads.map.remove(slot.id)
+            ActiveDownloads.paths.remove(file.absolutePath)
+            DownloadService.onStopped(applicationContext, slot.id)
+            deleteDownloadedModelIfMatches(file)
+            slot.downloader = null
+            removeDownloadSlot(slot)
+            cumulusToast(this, "Descarga eliminada", Toast.LENGTH_SHORT).show()
+        }
+
+        if (alreadyRunning != null) {
+            // Ya estaba bajando (o en pausa) en segundo plano: solo se actualiza la pantalla
+            downloader.listener?.onStateChanged(alreadyRunning.state)
+            return
+        }
+        when (initialState) {
+            ResumableDownloader.State.FINISHED -> {
+                if (file.exists()) {
+                    setDownloadProgress(ui, 100)
+                    ui.status.text = "✅ Descarga completada. Pulsa 🗑 Eliminar para borrar el archivo."
+                    ui.btnPause.isEnabled = false
+                    ui.btnResume.isEnabled = false
+                } else {
+                    downloader.start(url, file)
+                }
+            }
+            ResumableDownloader.State.FAILED -> {
+                // 🔁 Al abrir la app, una descarga que había fallado (sin internet, servidor caído) se reintenta sola
+                //    y sigue desde lo que ya estaba guardado
+                ui.status.text = "🔁 Reintentando la descarga desde donde quedó…"
+                downloader.start(url, file)
+            }
+            ResumableDownloader.State.PAUSED -> {
+                // Se inicia y se pausa inmediatamente para reconstruir un
+                // descargador reanudable sin perder el punto del archivo.
+                downloader.start(url, file)
+                downloader.pause()
+            }
+            else -> downloader.start(url, file)
+        }
+    }
+
+    private fun deleteDownloadedModelIfMatches(file: File) {
+        if (file.exists()) file.delete()
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getString("selected_custom_model_path", null) == file.absolutePath) {
+            prefs.edit().remove("selected_custom_model_path").apply()
+            val nextModel = getActiveModelFile()
+            if (nextModel != null) {
+                checkStoredModelStatus()
+                autoLoadModel()
+            } else {
+                if (isModelLoadedInMemory) releaseModelFromMemory()
+                checkStoredModelStatus()
+            }
+        }
+    }
+    private fun isAutoLoadEnabled(): Boolean =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("auto_load_model", true)
+
+    private fun updateAutoLoadSwitchText() {
+        switchAutoLoad?.text = if (switchAutoLoad?.isChecked == true) {
+            "Carga automática: ACTIVADA"
+        } else {
+            "Carga automática: DESACTIVADA (manual)"
+        }
+    }
+
+    private fun isManualModelPinned(): Boolean =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("manual_model_active", false)
+
+    private fun setManualModelPinned(pinned: Boolean) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean("manual_model_active", pinned).apply()
+    }
+
+    private fun autoLoadModel() {
+        if (!isAutoLoadEnabled() && !isManualModelPinned()) {
+            Log.d(TAG, "Carga automática desactivada: se espera el botón Cargar modelo")
+            return
+        }
+        if (isModelLoading) return
+        val modelFile = getActiveModelFile()
+        if (modelFile != null && modelFile.exists()) {
+            Log.d(TAG, "═══════════════════════════════════════════════════")
+            Log.d(TAG, "🚀 Auto-carga en ejecución...")
+            Log.d(TAG, "═══════════════════════════════════════════════════")
+            val backend = getSavedBackend()
+            isModelLoading = true
+            thread {
+                var success = loadModelWithConfiguration(modelFile, backend)
+                isModelLoading = false
+                // Si lo desactivaste mientras se recargaba, se libera y queda apagado
+                if (success && !isAutoLoadEnabled() && !isManualModelPinned()) {
+                    runCatching { nativeReleaseModel() }
+                    runCatching { runBlocking { GenieXEngineManager.release() } }
+                    runCatching { runBlocking { LiteRtLmEngineManager.release("main_activity") } }
+                    success = false
+                }
+                runOnUiThread {
+                    isModelLoadedInMemory = success
+                    updateLoadModelButton()
+                    if (success) {
+                        tvModelLoadedName?.text = "Modelo: ${modelFile.name} [$backend - ${if (isAutoLoadEnabled()) "Auto-activado" else "Manual"}]" + mediaCapsLabel()
+                        setModelNameText("Nombre del modelo\n${modelFile.name} · Automático")
+                        cumulusToast(this, "✅ ${modelFile.name} activado automáticamente", Toast.LENGTH_LONG).show()
+                        Log.d(TAG, "✅ Modelo cargado automáticamente en $backend")
+                    } else {
+                        tvModelLoadedName?.text = if (!isAutoLoadEnabled() && !isManualModelPinned())
+                            "Modelo: Descargado (en espera)" else "Modelo: ${modelFile.name} (error de activación)"
+                        cumulusToast(this, "❌ Error al cargar modelo automáticamente", Toast.LENGTH_LONG).show()
+                        Log.e(TAG, "❌ Error al cargar modelo automáticamente")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun releaseModelFromMemory() {
+        if (isModelLoadedInMemory) {
+            Log.d(TAG, "═══════════════════════════════════════════════════")
+            Log.d(TAG, "🛑 Liberando modelo de memoria...")
+            Log.d(TAG, "═══════════════════════════════════════════════════")
+            thread {
+                nativeReleaseModel()
+                runBlocking { LiteRtLmEngineManager.release("main_activity") }
+                runCatching { runBlocking { GenieXEngineManager.release() } }
+                runOnUiThread {
+                    isModelLoadedInMemory = false
+                    modelLoadedInBackground = false
+                    updateLoadModelButton()
+                    tvModelLoadedName?.text = "Modelo: Descargado (en espera)"
+                    cumulusToast(this, "Motor de IA desactivado", Toast.LENGTH_SHORT).show()
+                    Log.d(TAG, "✅ Motor de IA liberado correctamente")
+                }
+            }
+        }
+    }
+
+    private fun triggerAutomaticModelLoadOnFirstMessage(): Boolean {
+        val modelFile = getActiveModelFile() ?: return false
+        if (!modelFile.exists()) return false
+        val backend = getSavedBackend()
+
+        if (modelFile.extension.equals("litertlm", ignoreCase = true)) {
+            if (LiteRtLmEngineManager.isLoaded(modelFile.absolutePath)) {
+                isModelLoadedInMemory = true
+                return true
+            }
+            if (!isAutoLoadEnabled() && !isManualModelPinned()) return false
+            val success = loadModelWithConfiguration(modelFile, backend)
+            isModelLoadedInMemory = success
+            runOnUiThread {
+                updateLoadModelButton()
+                if (success) {
+                    tvModelLoadedName?.text =
+                        "Modelo: ${modelFile.name} [${LiteRtLmEngineManager.engineInfo()}]"
+                }
+            }
+            return success
+        }
+
+        if (nativeIsModelLoaded() || GenieXEngineManager.isLoaded(modelFile.absolutePath)) {
+            isModelLoadedInMemory = true
+            return true
+        }
+        isModelLoadedInMemory = false
+        if (!isAutoLoadEnabled() && !isManualModelPinned()) return false
+        Log.d(TAG, "🎯 Carga automática antes de procesar el primer mensaje")
+        val success = loadModelWithConfiguration(modelFile, backend)
+        isModelLoadedInMemory = success
+        runOnUiThread {
+            updateLoadModelButton()
+            if (success) {
+                tvModelLoadedName?.text = "Modelo: ${modelFile.name} [$backend - Activo]" + mediaCapsLabel()
+            }
+        }
+        return success
+    }
+    private fun updateLoadModelButton() {
+        // 📌 Manual: si lo dejaste ACTIVO, sigue azul oscuro «MODELO ACTIVO» aunque cierres y abras la app
+        //    (mientras el modelo vuelve a cargarse en memoria). Solo tú lo desactivas tocándolo.
+        val active = isModelLoadedInMemory || (!isAutoLoadEnabled() && isManualModelPinned())
+        btnLoadModel?.text = LanguageManager.text(
+            this,
+            if (active) "MODELO ACTIVO" else "CARGAR MODELO"
+        )
+        // En manual se puede tocar "MODELO ACTIVO" para desactivarlo
+        btnLoadModel?.isEnabled = !active || !isAutoLoadEnabled()
+        btnLoadModel?.backgroundTintList = ColorStateList.valueOf(
+            if (active) modelActiveBlue else Color.parseColor("#3D5AFE")
+        )
+        btnLoadModel?.let { stylePill(it) }   // 💊 píldora: gris «CARGAR MODELO» ↔ azul oscuro «MODELO ACTIVO»
+    }
+
+    // 🔵 Azul oscuro de «MODELO ACTIVO» (antes rojo)
+    private val modelActiveBlue = Color.parseColor("#3949AB")
+
+    private fun setupLanguageSelection() {
+        val languageButtons = listOf(
+            R.id.btnLanguageEs to "es",
+            R.id.btnLanguageEn to "en",
+            R.id.btnLanguageRu to "ru",
+            R.id.btnLanguageZh to "zh",
+            R.id.btnLanguageKo to "ko",
+            R.id.btnLanguageJa to "ja",
+            R.id.btnLanguagePt to "pt",
+            // 🌍 Nuevos: alemán, francés, italiano, indonesio, vietnamita, tailandés y árabe (de derecha a izquierda)
+            R.id.btnLanguageDe to "de",
+            R.id.btnLanguageFr to "fr",
+            R.id.btnLanguageIt to "it",
+            R.id.btnLanguageId to "id",
+            R.id.btnLanguageVi to "vi",
+            R.id.btnLanguageTh to "th",
+            R.id.btnLanguageAr to "ar"
+        )
+        val selectedLanguage = LanguageManager.getSelectedLanguage(this)
+
+        languageButtons.forEach { (buttonId, languageCode) ->
+            val button = findViewById<Button>(buttonId)
+            button.setOnClickListener {
+                if (languageCode != LanguageManager.getSelectedLanguage(this)) {
+                    LanguageManager.setLocale(this, languageCode)
+                    recreate()
+                }
+            }
+        }
+        styleLanguageButtons(isLightMode())
+    }
+
+    // 🌐 Botones de idioma: esquinas curvas; negros en modo oscuro, blancos con borde gris en modo claro
+    private val languageButtonIds = listOf(
+        R.id.btnLanguageEs to "es", R.id.btnLanguageEn to "en", R.id.btnLanguageRu to "ru",
+        R.id.btnLanguageZh to "zh", R.id.btnLanguageKo to "ko", R.id.btnLanguageJa to "ja", R.id.btnLanguagePt to "pt",
+        R.id.btnLanguageDe to "de", R.id.btnLanguageFr to "fr", R.id.btnLanguageIt to "it", R.id.btnLanguageId to "id",
+        R.id.btnLanguageVi to "vi", R.id.btnLanguageTh to "th", R.id.btnLanguageAr to "ar"
+    )
+
+    private fun styleLanguageButtons(light: Boolean) {
+        val d = resources.displayMetrics.density
+        val selected = LanguageManager.getSelectedLanguage(this)
+        languageButtonIds.forEach { (id, code) ->
+            val b = findViewById<Button>(id) ?: return@forEach
+            // 💊 Píldora gris oscuro (modo oscuro) o gris claro (modo claro), como los demás botones del panel
+            (b as? MaterialButton)?.let { mb -> stylePill(mb, light) } ?: run {
+                b.backgroundTintList = null
+                b.background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 999 * d
+                    setColor(if (light) pillGrayLight else pillGrayDark)
+                }
+            }
+            // ⚪ Texto blanco (oscuro en modo claro); el idioma elegido lleva ✓ y un gris más claro
+            val textColor = if (light) pillTextDark else Color.WHITE
+            b.setTextColor(textColor)
+            (b as? MaterialButton)?.let { mb ->
+                if (code == selected) {
+                    mb.icon = CheckLineIcon(textColor)
+                    mb.iconSize = (18 * d).toInt()
+                    mb.iconPadding = (8 * d).toInt()
+                    mb.iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
+                    mb.iconTint = ColorStateList.valueOf(textColor)
+                } else mb.icon = null
+            }
+        }
+    }
+
+    // ☰ Tres rayas (larga, mediana y corta) con el mismo trazo que la tuerca. Toma el color del «tint»
+    //    del botón: blanco en modo oscuro y oscuro en modo claro.
+    private class MenuLinesIcon(private val sizePx: Int) : android.graphics.drawable.Drawable() {
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = android.graphics.Paint.Style.STROKE
+            strokeCap = android.graphics.Paint.Cap.ROUND
+        }
+        override fun draw(canvas: android.graphics.Canvas) {
+            val b = bounds
+            val u = b.width() / 24f
+            paint.strokeWidth = 2f * u
+            canvas.drawLine(b.left + 3.5f * u, b.top + 6.5f * u, b.left + 20.5f * u, b.top + 6.5f * u, paint)
+            canvas.drawLine(b.left + 3.5f * u, b.top + 12f * u, b.left + 15.5f * u, b.top + 12f * u, paint)
+            canvas.drawLine(b.left + 3.5f * u, b.top + 17.5f * u, b.left + 10.5f * u, b.top + 17.5f * u, paint)
+        }
+        override fun setTintList(tint: ColorStateList?) {
+            paint.color = tint?.getColorForState(state, tint.defaultColor) ?: Color.WHITE
+            invalidateSelf()
+        }
+        override fun getIntrinsicWidth() = sizePx
+        override fun getIntrinsicHeight() = sizePx
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) { paint.colorFilter = colorFilter }
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+    }
+
+    // ✓ de líneas finas (idioma elegido). tight = el ✓ ocupa todo su cuadro (visto bueno de Guardar / Usar)
+    private class CheckLineIcon(color: Int, private val tight: Boolean = false) : android.graphics.drawable.Drawable() {
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            style = android.graphics.Paint.Style.STROKE
+            strokeCap = android.graphics.Paint.Cap.ROUND
+            strokeJoin = android.graphics.Paint.Join.ROUND
+        }
+        override fun draw(canvas: android.graphics.Canvas) {
+            val b = bounds
+            val u = b.width() / 24f
+            paint.strokeWidth = (if (tight) 2.8f else 2.4f) * u
+            val path = android.graphics.Path().apply {
+                if (tight) {
+                    moveTo(b.left + 2.5f * u, b.top + 12.5f * u)
+                    lineTo(b.left + 9 * u, b.top + 19 * u)
+                    lineTo(b.left + 21.5f * u, b.top + 5 * u)
+                } else {
+                    moveTo(b.left + 5 * u, b.top + 12.5f * u)
+                    lineTo(b.left + 10 * u, b.top + 17.5f * u)
+                    lineTo(b.left + 19 * u, b.top + 7 * u)
+                }
+            }
+            canvas.drawPath(path, paint)
+        }
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) { paint.colorFilter = colorFilter }
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+    }
+
+    private fun getDownloadedModelFiles(): List<File> {
+        val storageDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        if (storageDir != null && storageDir.exists()) {
+            val files = storageDir.listFiles { _, name ->
+                name.endsWith(".gguf", ignoreCase = true) ||
+                    name.endsWith(".litertlm", ignoreCase = true)
+            }?.filter { !isMmprojFile(it) }
+            if (files != null) {
+                return files.sortedByDescending { it.lastModified() }
+            }
+        }
+        return emptyList()
+    }
+
+    private fun getDownloadedMmprojFiles(): List<File> {
+        val storageDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return emptyList()
+        return storageDir.listFiles { _, name ->
+            name.endsWith(".gguf", ignoreCase = true)
+        }.orEmpty().filter { isMmprojFile(it) }.sortedByDescending { it.lastModified() }
+    }
+
+    // Todos los .gguf descargados: primero los mmproj detectados, luego el resto
+    private fun getMmprojCandidateFiles(): List<File> {
+        val storageDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return emptyList()
+        val all = storageDir.listFiles { _, name -> name.endsWith(".gguf", ignoreCase = true) }
+            .orEmpty().sortedByDescending { it.lastModified() }
+        val (mm, rest) = all.partition { isMmprojFile(it) }
+        return mm + rest
+    }
+
+    private val mmprojCheckCache = HashMap<String, Boolean>()
+
+    // Un mmproj se reconoce por su nombre o por sus datos internos (claves "clip.")
+    private fun isMmprojFile(file: File): Boolean {
+        if (!file.name.endsWith(".gguf", ignoreCase = true)) return false
+        if (file.name.contains("mmproj", ignoreCase = true)) return true
+        val key = "${file.absolutePath}:${file.length()}"
+        synchronized(mmprojCheckCache) { mmprojCheckCache[key]?.let { return it } }
+        val result = runCatching {
+            file.inputStream().use { input ->
+                val buffer = ByteArray(256 * 1024)
+                val read = input.read(buffer)
+                if (read < 4) return@use false
+                val header = String(buffer, 0, read, Charsets.ISO_8859_1)
+                header.startsWith("GGUF") &&
+                    (header.contains("clip.vision") ||
+                        header.contains("clip.projector_type") ||
+                        header.contains("clip.has_vision_encoder"))
+            }
+        }.getOrDefault(false)
+        synchronized(mmprojCheckCache) { mmprojCheckCache[key] = result }
+        return result
+    }
+
+    private fun setSelectedMmproj(file: File?) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        if (file == null) prefs.remove("selected_mmproj_path")
+        else prefs.putString("selected_mmproj_path", file.absolutePath)
+        prefs.apply()
+        updateMmprojButton()
+    }
+
+    // Al terminar una descarga GGUF: si es mmproj se activa como mmproj,
+    // si no, se activa como modelo (igual que antes)
+    private fun onGgufDownloadFinished(downloadedFile: File) {
+        thread {
+            val isMmproj = isMmprojFile(downloadedFile)
+            runOnUiThread {
+                if (!isMmproj) {
+                    setSelectedModelFile(downloadedFile)
+                    checkStoredModelStatus()
+                    autoLoadModel()
+                    return@runOnUiThread
+                }
+                setSelectedMmproj(downloadedFile)
+                getActiveModelFile()?.let { m ->
+                    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                        .putString("mmproj_for_" + m.name, downloadedFile.absolutePath).apply()
+                }
+                thread {
+                    genieXRefreshVision()?.let { m -> runOnUiThread { cumulusToast(this, m, Toast.LENGTH_LONG).show() }; return@thread }
+                    nativeSetMmproj(downloadedFile.absolutePath)
+                    val loaded = nativeIsModelLoaded()
+                    val visionReady = loaded && nativeHasVision()
+                    runOnUiThread {
+                        val msg = when {
+                            visionReady -> "✅ mmproj ${downloadedFile.name} activado automáticamente${mediaCapsLabel()}"
+                            !loaded -> "mmproj ${downloadedFile.name} guardado. Se activará al cargar el modelo."
+                            else -> "⚠️ mmproj descargado, pero no corresponde al modelo activo"
+                        }
+                        cumulusToast(this, msg, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * ⚡👁️ Si el modelo está cargado en NPU/GPU y cambió el mmproj, lo recarga solo para que la
+     * visión quede activa (o desactivada). Devuelve el mensaje a mostrar, o null si no aplica (CPU).
+     */
+    private fun genieXRefreshVision(): String? {
+        val model = getActiveModelFile() ?: return null
+        if (!GenieXEngineManager.isLoaded(model.absolutePath)) return null
+        val want = getSelectedMmprojFile()?.absolutePath
+        if (want == GenieXEngineManager.loadedMmprojPath()) return null
+        runOnUiThread { cumulusToast(this, "⏳ Recargando el modelo en NPU/GPU con el nuevo mmproj…", Toast.LENGTH_SHORT).show() }
+        val ok = runCatching { loadModelWithConfiguration(model, getSavedBackend()) }.getOrDefault(false)
+        isModelLoadedInMemory = ok
+        runOnUiThread { updateLoadModelButton() }
+        return when {
+            !ok -> "⚠️ No se pudo recargar el modelo. Cárgalo de nuevo desde ☰."
+            want == null -> "Visión desactivada (${GenieXEngineManager.engineInfo()})"
+            GenieXEngineManager.hasVision() -> "✅ Visión activa en ${GenieXEngineManager.engineInfo()}"
+            else -> "⚠️ La NPU/GPU no aceptó ese mmproj; el modelo quedó solo con texto. Prueba en CPU."
+        }
+    }
+
+    /** 🩺 Anota qué foto mira la IA, con qué modelo y motor: si la app se cierra, sale en el informe del cierre. */
+    private fun noteVisionWork(img: File, model: File?, camera: Boolean) {
+        runCatching {
+            val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeFile(img.absolutePath, o)
+            val mi = android.app.ActivityManager.MemoryInfo()
+            (getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(mi)
+            val gx = model != null && GenieXEngineManager.isLoaded(model.absolutePath)
+            val engine = when {
+                gx && GenieXEngineManager.hasVision() -> GenieXEngineManager.engineInfo()
+                gx -> GenieXEngineManager.engineInfo() + " (sin visión: " + (GenieXEngineManager.visionSkippedReason() ?: "sin mmproj") + ")"
+                else -> "💻 CPU"
+            }
+            val mb = 1024L * 1024L
+            val what = (if (camera) "📷 Mirando una foto de la Cámara en vivo" else "🖼️ Mirando una imagen") +
+                " (${o.outWidth}×${o.outHeight})\nModelo: ${model?.name ?: "—"}\nmmproj: ${getSelectedMmprojFile()?.name ?: "—"}" +
+                "\nMotor: $engine\nRAM libre al empezar: ${mi.availMem / mb} MB de ${mi.totalMem / mb} MB"
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString("busy_what", what).commit()
+        }
+    }
+
+    private fun clearVisionWork() {
+        runCatching { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().remove("busy_what").apply() }
+    }
+
+    private fun getSelectedMmprojFile(): File? {
+        val path = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString("selected_mmproj_path", null) ?: return null
+        if (ActiveDownloads.paths.contains(path)) return null   // ⏳ aún descargando: incompleto
+        return File(path).takeIf { it.exists() }
+    }
+
+    private fun updateMmprojButton() {
+        val selected = getSelectedMmprojFile()
+        btnMmproj?.text = if (selected != null) {
+            "mmproj\n${selected.name}"
+        } else {
+            "mmproj\nNinguno"
+        }
+        btnMmproj?.let { btn ->
+            val files = runCatching { getDownloadedMmprojFiles() }.getOrDefault(emptyList())
+            val idx = if (selected != null) files.indexOfFirst { it.absolutePath == selected.absolutePath }.coerceAtLeast(0) else -1
+            applyBlueStatusIcons(btn, if (selected != null) idx + 1 else null, selected != null)
+        }
+    }
+
+    private fun showSelectMmprojDialog() {
+        // Solo archivos mmproj (los modelos de chat se eligen arriba, en "Nombre del modelo")
+        val files = getDownloadedMmprojFiles()
+        if (files.isEmpty()) {
+            cumulusToast(this, "No hay archivos mmproj descargados. Descarga el .gguf que tenga \"mmproj\" en el nombre.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val labels = (listOf("Ninguno") + files.mapIndexed { i, f ->
+            "${i + 1}. 🖼️ ${f.name} (${f.length() / (1024 * 1024)} MB)"
+        }).toTypedArray()
+        val current = getSelectedMmprojFile()
+        val currentIndex = files.indexOfFirst { it.absolutePath == current?.absolutePath } + 1
+
+        AlertDialog.Builder(this)
+            .setTitle("Seleccionar mmproj")
+            .setSingleChoiceItems(labels, currentIndex) { dialog, which ->
+                setSelectedMmproj(if (which == 0) null else files[which - 1])
+                // Se recuerda esta pareja para el modelo activo
+                getActiveModelFile()?.let { m ->
+                    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                        .putString("mmproj_for_" + m.name, if (which == 0) "none" else files[which - 1].absolutePath).apply()
+                }
+                dialog.dismiss()
+                val mmprojPath = if (which == 0) "" else files[which - 1].absolutePath
+                thread {
+                    genieXRefreshVision()?.let { m -> runOnUiThread { cumulusToast(this, m, Toast.LENGTH_LONG).show() }; return@thread }
+                    nativeSetMmproj(mmprojPath)
+                    val visionReady = nativeIsModelLoaded() && nativeHasVision()
+                    runOnUiThread {
+                        val msg = when {
+                            mmprojPath.isEmpty() -> "Visión desactivada"
+                            visionReady -> "✅ Multimodal activado: ${labels[which]}${mediaCapsLabel()}"
+                            !nativeIsModelLoaded() -> "mmproj guardado. Se activará al cargar el modelo."
+                            else -> "⚠️ Ese mmproj no corresponde al modelo activo"
+                        }
+                        cumulusToast(this, msg, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show().also { styleGrayDialog(it) }
+    }
+
+    private fun getSelectedModelPath(): String? {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString("selected_custom_model_path", null)
+    }
+
+    private fun setSelectedModelFile(file: File) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString("selected_custom_model_path", file.absolutePath).apply()
+        autoPairMmproj(file)
+        // 🧩 Cada modelo trae su propia plantilla, stop tokens, temperatura y system prompt
+        activeModelCfgKey = null
+        thread { runCatching { ensureActiveModelConfig() } }
+    }
+
+    // 🤝 Modelo + mmproj trabajan juntos: al elegir un modelo se elige solo su mmproj
+    private fun modelFamily(name: String): String = name.lowercase(Locale.ROOT)
+        .removeSuffix(".gguf").removeSuffix(".litertlm")
+        .replace(Regex("[-_.](i?q\\d.*|f16|f32|bf16|fp16)$"), "")
+        .replace(Regex("[-_](it|instruct|chat)$"), "")
+        .replace("mmproj", "").replace(Regex("^[-_.]+|[-_.]+$"), "")
+
+    private fun autoPairMmproj(model: File) {
+        val mmprojs = runCatching { getDownloadedMmprojFiles() }.getOrDefault(emptyList())
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // 1) La pareja que elegiste antes para este modelo
+        prefs.getString("mmproj_for_" + model.name, null)?.let { saved ->
+            if (saved == "none") { setSelectedMmproj(null); updateMmprojButton(); return }
+            mmprojs.firstOrNull { it.absolutePath == saved }?.let { setSelectedMmproj(it); updateMmprojButton(); return }
+        }
+        // 2) Un mmproj con el mismo nombre de familia (ej. gemma-3-4b)
+        val fam = modelFamily(model.name)
+        val byName = mmprojs.firstOrNull { val mf = modelFamily(it.name); mf.isNotBlank() && (mf.contains(fam) || fam.contains(mf)) }
+        // 3) Un mmproj descargado de la misma carpeta de Hugging Face (se guarda al descargar)
+        val sameRepo = prefs.getString("repo_of_" + model.name, null)?.let { repo ->
+            mmprojs.firstOrNull { prefs.getString("repo_of_" + it.name, null) == repo }
+        }
+        val pick = byName ?: sameRepo ?: return   // sin pareja clara: se deja como estaba
+        if (getSelectedMmprojFile()?.absolutePath == pick.absolutePath) return
+        setSelectedMmproj(pick)
+        updateMmprojButton()
+        cumulusToast(this, "🤝 mmproj emparejado: ${pick.name}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun getActiveModelFile(): File? {
+        val models = getDownloadedModelFiles()
+        if (models.isEmpty()) return null
+
+        val savedPath = getSelectedModelPath()
+        if (!savedPath.isNullOrEmpty()) {
+            val savedFile = File(savedPath)
+            if (savedFile.exists()) {
+                return savedFile
+            }
+        }
+
+        val defaultModel = models.first()
+        setSelectedModelFile(defaultModel)
+        return defaultModel
+    }
+
+    private fun showSelectModelDialog() {
+        val models = getDownloadedModelFiles()
+        if (models.isEmpty()) {
+            cumulusToast(this, "No hay modelos GGUF o LiteRT-LM descargados.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (models.size == 1) {
+            val onlyModel = models.first()
+            setSelectedModelFile(onlyModel)
+            checkStoredModelStatus()
+            autoLoadModel()
+            cumulusToast(
+                this,
+                "${onlyModel.name} es el único modelo y queda activo automáticamente.",
+                Toast.LENGTH_SHORT
+            ).show()
+            // 🗑️ Igual se muestra la lista, para que también puedas quitar ese modelo de la app
+            showModelListDialog(models)
+            return
+        }
+
+        showModelListDialog(models)
+    }
+
+    /**
+     * 📋 Lista de modelos: tocas uno para dejarlo activo (igual que antes). Los modelos SUBIDOS desde la memoria
+     * del teléfono (SUBIR GGUF) tienen a la derecha un 🗑️ basurero rojo para quitarlos de la app.
+     * Los descargados por URL no lo llevan: esos se eliminan con el botón 🗑 Eliminar de su tarjeta de descarga.
+     * Solo se borra la copia que guarda la app: el archivo original que subiste desde la memoria del
+     * teléfono (Descargas, Documentos…) NO se toca.
+     */
+    private fun showModelListDialog(models: List<File>) {
+        val d = resources.displayMetrics.density
+        val light = isLightMode()
+        val textColor = if (light) Color.parseColor("#1C1C1E") else Color.WHITE
+        val currentActive = getActiveModelFile()
+        val currentIndex = models.indexOfFirst { it.absolutePath == currentActive?.absolutePath }.coerceAtLeast(0)
+        val fromUrl = downloadedByUrlPaths()
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((12 * d).toInt(), (4 * d).toInt(), (8 * d).toInt(), 0)
+        }
+        var dialog: AlertDialog? = null
+        models.forEachIndexed { i, model ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(0, (6 * d).toInt(), 0, (6 * d).toInt())
+            }
+            val radio = android.widget.RadioButton(this).apply {
+                text = "${model.name} (${model.length() / (1024 * 1024)} MB)"
+                textSize = 17f
+                setTextColor(textColor)
+                isChecked = i == currentIndex
+                buttonTintList = ColorStateList.valueOf(Color.parseColor("#80CBC4"))
+                setPadding((10 * d).toInt(), 0, (8 * d).toInt(), 0)
+                setOnClickListener {
+                    setSelectedModelFile(model)
+                    checkStoredModelStatus()
+                    autoLoadModel()
+                    dialog?.dismiss()
+                }
+            }
+            row.addView(radio, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            // 🗑️ Basurero rojo a la derecha (solo en los modelos subidos desde la memoria del teléfono)
+            if (model.absolutePath !in fromUrl) {
+                val trash = ImageButton(this).apply {
+                    setImageResource(android.R.drawable.ic_menu_delete)
+                    imageTintList = ColorStateList.valueOf(Color.parseColor("#FF3B30"))
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(Color.parseColor(if (light) "#FFE5E3" else "#3A1F1E"))
+                    }
+                    contentDescription = "Eliminar ${model.name} de la app"
+                    setOnClickListener { confirmRemoveModelFromApp(model) { dialog?.dismiss() } }
+                }
+                row.addView(trash, LinearLayout.LayoutParams((44 * d).toInt(), (44 * d).toInt()).apply { marginStart = (6 * d).toInt() })
+            }
+            list.addView(row)
+        }
+        dialog = AlertDialog.Builder(this)
+            .setTitle("Seleccionar Modelo Activo (Manual)")
+            .setView(android.widget.ScrollView(this).apply { addView(list) })
+            .setNegativeButton("Cancelar", null)
+            .show().also { styleGrayDialog(it) }
+    }
+
+    /** 📥 Rutas de los archivos que tienen tarjeta de descarga por URL (esos se eliminan desde su tarjeta). */
+    private fun downloadedByUrlPaths(): Set<String> {
+        val records = try {
+            JSONArray(getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString(KEY_DOWNLOADS, "[]") ?: "[]")
+        } catch (_: Throwable) {
+            JSONArray()
+        }
+        val out = HashSet<String>()
+        for (i in 0 until records.length()) {
+            records.optJSONObject(i)?.optString("filePath")?.takeIf { it.isNotBlank() }?.let { out += it }
+        }
+        return out
+    }
+
+    /** 🗑️ Pregunta antes de quitar el modelo de la app (el original en la memoria del teléfono se queda). */
+    private fun confirmRemoveModelFromApp(model: File, onDone: () -> Unit) {
+        AlertDialog.Builder(this)
+            .setTitle("🗑️ Quitar modelo de la app")
+            .setMessage("¿Quitar «${model.name}» de Cumulus?\n\nSe libera el espacio que ocupa dentro de la app " +
+                "(${model.length() / (1024 * 1024)} MB). El archivo original en la memoria de tu teléfono NO se borra: " +
+                "si lo quieres de vuelta, súbelo otra vez con SUBIR GGUF.")
+            .setPositiveButton("Quitar") { _, _ ->
+                removeModelFromApp(model)
+                onDone()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show().also { styleGrayDialog(it) }
+    }
+
+    /**
+     * Borra SOLO la copia del modelo dentro de la carpeta de la app. Si era el modelo activo, primero se apaga el motor
+     * y queda sin modelo elegido (no se carga otro solo ni se cambia NPU/GPU/CPU: tú eliges el siguiente).
+     */
+    private fun removeModelFromApp(model: File) {
+        val appDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)?.canonicalPath
+        // 🛡️ Seguridad: solo se borran archivos que están dentro de la carpeta de la app
+        if (appDir == null || !model.canonicalPath.startsWith(appDir + File.separator)) {
+            cumulusToast(this, "Ese archivo no está en la carpeta de la app: no se borra.", Toast.LENGTH_LONG).show()
+            return
+        }
+        // 📥 Los descargados por URL se eliminan desde su tarjeta de descarga (así la tarjeta no queda colgando)
+        if (model.absolutePath in downloadedByUrlPaths()) {
+            cumulusToast(this, "Este modelo se descargó por URL: elimínalo con 🗑 Eliminar en su tarjeta de descarga.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val wasActive = prefs.getString("selected_custom_model_path", null) == model.absolutePath
+        if (wasActive) {
+            if (isModelLoadedInMemory) releaseModelFromMemory()
+            prefs.edit().remove("selected_custom_model_path").putBoolean("manual_model_active", false).apply()
+        }
+        prefs.edit().remove("mmproj_for_" + model.name).apply()
+        val ok = !model.exists() || model.delete()
+        checkStoredModelStatus()
+        cumulusToast(this, if (ok) "🗑️ «${model.name}» se quitó de la app. El original sigue en tu teléfono."
+            else "No se pudo quitar «${model.name}». Intenta de nuevo.", Toast.LENGTH_LONG).show()
+    }
+
+    private fun loadModelIntoMemoryManual() {
+        val modelFile = getActiveModelFile()
+
+        if (modelFile == null || !modelFile.exists()) {
+            cumulusToast(this, "No existe ningún modelo GGUF o LiteRT-LM válido.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val selectedBackend = spinnerBackend?.selectedItem?.toString() ?: getSavedBackend()
+        saveBackend(selectedBackend)
+
+        Log.d(TAG, "═══════════════════════════════════════════════════")
+        Log.d(TAG, "🚀 Carga manual de modelo")
+        Log.d(TAG, "Modelo: ${modelFile.name}")
+        Log.d(TAG, "Backend: $selectedBackend")
+        Log.d(TAG, "═══════════════════════════════════════════════════")
+
+        cumulusToast(this, "Cargando modelo ${modelFile.name} usando $selectedBackend...", Toast.LENGTH_SHORT).show()
+
+        isModelLoading = true
+        thread {
+            val success = loadModelWithConfiguration(modelFile, selectedBackend)
+            isModelLoading = false
+            runOnUiThread {
+                isModelLoadedInMemory = success
+                updateLoadModelButton()
+                if (success) {
+                    if (!isAutoLoadEnabled()) setManualModelPinned(true)
+                    cumulusToast(this, "✅ ¡Modelo inicializado en memoria correctamente con $selectedBackend!", Toast.LENGTH_LONG).show()
+                    tvModelLoadedName?.text = "Modelo: ${modelFile.name} [${realEngineLabel(modelFile, selectedBackend)} - Cargado]" + mediaCapsLabel()
+                    Log.d(TAG, "✅ Modelo cargado exitosamente en $selectedBackend")
+                } else {
+                    if (loadErrorShown) {
+                        // Ya se mostró el motivo (por ejemplo, ese modelo no funciona en el motor elegido)
+                    } else if (modelFile.extension.equals("litertlm", ignoreCase = true)) {
+                        // Muestra el error real de LiteRT-LM para saber qué falla
+                        val detail = LiteRtLmEngineManager.lastLoadErrors().ifBlank { "Sin detalles" }
+                        AlertDialog.Builder(this)
+                            .setTitle("❌ LiteRT-LM no pudo cargar el modelo")
+                            .setMessage(detail)
+                            .setPositiveButton("OK", null)
+                            .setNeutralButton("Copiar") { _, _ ->
+                                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("error", detail))
+                                cumulusToast(this, "Error copiado", Toast.LENGTH_SHORT).show()
+                            }
+                            .show().also { styleGrayDialog(it) }
+                    } else {
+                        cumulusToast(this, "❌ Fallo al inicializar el modelo en la capa nativa C++", Toast.LENGTH_LONG).show()
+                    }
+                    Log.e(TAG, "❌ Error al cargar modelo en $selectedBackend")
+                }
+            }
+        }
+    }
+
+    // ========================================================================
+    // 🎛️ CONFIGURACIÓN DEL MODELO: Top K, Top P, Min-P, stop tokens y plantilla de chat
+    //    (con su valor a la vista, igual que Contexto y Temperatura). Los usan los tres motores.
+    // ========================================================================
+    private fun topKLabel(v: Int) = if (v <= 0) "0 (sin límite)" else v.toString()
+
+    private fun minPLabel(v: Int) = if (v <= 0) "0.00 (apagado)" else String.format(Locale.US, "%.2f", v / 100.0)
+
+    /** Lee lo guardado y lo deja listo para los motores (se llama al abrir la app). */
+    private fun loadSamplingSettings() {
+        val p = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        SamplingSettings.temperature = p.getFloat("ai_temperature", (seekTemperature?.progress ?: 50) / 100f)
+        SamplingSettings.topK = p.getInt("ai_top_k", 40)
+        SamplingSettings.topP = p.getInt("ai_top_p", 95) / 100f
+        SamplingSettings.minP = p.getInt("ai_min_p", 5) / 100f
+        SamplingSettings.stops = SamplingSettings.parseStops(p.getString("ai_stop_tokens", "").orEmpty())
+        val savedTemplate = p.getString("ai_chat_template", SamplingSettings.AUTO) ?: SamplingSettings.AUTO
+        SamplingSettings.chatTemplate = if (ChatTemplateFormatter.isKnown(savedTemplate)) savedTemplate else SamplingSettings.AUTO
+    }
+
+    /** 💻 El motor CPU recibe tus ajustes justo antes de responder (en segundo plano: nunca traba la pantalla). */
+    private fun pushSamplingToNative() {
+        runCatching {
+            nativeSetSampling(
+                SamplingSettings.temperature, SamplingSettings.topK, SamplingSettings.topP, SamplingSettings.minP,
+                (SamplingSettings.templateStops() + SamplingSettings.stops).distinct().joinToString("\u001F"),
+                // «auto» = el motor ejecuta la plantilla PROPIA del GGUF (Jinja)
+                if (ChatTemplateFormatter.isKnown(SamplingSettings.chatTemplate)) SamplingSettings.chatTemplate else SamplingSettings.AUTO,
+                SamplingSettings.noThink
+            )
+        }.onFailure { Log.w(TAG, "No se pudieron pasar los ajustes al motor CPU: ${it.message}") }
+    }
+
+    /** Nombre corto de una familia: «ChatML (Qwen, SmolLM…)» → «ChatML». */
+    private fun familyShort(key: String?): String = ChatTemplateFormatter.label(key).substringBefore(" (")
+
+    private fun chatTemplateLabel(): String {
+        val litert = getActiveModelFile()?.extension.equals("litertlm", ignoreCase = true)
+        if (litert) return "Los modelos .litertlm siempre usan su propia plantilla"
+        val eff = SamplingSettings.chatTemplate
+        val cfg = activeModelCfg
+            ?: return if (ChatTemplateFormatter.isKnown(eff)) ChatTemplateFormatter.label(eff) else "La del propio modelo"
+        val family = cfg.detectedTemplate?.let { " · familia " + familyShort(it) } ?: ""
+        val engine = cpuTemplateStatus?.takeIf { it.isNotBlank() && it != "sin modelo" }?.let { "\n💻 Motor CPU: $it" } ?: ""
+        return when {
+            // Elegiste una plantilla fija para este modelo
+            ChatTemplateFormatter.isKnown(cfg.templateType) -> ChatTemplateFormatter.label(eff) + " · elegida por ti" +
+                (if (cfg.hasEmbeddedTemplate) "\n(el GGUF trae la suya: elige «La del propio GGUF» para usarla)" else "")
+            // Lo normal: el GGUF trae su etiqueta (tokenizer.chat_template) y se ejecuta tal cual
+            cfg.hasEmbeddedTemplate -> "La del propio GGUF (Jinja, ${cfg.embeddedTemplateChars} letras)$family$engine"
+            ChatTemplateFormatter.isKnown(eff) -> "El GGUF no trae plantilla: se usa ${familyShort(eff)} (por su nombre)$engine"
+            else -> "El GGUF no trae plantilla: el motor usa su formato de respaldo$engine"
+        }
+    }
+
+    /** Stop tokens: los que declara el propio modelo + los de su plantilla + los tuyos. */
+    private fun stopTokensLabel(): String {
+        val model = SamplingSettings.modelStops
+        val fixed = ChatTemplateFormatter.stopsFor(SamplingSettings.chatTemplate).filter { it !in model }
+        val parts = mutableListOf<String>()
+        if (model.isNotEmpty()) parts += "Del modelo: " + model.joinToString(" · ")
+        if (fixed.isNotEmpty()) parts += "Plantilla: " + fixed.joinToString(" · ")
+        if (parts.isEmpty()) return SamplingSettings.stopsLabel()
+        parts += "Tuyos: " + SamplingSettings.stopsLabel()
+        return parts.joinToString("\n")
+    }
+
+    private fun systemPromptLabel(cfg: ModelConfig?): String {
+        val size = cfg?.sizeClass ?: SizeClass.UNKNOWN
+        val auto = when (size) {
+            SizeClass.SMALL -> "instrucciones cortas y directas (modelo pequeño)"
+            SizeClass.LARGE -> "instrucciones estructuradas (modelo grande)"
+            else -> "instrucciones normales"
+        }
+        val extra = cfg?.systemPrompt.orEmpty()
+        return (if (extra.isBlank()) "Automático: " else "${extra.length} letras extra + ") + auto
+    }
+
+    // ========================================================================
+    // 🧩 CONFIGURACIÓN POR MODELO: al elegir un GGUF se lee su plantilla, su tamaño y sus ajustes guardados
+    // ========================================================================
+    /** Lee (o crea la primera vez) la configuración del modelo activo y la aplica. Llamar en segundo plano. */
+    private fun ensureActiveModelConfig(): ModelConfig? {
+        val f = getActiveModelFile() ?: return null
+        val key = f.absolutePath + ":" + f.length()
+        activeModelCfg?.let { if (activeModelCfgKey == key) return it }
+        cpuTemplateStatus = null
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // Cada modelo nuevo parte leyendo SU PROPIA plantilla (la etiqueta que trae el GGUF)
+        val cfg = ModelConfigStore.load(this, f,
+            defaultTemperature = prefs.getFloat("ai_temperature", 0.5f),
+            defaultStops = SamplingSettings.parseStops(prefs.getString("ai_stop_tokens", "").orEmpty()),
+            defaultTemplate = ModelConfig.DETECT)
+        activeModelCfg = cfg
+        activeModelCfgKey = key
+        applyModelConfig(cfg)
+        Log.i(TAG, "🧩 Modelo ${cfg.modelName}: plantilla ${cfg.effectiveTemplate} · ${cfg.sizeLabel} (${cfg.sizeClass.label}) · " +
+            "temp ${cfg.temperature} · stops ${cfg.effectiveStops.size} · plantilla propia: " +
+            (if (cfg.hasEmbeddedTemplate) "sí (${cfg.embeddedTemplateChars} letras)" else "no"))
+        return cfg
+    }
+
+    /** Pasa la configuración del modelo a los motores y a la pantalla de ⚙️. */
+    private fun applyModelConfig(cfg: ModelConfig) {
+        SamplingSettings.chatTemplate = cfg.effectiveTemplate
+        SamplingSettings.stops = cfg.stopTokens
+        SamplingSettings.temperature = cfg.temperature
+        SamplingSettings.noThink = cfg.thinkingSwitch
+        SamplingSettings.modelStops = cfg.modelStops
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putFloat("ai_temperature", cfg.temperature).apply()
+        runOnUiThread { showModelConfigInUi(cfg) }
+    }
+
+    private fun showModelConfigInUi(cfg: ModelConfig) {
+        applyingModelCfg = true
+        try {
+            tvModelProfile?.text = "Modelo activo: " + cfg.modelName.take(48) +
+                (if (cfg.sizeLabel.isNotBlank()) " · ${cfg.sizeLabel} (${cfg.sizeClass.label})" else "") +
+                (if (cfg.architecture.isNotBlank()) " · ${cfg.architecture}" else "") +
+                (if (cfg.hasEmbeddedTemplate) "\n💬 Trae su propia plantilla de chat: se usa tal cual"
+                 else if (cfg.detectedTemplate != null) "\n💬 No trae plantilla: se usa la de su familia (${familyShort(cfg.detectedTemplate)})"
+                 else "")
+            seekTemperature?.progress = (cfg.temperature * 100).toInt()
+            tvTemperatureValue?.text = String.format(Locale.US, "%.1f", cfg.temperature)
+            val stopsText = cfg.stopTokens.joinToString(", ") { it.replace("\n", "\\n").replace("\t", "\\t") }
+            if (etStopTokens?.text?.toString() != stopsText) etStopTokens?.setText(stopsText)
+            tvStopTokensValue?.text = stopTokensLabel()
+            tvChatTemplateValue?.text = chatTemplateLabel()
+            if (etModelSystemPrompt?.text?.toString()?.trim() != cfg.systemPrompt) etModelSystemPrompt?.setText(cfg.systemPrompt)
+            tvModelSystemPromptValue?.text = systemPromptLabel(cfg)
+        } finally {
+            applyingModelCfg = false
+        }
+    }
+
+    /** Cambia la configuración del modelo activo (desde ⚙️) y la guarda. */
+    private fun updateActiveModelConfig(change: (ModelConfig) -> ModelConfig) {
+        val cur = activeModelCfg ?: return
+        val f = getActiveModelFile() ?: return
+        if (f.name != cur.modelName) return
+        val next = change(cur)
+        activeModelCfg = next
+        ModelConfigStore.save(this, f, next)
+        SamplingSettings.chatTemplate = next.effectiveTemplate
+        SamplingSettings.stops = next.stopTokens
+        SamplingSettings.temperature = next.temperature
+        SamplingSettings.noThink = next.thinkingSwitch
+        SamplingSettings.modelStops = next.modelStops
+    }
+
+    // 💻 Motor CPU: la app arma la conversación con la plantilla EXACTA del modelo (ChatTemplateFormatter)
+    private fun cpuSetChatMode(systemPrompt: String, maxTokens: Int) {
+        cpuSystemPrompt = systemPrompt
+        nativeSetChatMode(systemPrompt, maxTokens)
+    }
+
+    private fun cpuRunChat(roles: Array<String>, contents: Array<String>): String {
+        val formatted = SamplingSettings.formatPrompt(cpuSystemPrompt, roles.toList(), contents.toList())
+        if (formatted != null) {
+            try {
+                return nativeRunChatFormatted(formatted.toByteArray(Charsets.UTF_8)).also { refreshCpuTemplateStatus() }
+            } catch (e: UnsatisfiedLinkError) {
+                Log.w(TAG, "Motor sin plantilla desde la app (falta native-lib nuevo): se usa la del modelo")
+            }
+        }
+        // «auto»: el motor ejecuta la plantilla PROPIA del GGUF (tokenizer.chat_template, Jinja)
+        return nativeRunChat(roles, contents).also { refreshCpuTemplateStatus() }
+    }
+
+    /** Anota qué plantilla usó de verdad el motor CPU (se ve en ⚙️ → Plantilla de chat). Nunca traba la pantalla. */
+    private fun refreshCpuTemplateStatus() {
+        val st = runCatching { nativeChatTemplateInfo() }.getOrNull() ?: return
+        if (st == cpuTemplateStatus) return
+        cpuTemplateStatus = st
+        Log.i(TAG, "💬 Plantilla del motor CPU: $st")
+        runOnUiThread { tvChatTemplateValue?.text = chatTemplateLabel() }
+    }
+
+    private fun setupStopTokensAndTemplate() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // 🛑 Stop tokens: separados por comas (\n = salto de línea). Se guardan al escribir.
+        etStopTokens?.setText(prefs.getString("ai_stop_tokens", "").orEmpty())
+        tvStopTokensValue?.text = stopTokensLabel()
+        etStopTokens?.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                if (applyingModelCfg) return
+                val text = s?.toString().orEmpty()
+                prefs.edit().putString("ai_stop_tokens", text).apply()
+                SamplingSettings.stops = SamplingSettings.parseStops(text)
+                tvStopTokensValue?.text = stopTokensLabel()
+                updateActiveModelConfig { it.copy(stopTokens = SamplingSettings.stops) }
+            }
+        })
+        // 📝 System prompt de este modelo (instrucciones extra, solo para el modelo activo)
+        etModelSystemPrompt?.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                if (applyingModelCfg) return
+                val text = s?.toString()?.trim().orEmpty()
+                updateActiveModelConfig { it.copy(systemPrompt = text) }
+                tvModelSystemPromptValue?.text = systemPromptLabel(activeModelCfg)
+            }
+        })
+        // 💬 Plantilla de chat: «Automática» usa la que trae el modelo (lo recomendado)
+        tvChatTemplateValue?.text = chatTemplateLabel()
+        btnChatTemplate?.setOnClickListener {
+            val cfg = activeModelCfg
+            val detected = cfg?.detectedTemplate
+            // 1) La etiqueta PROPIA del GGUF (recomendada: cada modelo trae la suya) · 2) una plantilla fija
+            val keys = listOf(ModelConfig.DETECT) + ChatTemplateFormatter.TEMPLATES.map { it.key }
+            val first = when {
+                cfg == null -> "La del propio modelo (recomendada)"
+                cfg.hasEmbeddedTemplate -> "La del propio GGUF (recomendada)"
+                detected != null -> "Automática: ${familyShort(detected)} (el GGUF no trae plantilla)"
+                else -> "Automática (el GGUF no trae plantilla)"
+            }
+            val names = (listOf(first) + ChatTemplateFormatter.TEMPLATES.map { it.label }).toTypedArray()
+            val currentKey = cfg?.templateType ?: prefs.getString("ai_chat_template", ModelConfig.DETECT) ?: ModelConfig.DETECT
+            // «detect» y la antigua «auto» son la misma opción: la del propio modelo
+            val current = keys.indexOf(currentKey).coerceAtLeast(0)
+            AlertDialog.Builder(this)
+                .setTitle(if (cfg != null) "Plantilla de chat · ${cfg.modelName.take(40)}" else "Plantilla de chat")
+                .setSingleChoiceItems(names, current) { dialog, which ->
+                    val key = keys[which]
+                    if (cfg != null) {
+                        // Solo para ESTE modelo: los demás siguen leyendo su propia etiqueta
+                        updateActiveModelConfig { it.copy(templateType = key) }
+                    } else {
+                        prefs.edit().putString("ai_chat_template", key).apply()
+                        SamplingSettings.chatTemplate = if (ChatTemplateFormatter.isKnown(key)) key else ChatTemplateFormatter.AUTO
+                    }
+                    tvChatTemplateValue?.text = chatTemplateLabel()
+                    tvStopTokensValue?.text = stopTokensLabel()
+                    dialog.dismiss()
+                }
+                .setNegativeButton("Cancelar", null)
+                .show().also { styleGrayDialog(it) }
+        }
+    }
+
+    private fun setupAdvancedConfig() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        // 👆 Deslizar con el dedo: el panel lateral y el desplazamiento vertical ya no "roban" el gesto
+        listOf(seekContext, seekTemperature, seekTopK, seekTopP, seekMinP).forEach { it?.let { sb -> enableSlideDrag(sb) } }
+        // Se muestran los valores guardados (antes volvían a los de fábrica al abrir la app)
+        // Mínimo de la barra: 2048 (debajo de eso el modelo no rinde bien). Arriba, lo decides tú.
+        seekContext?.min = 2048
+        seekContext?.progress = prefs.getInt("ai_context", 2048).coerceAtLeast(2048)
+        tvContextValue?.text = "${seekContext?.progress ?: 2048} tok"
+        val savedTemp = prefs.getFloat("ai_temperature", -1f)
+        if (savedTemp >= 0f) seekTemperature?.progress = (savedTemp * 100).toInt()
+        tvTemperatureValue?.text = String.format(Locale.US, "%.1f", (seekTemperature?.progress ?: 50) / 100.0)
+        // 🎛️ Top K, Top P y Min-P con su valor a la vista (por defecto: 40 · 0.95 · 0.05, lo que ya usaba el motor)
+        seekTopK?.progress = prefs.getInt("ai_top_k", 40)
+        seekTopP?.progress = prefs.getInt("ai_top_p", 95)
+        seekMinP?.progress = prefs.getInt("ai_min_p", 5)
+        tvTopKValue?.text = topKLabel(seekTopK?.progress ?: 40)
+        tvTopPValue?.text = String.format(Locale.US, "%.2f", (seekTopP?.progress ?: 95) / 100.0)
+        tvMinPValue?.text = minPLabel(seekMinP?.progress ?: 5)
+        loadSamplingSettings()
+        setupStopTokensAndTemplate()
+        thread { runCatching { ensureActiveModelConfig() } }
+
+        seekContext?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                // El valor exacto que elijas con el dedo, pero nunca menos de 2048
+                val v = progress.coerceAtLeast(2048)
+                if (v != progress) seekBar?.progress = v
+                tvContextValue?.text = "$v tok"
+                prefs.edit().putInt("ai_context", v).apply()
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        seekTemperature?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val temp = progress / 100.0
+                tvTemperatureValue?.text = String.format(Locale.US, "%.1f", temp)
+                prefs.edit().putFloat("ai_temperature", temp.toFloat()).apply()
+                SamplingSettings.temperature = temp.toFloat()
+                if (!applyingModelCfg) updateActiveModelConfig { it.copy(temperature = temp.toFloat()) }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        seekTopK?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                prefs.edit().putInt("ai_top_k", progress).apply()
+                tvTopKValue?.text = topKLabel(progress)
+                SamplingSettings.topK = progress
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        seekTopP?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                prefs.edit().putInt("ai_top_p", progress).apply()
+                tvTopPValue?.text = String.format(Locale.US, "%.2f", progress / 100.0)
+                SamplingSettings.topP = progress / 100f
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        seekMinP?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                prefs.edit().putInt("ai_min_p", progress).apply()
+                tvMinPValue?.text = minPLabel(progress)
+                SamplingSettings.minP = progress / 100f
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        btnSaveCustomPersonality?.setOnClickListener {
+            val customPersonality = etPersonalityCustom?.text?.toString()?.trim() ?: ""
+            if (customPersonality.isEmpty()) {
+                cumulusToast(this, "Escribe una personalidad personalizada", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            prefs.edit().putString("custom_personality", customPersonality).apply()
+            cumulusToast(this, "Personalidad guardada: elígela en el menú de modos (arriba de Traducción)", Toast.LENGTH_SHORT).show()
+            refreshSaveChecks()
+            // 🎭 Ya aparece en el menú de modos, arriba de Traducción
+            btnChatMode?.text = "${currentChatMode().label} ▴"
+        }
+        
+        btnDeleteCustomPersonality?.setOnClickListener {
+            etPersonalityCustom?.text?.clear()
+            prefs.edit().remove("custom_personality").apply()
+            cumulusToast(this, "Personalidad borrada", Toast.LENGTH_SHORT).show()
+            refreshSaveChecks()
+            // 🎭 Desaparece del menú de modos; si estaba elegida, vuelve a «Solo chat»
+            if (prefs.getString("chat_mode", "solo_chat") == "personalizada") prefs.edit().putString("chat_mode", "solo_chat").apply()
+            btnChatMode?.text = "${currentChatMode().label} ▴"
+        }
+    }
+
+    // 🔑 Botón de la clave: azul «GUARDAR API KEY» ↔ rojo «API KEY GUARDADA»
+    private var keyBtnTint: android.content.res.ColorStateList? = null
+    private var keyBtnLabel: CharSequence? = null
+    private fun setKeyButtonSaved(saved: Boolean) {
+        val b = btnSaveElevenKey ?: return
+        if (keyBtnLabel == null) { keyBtnLabel = b.text; keyBtnTint = b.backgroundTintList }
+        if (saved) {
+            b.text = "API KEY GUARDADA"
+            b.backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#C62828"))
+        } else {
+            b.text = keyBtnLabel
+            b.backgroundTintList = keyBtnTint
+        }
+        stylePill(b)   // 💊 píldora: gris ↔ roja «API KEY GUARDADA»
+    }
+
+    // ✓ Visto bueno en GUARDAR (personalidad y nombres) y en USAR / GUARDAR de ElevenLabs:
+    //    a la IZQUIERDA de la palabra y en la misma línea («✓ GUARDAR»), del color del texto
+    private val btnBaseLabels = HashMap<Int, CharSequence>()
+    private fun setButtonCheck(b: MaterialButton?, checked: Boolean) {
+        b ?: return
+        val base = btnBaseLabels.getOrPut(b.id) { b.text }
+        b.text = base
+        // Un poco menos de margen a los lados: así «✓ GUARDAR» cabe en una sola línea
+        val side = (8 * resources.displayMetrics.density).toInt()
+        b.setPaddingRelative(side, b.paddingTop, side, b.paddingBottom)
+        if (!checked) { b.icon = null; return }
+        val color = b.currentTextColor
+        b.icon = CheckLineIcon(color, tight = true)
+        b.iconSize = b.textSize.toInt()                              // el ✓ queda del alto de las letras
+        b.iconPadding = (5 * resources.displayMetrics.density).toInt()
+        b.iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START       // pegado a la palabra, a su izquierda
+        b.iconTint = ColorStateList.valueOf(color)
+    }
+
+    /** 🔑 Guarda la clave de ElevenLabs (después de aceptar el aviso de uso responsable). */
+    private fun saveElevenKey(apiKey: String) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString("eleven_api_key", apiKey).apply()
+        getSharedPreferences("TtsPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("elevenlabs_api_key", apiKey)
+            .apply()
+        cumulusToast(this, "¡API Key de ElevenLabs guardada con éxito!", Toast.LENGTH_SHORT).show()
+        setKeyButtonSaved(true)
+    }
+
+    /** ¿Ya aceptó el aviso de uso responsable de voces? */
+    private fun hasVoiceConsent(): Boolean =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getLong("eleven_voice_consent_at", 0L) > 0L
+
+    /**
+     * ⚖️ AVISO DE USO RESPONSABLE (ElevenLabs): la clonación es solo para TU voz o una voz con autorización
+     * (no voces de anime, actores, cantantes ni otras personas sin su permiso). Tiene una casilla «Acepto…»:
+     * el botón ACEPTAR se activa recién al marcarla. Al aceptar se guarda la fecha y sigue [onAccepted].
+     */
+    private fun showVoiceConsentDialog(onAccepted: () -> Unit) {
+        val d = resources.displayMetrics.density
+        val light = isLightMode()
+        val textColor = if (light) Color.BLACK else Color.WHITE
+        val message = TextView(this).apply {
+            text = "ElevenLabs en Cumulus es SOLO para clonar:\n\n" +
+                "✅ Tu propia voz.\n" +
+                "✅ La voz de otra persona que te haya dado su autorización.\n\n" +
+                "No está permitido clonar:\n\n" +
+                "🚫 Voces de anime, dibujos animados o videojuegos.\n" +
+                "🚫 Voces de actores, cantantes, locutores, youtubers u otras personas famosas.\n" +
+                "🚫 La voz de cualquier persona sin su permiso.\n\n" +
+                "Usar la voz de otra persona sin autorización puede infringir sus derechos y la ley, además de las reglas " +
+                "de ElevenLabs y de Google Play. Tú eres responsable de las voces que grabes o subas."
+            setTextColor(textColor)
+            textSize = 14.5f
+            setLineSpacing(0f, 1.12f)
+        }
+        val accept = android.widget.CheckBox(this).apply {
+            text = "Acepto: solo grabaré mi propia voz o una voz con autorización."
+            setTextColor(textColor)
+            textSize = 14.5f
+            buttonTintList = ColorStateList.valueOf(textColor)
+            setPadding(paddingLeft, (6 * d).toInt(), paddingRight, (6 * d).toInt())
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (22 * d).toInt()
+            setPadding(pad, (8 * d).toInt(), pad, 0)
+            addView(message)
+            addView(accept, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = (14 * d).toInt()
+            })
+        }
+        val scroll = android.widget.ScrollView(this).apply { addView(box) }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("⚖️ Uso responsable de las voces")
+            .setView(scroll)
+            .setPositiveButton("ACEPTAR") { _, _ ->
+                if (!accept.isChecked) return@setPositiveButton
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                    .putLong("eleven_voice_consent_at", System.currentTimeMillis()).apply()
+                onAccepted()
+            }
+            .setNegativeButton("CANCELAR", null)
+            .create()
+        dialog.setOnShowListener {
+            val ok = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            // El botón ACEPTAR queda apagado hasta que marques la casilla
+            ok?.isEnabled = false
+            ok?.alpha = 0.4f
+            accept.setOnCheckedChangeListener { _, checked -> ok?.isEnabled = checked; ok?.alpha = if (checked) 1f else 0.4f }
+        }
+        dialog.show()
+        runCatching { styleDarkRoundDialog(dialog) }
+    }
+
+    private fun setupElevenLabsActions() {
+        // Al abrir la app: si ya hay una clave guardada, el botón aparece rojo
+        val savedKeyNow = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("eleven_api_key", "").orEmpty()
+        setKeyButtonSaved(savedKeyNow.isNotBlank() && savedKeyNow == etElevenApiKey?.text?.toString()?.trim())
+        // Si cambias la clave escrita, vuelve a azul para que la guardes de nuevo
+        etElevenApiKey?.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(e: android.text.Editable?) {
+                val saved = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getString("eleven_api_key", "").orEmpty()
+                setKeyButtonSaved(saved.isNotBlank() && saved == e?.toString()?.trim())
+            }
+        })
+
+        btnSaveElevenKey?.setOnClickListener {
+            val apiKey = etElevenApiKey?.text?.toString()?.trim() ?: ""
+            if (apiKey.isEmpty()) {
+                cumulusToast(this, "Introduce tu API Key de ElevenLabs", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            // ⚖️ Antes de guardar la clave: aviso de uso responsable con casilla «Acepto» (debe marcarla para continuar)
+            showVoiceConsentDialog { saveElevenKey(apiKey) }
+        }
+
+        btnElevenRecord?.setOnClickListener {
+            // Nueva grabación: se quitan los ✔ hasta que la uses o la guardes
+            setButtonCheck(btnElevenUse, false); setButtonCheck(btnElevenSave, false)
+            if (!isRecordingVoice) {
+                startAudioRecording()
+            } else {
+                stopAudioRecording()
+            }
+        }
+
+        btnElevenTest?.setOnClickListener {
+            // ⏹️ Si ya está sonando, el mismo botón la detiene
+            if (elevenTestPlaying) { stopElevenTest(); return@setOnClickListener }
+            if (recordedAudioFile == null || !recordedAudioFile!!.exists()) {
+                cumulusToast(this, "Primero graba una muestra de voz", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            try {
+                mediaPlayer?.release()
+                mediaPlayer = MediaPlayer().apply {
+                    setDataSource(recordedAudioFile!!.absolutePath)
+                    prepare()
+                    setOnCompletionListener { runOnUiThread { stopElevenTest() } }
+                    start()
+                }
+                setElevenTestButton(true)
+                cumulusToast(this, "Reproduciendo muestra de voz grabada...", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                setElevenTestButton(false)
+                cumulusToast(this, "Error al reproducir audio: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        btnElevenUse?.setOnClickListener {
+            // ⚖️ Si todavía no aceptaste el aviso de uso responsable, primero se muestra
+            if (!hasVoiceConsent()) { showVoiceConsentDialog { btnElevenUse?.performClick() }; return@setOnClickListener }
+            val apiKey = etElevenApiKey?.text?.toString()?.trim() ?: ""
+            if (apiKey.isEmpty()) {
+                cumulusToast(this, "Falta tu API Key de ElevenLabs", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            if (recordedAudioFile == null || !recordedAudioFile!!.exists()) {
+                cumulusToast(this, "Falta la muestra de audio grabada", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            val progressDialog = ProgressDialog(this).apply {
+                setTitle("ElevenLabs Cloud")
+                setMessage("Conectando con servidores y clonando voz...")
+                setCancelable(false)
+                show()
+                styleGrayDialog(this)   // 🩶 gris de los botones, curvo y sin línea
+            }
+
+            thread {
+                val clonedVoiceId = uploadVoiceToElevenLabs(apiKey, "CumulusCustomVoice", recordedAudioFile!!)
+                runOnUiThread {
+                    progressDialog.dismiss()
+                    if (clonedVoiceId != null) {
+                        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        prefs.edit().putString("eleven_active_voice_id", clonedVoiceId).apply()
+                        getSharedPreferences("TtsPrefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .putString("elevenlabs_api_key", apiKey)
+                            .putString("elevenlabs_voice_id", clonedVoiceId)
+                            .putString("selected_provider", "ELEVEN_LABS")
+                            .apply()
+                        cumulusToast(this, "¡Voz clonada y vinculada correctamente!", Toast.LENGTH_LONG).show()
+                        setButtonCheck(btnElevenUse, true)   // ✔ se está usando esta voz
+                    } else {
+                        cumulusToast(this, "❌ " + (lastElevenError ?: "Error de conexión con ElevenLabs"), Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+
+        btnElevenDelete?.setOnClickListener {
+            // 🗑 Al eliminar, se quitan los ✔ de USAR y GUARDAR
+            setButtonCheck(btnElevenUse, false); setButtonCheck(btnElevenSave, false)
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit().remove("eleven_active_voice_id").apply()
+            getSharedPreferences("TtsPrefs", Context.MODE_PRIVATE)
+                .edit()
+                .remove("elevenlabs_voice_id")
+                .apply()
+            recordedAudioFile?.delete()
+            recordedAudioFile = null
+            cumulusToast(this, "Configuración de ElevenLabs restablecida", Toast.LENGTH_SHORT).show()
+        }
+
+        btnElevenSave?.setOnClickListener {
+            // ⚖️ Si todavía no aceptaste el aviso de uso responsable, primero se muestra
+            if (!isRecordingVoice && !hasVoiceConsent()) { showVoiceConsentDialog { btnElevenSave?.performClick() }; return@setOnClickListener }
+            if (isRecordingVoice) {
+                cumulusToast(this, "Primero detén la grabación", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val apiKey = etElevenApiKey?.text?.toString()?.trim() ?: ""
+            if (apiKey.isEmpty()) {
+                cumulusToast(this, "Falta tu API Key de ElevenLabs", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val source = recordedAudioFile
+            if (source == null || !source.exists()) {
+                cumulusToast(this, "Primero graba una muestra de voz", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            val nameInput = EditText(this).apply {
+                hint = "Nombre de la voz (ej: Mi voz)"
+                setSingleLine()
+                setTextColor(Color.WHITE)
+                setHintTextColor(Color.parseColor("#8E8E93"))
+                backgroundTintList = ColorStateList.valueOf(Color.parseColor("#8E8E93"))
+            }
+            // 🎵 Quitar música, ruido y efectos (ElevenLabs aísla solo la voz antes de clonarla)
+            val cleanCheck = android.widget.CheckBox(this).apply {
+                text = "🎵 Quitar música, ruido y efectos de fondo"
+                setTextColor(Color.WHITE)
+                textSize = 14f
+                isChecked = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean("voice_remove_noise", true)
+                buttonTintList = ColorStateList.valueOf(Color.WHITE)   // ⚪ casilla blanca (antes azul)
+            }
+            val cleanHint = TextView(this).apply {
+                text = "Actívalo si tu grabación tiene música o ruido de fondo. Si grabaste en silencio, desactívalo: así suena mejor."
+                setTextColor(Color.parseColor("#8E8E93"))
+                textSize = 12f
+            }
+            val nameBox = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                val pad = (22 * resources.displayMetrics.density).toInt()
+                setPadding(pad, pad / 3, pad, 0)
+                addView(nameInput)
+                addView(cleanCheck)
+                addView(cleanHint)
+            }
+
+            AlertDialog.Builder(this)
+                .setTitle("Guardar voz")
+                .setView(nameBox)
+                .setPositiveButton("Guardar") { _, _ ->
+                    val removeNoise = cleanCheck.isChecked
+                    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean("voice_remove_noise", removeNoise).apply()
+                    val voiceName = nameInput.text.toString().trim().ifEmpty {
+                        "Mi voz " + java.text.SimpleDateFormat("dd-MM HH:mm", Locale.US).format(java.util.Date())
+                    }
+                    val progressDialog = ProgressDialog(this).apply {
+                        setTitle("ElevenLabs Cloud")
+                        setMessage("Guardando la voz \"$voiceName\"...")
+                        setCancelable(false)
+                        show()
+                        styleGrayDialog(this)   // 🩶 gris de los botones, curvo y sin línea
+                    }
+                    thread {
+                        val savedVoiceId = uploadVoiceToElevenLabs(apiKey, voiceName, source, removeNoise)
+                        runOnUiThread {
+                            progressDialog.dismiss()
+                            if (savedVoiceId != null) {
+                                setButtonCheck(btnElevenSave, true)   // ✔ esta voz quedó guardada
+                                cumulusToast(
+                                    this,
+                                    "✅ Voz \"$voiceName\" guardada. Ya aparece en Voces guardadas.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            } else {
+                                cumulusToast(
+                                    this,
+                                    "❌ " + (lastElevenError ?: "No se pudo guardar la voz."),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
+                }
+                .setNegativeButton("Cancelar", null)
+                .show().also { styleGrayDialog(it) }
+        }
+    }
+
+    // 🖤 Ventana con fondo negro, borde gris y esquinas redondas
+    // 🩶 «Chats anteriores» y «Voces guardadas» (panel de las tres rayas): fondo del mismo gris de los botones,
+    //    sin línea alrededor y Cerrar / Cancelar en blanco (en modo claro: gris claro y texto oscuro)
+    private fun styleGrayDialog(dialog: AlertDialog) {
+        styleDarkRoundDialog(dialog, border = false)
+        val d = resources.displayMetrics.density
+        val light = isLightMode()
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.InsetDrawable(
+            android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 22 * d
+                setColor(if (light) pillGrayLight else pillGrayDark)
+            }, (16 * d).toInt()))
+        val buttonColor = if (light) pillTextDark else Color.WHITE
+        listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL).forEach {
+            dialog.getButton(it)?.setTextColor(buttonColor)
+        }
+        // ⚪ Ruedita de «Cargando…» blanca
+        dialog.findViewById<ProgressBar>(android.R.id.progress)?.indeterminateTintList = ColorStateList.valueOf(buttonColor)
+        // ⚪ Listas para elegir (modelo, mmproj…): el círculo marcado en blanco en vez de azul
+        dialog.listView?.let { lv ->
+            val tint = ColorStateList.valueOf(buttonColor)
+            fun tintRow(v: View) { (v as? android.widget.CheckedTextView)?.checkMarkTintList = tint }
+            for (i in 0 until lv.childCount) tintRow(lv.getChildAt(i))
+            lv.setOnHierarchyChangeListener(object : ViewGroup.OnHierarchyChangeListener {
+                override fun onChildViewAdded(parent: View?, child: View?) { child?.let { tintRow(it) } }
+                override fun onChildViewRemoved(parent: View?, child: View?) = Unit
+            })
+        }
+    }
+
+    private fun styleDarkRoundDialog(dialog: AlertDialog, border: Boolean = true) {
+        val d = resources.displayMetrics.density
+        val light = isLightMode()   // ⚪ modo claro: fondo blanco · ⚫ modo oscuro: fondo negro
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.InsetDrawable(
+            android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 22 * d
+                setColor(if (light) Color.WHITE else Color.BLACK)
+                // border = false: sin línea gris alrededor (menú ➕ del chat)
+                if (border) setStroke((1.2f * d).toInt(), Color.parseColor(if (light) "#C7C7CC" else "#8E8E93"))
+            }, (16 * d).toInt()))
+        dialog.findViewById<TextView>(android.R.id.title)?.setTextColor(if (light) Color.parseColor("#111111") else Color.WHITE)
+        dialog.findViewById<TextView>(android.R.id.message)?.setTextColor(Color.parseColor(if (light) "#333333" else "#DDDDDD"))
+        if (light) dialog.window?.decorView?.let { recolorTree(it, true) }   // lo que escribes, en oscuro
+        dialog.window?.decorView?.let { applyTapRipple(it) }   // 💧 botones y listas de la ventana con destello azul
+    }
+
+    private fun startAudioRecording() {
+        val audioDir = externalCacheDir
+        if (audioDir != null && !audioDir.exists()) {
+            audioDir.mkdirs()
+        }
+        recordedAudioFile = File(audioDir, "eleven_sample_voice.m4a")
+
+        mediaRecorder = MediaRecorder(this).apply {
+            setAudioSource(MediaRecorder.AudioSource.MIC)
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            setAudioSamplingRate(44100)
+            setAudioEncodingBitRate(128000)
+            setAudioChannels(1)
+            setOutputFile(recordedAudioFile!!.absolutePath)
+            try {
+                prepare()
+                start()
+                isRecordingVoice = true
+                btnElevenRecord?.text = "Detener Grabación"
+                cumulusToast(this@MainActivity, "Grabando voz para clonación...", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error al iniciar grabadora: ${e.message}")
+                cumulusToast(this@MainActivity, "No se pudo iniciar el micrófono", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun stopAudioRecording() {
+        try {
+            mediaRecorder?.stop()
+            mediaRecorder?.release()
+            mediaRecorder = null
+            isRecordingVoice = false
+            btnElevenRecord?.text = "Grabar Muestra"
+            cumulusToast(this, "¡Muestra de voz guardada con éxito!", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al detener grabadora: ${e.message}")
+        }
+    }
+
+    private fun uploadVoiceToElevenLabs(apiKey: String, voiceName: String, audioFile: File, removeNoise: Boolean = false): String? {
+        val boundary = "Boundary-" + System.currentTimeMillis()
+        val lineEnd = "\r\n"
+        val twoHyphens = "--"
+
+        lastElevenError = null
+        try {
+            val url = URL("https://api.elevenlabs.io/v1/voices/add")
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                doInput = true
+                doOutput = true
+                useCaches = false
+                setRequestProperty("xi-api-key", apiKey)
+                setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            }
+
+            val outputStream = BufferedOutputStream(connection.outputStream)
+            val writer = outputStream.writer(Charsets.UTF_8)
+
+            writer.append(twoHyphens).append(boundary).append(lineEnd)
+            writer.append("Content-Disposition: form-data; name=\"name\"").append(lineEnd)
+            writer.append("Content-Type: text/plain; charset=UTF-8").append(lineEnd)
+            writer.append(lineEnd).append(voiceName).append(lineEnd)
+
+            if (removeNoise) {
+                // ElevenLabs separa la voz de la música, ruidos y efectos antes de clonarla
+                writer.append(twoHyphens).append(boundary).append(lineEnd)
+                writer.append("Content-Disposition: form-data; name=\"remove_background_noise\"").append(lineEnd)
+                writer.append(lineEnd).append("true").append(lineEnd)
+            }
+
+            writer.append(twoHyphens).append(boundary).append(lineEnd)
+            writer.append("Content-Disposition: form-data; name=\"files\"; filename=\"${audioFile.name}\"").append(lineEnd)
+            writer.append("Content-Type: audio/mp4").append(lineEnd)
+            writer.append(lineEnd)
+            writer.flush()
+
+            val fileInputStream = FileInputStream(audioFile)
+            val buffer = ByteArray(4096)
+            var bytesRead: Int
+            while (fileInputStream.read(buffer).also { bytesRead = it } != -1) {
+                outputStream.write(buffer, 0, bytesRead)
+            }
+            fileInputStream.close()
+            outputStream.flush()
+
+            writer.append(lineEnd)
+            writer.append(twoHyphens).append(boundary).append(twoHyphens).append(lineEnd)
+            writer.flush()
+            writer.close()
+
+            val responseCode = connection.responseCode
+            if (responseCode == HttpURLConnection.HTTP_OK || responseCode == HttpURLConnection.HTTP_CREATED) {
+                val reader = BufferedReader(InputStreamReader(connection.inputStream))
+                val responseString = reader.readText()
+                reader.close()
+
+                val jsonResponse = JSONObject(responseString)
+                return jsonResponse.optString("voice_id", null)
+            } else {
+                val body = runCatching {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }
+                }.getOrNull().orEmpty()
+                Log.e(TAG, "Error en servidor ElevenLabs: Código $responseCode $body")
+                lastElevenError = describeElevenLabsError(responseCode, body)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Excepción conectando con ElevenLabs: ${e.message}")
+            lastElevenError = "Sin conexión con ElevenLabs: ${e.message ?: "revisa tu internet"}"
+        }
+        return null
+    }
+
+    private fun describeElevenLabsError(code: Int, body: String): String {
+        var status = ""
+        var message = ""
+        runCatching {
+            val json = JSONObject(body)
+            val detail = json.opt("detail")
+            when (detail) {
+                is JSONObject -> {
+                    status = detail.optString("status")
+                    message = detail.optString("message")
+                }
+                is String -> message = detail
+            }
+        }
+        val s = (status + " " + message).lowercase(Locale.US)
+        return when {
+            "instant_voice_cloning" in s || "can_not_use" in s || "subscription" in s || "upgrade" in s ->
+                "Tu plan de ElevenLabs no permite clonar voces. Necesitas el plan Starter o superior."
+            "voice_limit" in s || "maximum amount" in s || "limit" in s ->
+                "Llegaste al límite de voces de tu cuenta. Borra voces en elevenlabs.io (Voices) y vuelve a intentar."
+            "missing_permissions" in s || "permission" in s ->
+                "Tu API Key no tiene permiso para crear voces. En elevenlabs.io crea una key con 'Voices: Write' activado."
+            code == 401 || "invalid_api_key" in s ->
+                "API Key inválida. Cópiala de nuevo desde elevenlabs.io y pulsa Guardar API Key."
+            message.isNotBlank() -> "ElevenLabs ($code): $message"
+            else -> "ElevenLabs respondió con error $code"
+        }
+    }
+
+    // Dibuja texto/símbolo como icono lateral del botón "Nombre del modelo" (del color del texto: blanco en modo oscuro)
+    private class BlueSymbolDrawable(private val symbol: String, private val sizePx: Float, symbolColor: Int) : android.graphics.drawable.Drawable() {
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = symbolColor
+            textSize = sizePx
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textAlign = android.graphics.Paint.Align.CENTER
+        }
+        override fun draw(canvas: android.graphics.Canvas) {
+            val b = bounds
+            val y = b.exactCenterY() - (paint.descent() + paint.ascent()) / 2f
+            canvas.drawText(symbol, b.exactCenterX(), y, paint)
+        }
+        override fun getIntrinsicWidth() = (sizePx * 1.2f).toInt()
+        override fun getIntrinsicHeight() = (sizePx * 1.2f).toInt()
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(cf: android.graphics.ColorFilter?) { paint.colorFilter = cf }
+        @Suppress("OVERRIDE_DEPRECATION")
+        override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
+    }
+
+    private fun applyBlueStatusIcons(btn: MaterialButton, number: Int?, ok: Boolean) {
+        val sizePx = 26f * resources.displayMetrics.scaledDensity
+        val symbolColor = btn.currentTextColor   // ⚪ antes azul; ahora igual que el texto del botón
+        val left = BlueSymbolDrawable(number?.toString() ?: " ", sizePx, symbolColor)
+        val right = BlueSymbolDrawable(if (ok) "✓" else "✕", sizePx, symbolColor)
+        left.setBounds(0, 0, left.intrinsicWidth, left.intrinsicHeight)
+        right.setBounds(0, 0, right.intrinsicWidth, right.intrinsicHeight)
+        btn.setCompoundDrawablesRelative(left, null, right, null)
+    }
+
+    private fun setModelNameText(text: String) {
+        val btn = btnModelName ?: return
+        btn.text = text
+        val models = runCatching { getDownloadedModelFiles() }.getOrDefault(emptyList())
+        val active = getActiveModelFile()
+        val hasModel = active != null && active.exists()
+        val idx = if (hasModel) models.indexOfFirst { it.absolutePath == active!!.absolutePath }.coerceAtLeast(0) else -1
+        applyBlueStatusIcons(btn, if (hasModel) idx + 1 else null, hasModel)
+    }
+
+    private fun checkStoredModelStatus() {
+        val activeModel = getActiveModelFile()
+        if (activeModel != null && activeModel.exists()) {
+            tvModelLoadedName?.text = "Modelo local: ${activeModel.name} (${activeModel.length() / (1024 * 1024)} MB)"
+            setModelNameText("Nombre del modelo\n${activeModel.name} · Automático")
+            logLoadedModelName(activeModel.name)
+        } else {
+            tvModelLoadedName?.text = "Modelo: Ninguno descargado"
+            setModelNameText("Nombre del modelo\nAutomático · esperando GGUF")
+        }
+    }
+
+    private fun verifyAndRequestPermissions() {
+        val permissionsNeeded = mutableListOf<String>()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permissionsNeeded.add(Manifest.permission.RECORD_AUDIO)
+        }
+        if (permissionsNeeded.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, permissionsNeeded.toTypedArray(), PERMISSION_REQUEST_CODE)
+        }
+    }
+
+    private fun setupBackPressedHandler() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val drawer = drawerLayout
+                when {
+                    cameraLiveActive -> closeCameraLive()
+                    drawer != null && drawer.isDrawerOpen(GravityCompat.START) -> {
+                        drawer.closeDrawer(GravityCompat.START)
+                    }
+                    drawer != null && drawer.isDrawerOpen(GravityCompat.END) -> {
+                        if (settingsPageFlipper?.displayedChild != PAGE_SETTINGS) {
+                            showSettingsPage(PAGE_SETTINGS)
+                        } else {
+                            drawer.closeDrawer(GravityCompat.END)
+                        }
+                    }
+                    else -> {
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                    }
+                }
+            }
+        })
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        AiActivity.onBubbleChange = null
+        AiActivity.onOpenPreview = null
+        GenieXEngineManager.onPartial = null
+        // Las descargas no se cancelan al destruir la Activity. Su metadata
+        // y archivo parcial quedan guardados para continuar al volver a entrar.
+
+        voiceBrowserTts?.shutdown()
+        voiceBrowserTts = null
+        // 🎙️ Se apagan los reintentos y la vigilancia del micrófono de la conversación por voz
+        listOf(micRestart, micKeepAlive, micWatchdog, partialCut).forEach { it.removeCallbacksAndMessages(null) }
+        speechRecognizer?.cancel()
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+        chatTtsEngine?.release()
+        chatTtsEngine = null
+
+        thread {
+            try {
+                runBlocking { LiteRtLmEngineManager.release("main_activity") }
+                runCatching { runBlocking { GenieXEngineManager.release() } }
+                if (isModelLoadedInMemory) nativeReleaseModel()
+                isModelLoadedInMemory = false
+                Log.d(TAG, "✅ Motores liberados al cerrar la actividad principal.")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error al liberar motores en onDestroy: ${e.message}")
+            }
+        }
+    }
+}
+
+
+private fun logLoadedModelName(name: String) {
+    Log.d("ModelStatus", "Modelo detectado automáticamente: $name")
+}
+
+
+
+
+            
+ 
