@@ -24,8 +24,8 @@ jobs:
         - /usr/local/.ghcup:/host_free/ghcup
 
     env:
-      # llama.cpp del motor CPU (con vision mtmd): la version mas nueva (5 oct 2026). Si algun dia falla, volver a v0.2.0
-      LLAMA_GIT_TAG: v0.6.0
+      # llama.cpp del motor CPU (con vision mtmd): v0.7.0 (15 oct 2026, la estable mas nueva). Si algun dia falla, volver a v0.6.0
+      LLAMA_GIT_TAG: v0.7.0
       # Version de las librerias QNN de Qualcomm (NPU). Cambiala aqui si hace falta.
       QNN_VERSION: 2.47.0
       # LiteRT-LM 0.17.x esta compilado con QAIRT 2.47  Dispatch de LiteRT v2.2.0 (tambien QAIRT 2.47)
