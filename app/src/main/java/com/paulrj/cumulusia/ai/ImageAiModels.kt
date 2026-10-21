@@ -25,6 +25,24 @@ enum class ImageEngine(val label: String) {
 class ImageEngineError(message: String) : Exception(message)
 
 /**
+ * 🩺 En qué paso iba la IA de imágenes. Se escribe al instante en un archivo (filesDir/img_phase.txt):
+ * si la NPU se cae y Android cierra la app de golpe, al volver a abrirla «¿por qué se cerró?» muestra
+ * el último paso (por ejemplo «creando el delegado QNN» o «bloque 1 de 12»).
+ */
+object ImgPhase {
+    @Volatile var file: File? = null
+    fun start(dir: File) {
+        file = File(dir, "img_phase.txt").also { runCatching { it.delete() } }
+    }
+    fun mark(step: String) {
+        val f = file ?: return
+        runCatching {
+            java.io.FileOutputStream(f, true).use { o -> o.write("▶ $step\n".toByteArray()); o.fd.sync() }
+        }
+    }
+}
+
+/**
  * 🧠 Un modelo TFLite (LiteRT) abierto en el motor que eligió el usuario:
  *  ⚡ NPU = delegado QNN de Qualcomm (usa las librerías QNN que trae GenieX)
  *  🎮 GPU = delegado GPU de LiteRT (Adreno)
@@ -37,10 +55,13 @@ class TfModel(file: File, val label: String, val engine: ImageEngine, nativeLibD
 
     init {
         val options = org.tensorflow.lite.Interpreter.Options()
+        ImgPhase.mark("abriendo «$label» en ${engine.label}")
         try {
             when (engine) {
                 ImageEngine.NPU -> {
+                    ImgPhase.mark("creando el delegado QNN (NPU)")
                     val d = QnnDelegateFactory.create(nativeLibDir, fp16 = floatModel)
+                    ImgPhase.mark("delegado QNN listo")
                     delegate = d
                     options.addDelegate(d)
                 }
@@ -53,7 +74,9 @@ class TfModel(file: File, val label: String, val engine: ImageEngine, nativeLibD
                 }
                 ImageEngine.CPU -> options.setNumThreads(4)
             }
+            ImgPhase.mark("cargando el modelo en ${engine.label} (LiteRT)")
             interpreter = org.tensorflow.lite.Interpreter(file, options)
+            ImgPhase.mark("modelo cargado en ${engine.label}")
         } catch (e: ImageEngineError) {
             closeDelegate()
             throw e
@@ -289,6 +312,7 @@ class ImageAiModels(private val context: Context, private val onProgress: (Strin
     /** Abre un TFLite en el motor elegido. Lanza ImageEngineError si ese motor no sirve (no se prueba otro). */
     fun openTflite(spec: Spec, engine: ImageEngine, floatModel: Boolean): TfModel? {
         val f = ensure(spec) ?: return null
+        ImgPhase.start(context.filesDir)
         return try {
             TfModel(f, spec.label, engine, context.applicationInfo.nativeLibraryDir, floatModel)
         } catch (e: ImageEngineError) {
