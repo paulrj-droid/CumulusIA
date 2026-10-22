@@ -103,14 +103,15 @@ dependencies {
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
     implementation 'com.google.code.gson:gson:2.10.1'
-    implementation 'com.google.ai.edge.litertlm:litertlm-android:0.17.0'
+    implementation 'com.google.ai.edge.litertlm:litertlm-android:0.18.0'   // 22 oct 2026 (antes 0.17.0)
     implementation 'com.qualcomm.qti:qnn-runtime:2.42.0'
     implementation 'com.qualcomm.qti:qnn-litert-delegate:2.42.0'
 
     //  Editor de imagenes con IA (recortar, resolucion con IA, fondo, personas): LiteRT en NPU, GPU o CPU
-    implementation 'com.google.ai.edge.litert:litert:1.4.0'
-    implementation 'com.google.ai.edge.litert:litert-gpu:1.4.0'
-    implementation 'com.google.ai.edge.litert:litert-gpu-api:1.4.0'
+    //  (1.4.2 = la más nueva de la línea 1.x. La 2.x deja el Interpreter solo en CPU: rompería la GPU y la NPU de estas IA)
+    implementation 'com.google.ai.edge.litert:litert:1.4.2'
+    implementation 'com.google.ai.edge.litert:litert-gpu:1.4.2'
+    implementation 'com.google.ai.edge.litert:litert-gpu-api:1.4.2'
     //  NPU para esas IA: delegado QNN con la MISMA version de QNN que trae GenieX 0.9.1 (QAIRT 2.50).
     //    (va escrito asi a proposito: el workflow comenta las lineas 'com.qualcomm.qti:...' de arriba)
     //    Si se vuelve a GenieX 0.8.0, esta linea vuelve a '2.45.0'.
