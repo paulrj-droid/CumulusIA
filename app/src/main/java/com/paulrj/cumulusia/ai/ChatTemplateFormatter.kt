@@ -20,7 +20,8 @@ object ChatTemplateFormatter {
     val TEMPLATES: List<Template> = listOf(
         Template("chatml", "ChatML (Qwen, SmolLM, Hermes, LFM…)", listOf("<|im_end|>", "<|im_start|>")),
         Template("llama3", "Llama 3", listOf("<|eot_id|>", "<|start_header_id|>")),
-        Template("gemma", "Gemma", listOf("<end_of_turn>", "<start_of_turn>")),
+        // ⚠️ Es el formato de Gemma 2 y Gemma 3. Gemma 4 usa otras etiquetas: con Gemma 4 elige «La del propio GGUF»
+        Template("gemma", "Gemma 2 / Gemma 3 (no Gemma 4)", listOf("<end_of_turn>", "<start_of_turn>")),
         Template("phi3", "Phi-3 / Phi-4 mini", listOf("<|end|>", "<|user|>", "<|endoftext|>")),
         Template("phi4", "Phi-4", listOf("<|im_end|>", "<|im_start|>")),
         Template("mistral-v7", "Mistral", listOf("</s>", "[INST]")),
@@ -117,6 +118,8 @@ object ChatTemplateFormatter {
         return when {
             n.contains("deepseek") && (n.contains("r1") || n.contains("v3")) -> "deepseek3"
             a.startsWith("qwen") || n.contains("qwen") || n.contains("smollm") || a.startsWith("lfm") -> "chatml"
+            // Gemma 4 no usa el formato de Gemma 2/3: si no trae plantilla, se usa la del motor
+            a.startsWith("gemma4") || n.contains("gemma-4") || n.contains("gemma4") -> null
             a.startsWith("gemma") || n.contains("gemma") -> "gemma"
             n.contains("phi-4") && !n.contains("mini") -> "phi4"
             a.startsWith("phi3") || n.contains("phi-3") || n.contains("phi3") || n.contains("phi-4-mini") -> "phi3"
@@ -125,4 +128,5 @@ object ChatTemplateFormatter {
         }
     }
 }
+
 
