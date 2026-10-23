@@ -49,7 +49,12 @@ object StarText {
     }
 
     private fun setLight(value: Boolean) {
-        if (value != light) { light = value; modeVersion++ }
+        if (value != light) {
+            light = value; modeVersion++
+            // 🌗 Al cambiar de modo se olvida lo revisado: un ícono revisado en modo claro (negro) no es «no blanco»
+            //    para siempre. Antes ☰ y ⚙️ quedaban blancos en el modo oscuro, sin el color de las estrellas.
+            checked.clear()
+        }
     }
 
     /** La primera vez lee el modo y queda escuchando: al tocar el interruptor cambia al instante. */
@@ -209,6 +214,8 @@ object StarText {
     private fun applyIcon(v: ImageView): Boolean {
         val d = v.drawable ?: return false
         if (d is GradientIcon) return false
+        // ☀️ En modo claro los íconos son negros: no se revisan (ni se anotan) hasta volver al modo oscuro
+        if (light) return false
         checked[d]?.let { if (!it) return false }
         if (v.width <= 0 || v.height <= 0) return false
         val white = checked[d] ?: isWhiteIcon(v).also { checked[d] = it }
@@ -297,4 +304,5 @@ object StarText {
         visible >= 8 && whiteCount >= visible * 0.7
     }.getOrDefault(false)
 }
+
 
