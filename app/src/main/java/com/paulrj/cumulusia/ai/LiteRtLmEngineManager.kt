@@ -91,6 +91,41 @@ object LiteRtLmEngineManager {
         }
     }
 
+    // ======================================================================
+    // 🩺 ¿QUÉ TRAE ESTE .litertlm? (solo diagnóstico: no cambia cómo se carga ni cómo responde)
+    //    Se le pregunta al propio archivo si trae visión (fotos) y audio, y en qué motores pueden correr.
+    // ======================================================================
+    @Volatile private var lastModelInfo: String = ""
+
+    /** Informe de lo que trae el último .litertlm cargado (lo muestra «diagnóstico general»). */
+    fun modelInfoReport(): String = lastModelInfo
+
+    private fun readModelInfo(modelPath: String): String = try {
+        com.google.ai.edge.litertlm.ModelInfo.from(modelPath).use { info ->
+            val m = info.inputModalities()
+            fun yes(b: Boolean) = if (b) "SÍ ✅" else "no"
+            fun backends(mod: com.google.ai.edge.litertlm.Modality) =
+                runCatching { info.supportedBackends(mod).joinToString(", ") { it.name } }.getOrDefault("?").ifBlank { "—" }
+            buildString {
+                append("📄 ").append(File(modelPath).name).append(" (").append(File(modelPath).length() / (1024 * 1024)).append(" MB)\n")
+                append("👁️ Trae visión (fotos): ").append(yes(m.vision))
+                if (m.vision) append(" · motores: ").append(backends(com.google.ai.edge.litertlm.Modality.VISION))
+                append("\n🎙️ Trae audio: ").append(yes(m.audio))
+                if (m.audio) append(" · motores: ").append(backends(com.google.ai.edge.litertlm.Modality.AUDIO))
+                append("\n💬 Texto · motores: ").append(backends(com.google.ai.edge.litertlm.Modality.TEXT))
+                if (m.vision) runCatching { info.maxVisionTokenBudget() }.getOrNull()?.takeIf { it > 0 }
+                    ?.let { append("\n🖼️ Tamaño máximo de foto: ").append(it).append(" tokens") }
+                runCatching { info.maxContextTokens() }.getOrNull()?.takeIf { it > 0 }
+                    ?.let { append("\n📏 Contexto máximo: ").append(it).append(" tokens") }
+                runCatching { info.minRuntimeVersion() }.getOrNull()?.takeIf { it.isNotBlank() }
+                    ?.let { append("\n🔧 Necesita LiteRT-LM ").append(it).append(" o más nuevo") }
+                append("\n⚙️ Hoy la app le pasa solo texto (las fotos aún no van a LiteRT)")
+            }
+        }
+    } catch (t: Throwable) {
+        "📄 ${File(modelPath).name}: no se pudo leer qué trae (${t.javaClass.simpleName}: ${t.message?.take(160)})"
+    }
+
     suspend fun load(
         context: Context,
         modelPath: String,
@@ -103,6 +138,9 @@ object LiteRtLmEngineManager {
             else -> "CPU"
         }
         owners.add(owner)
+        // 🩺 Se anota qué trae el archivo (visión, audio, motores) ANTES de cargarlo: así se sabe aunque falle
+        lastModelInfo = readModelInfo(modelPath)
+        Log.i(TAG, "🩺 Qué trae el modelo:\n$lastModelInfo")
         if (isLoaded(modelPath) && requestedBackendKey == backendKey) {
             return@withLock true
         }
