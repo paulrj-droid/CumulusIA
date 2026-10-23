@@ -96,13 +96,24 @@ object LiteRtLmEngineManager {
     //    Se le pregunta al propio archivo si trae visión (fotos) y audio, y en qué motores pueden correr.
     // ======================================================================
     @Volatile private var lastModelInfo: String = ""
+    /** El archivo .litertlm trae visión (lo dice el propio archivo). */
+    @Volatile private var modelHasVision = false
+    /** El motor se cargó con la visión encendida (en la CPU, que es donde la admite el modelo). */
+    @Volatile private var visionReady = false
+    @Volatile private var visionNote: String = ""
+
+    /** true si el .litertlm cargado puede mirar fotos. */
+    fun hasVision(): Boolean = visionReady && engine != null
 
     /** Informe de lo que trae el último .litertlm cargado (lo muestra «diagnóstico general»). */
-    fun modelInfoReport(): String = lastModelInfo
+    fun modelInfoReport(): String = lastModelInfo +
+        (if (visionNote.isNotBlank()) "\n$visionNote" else "") +
+        (if (lastVisionStats.isNotBlank()) "\n📷 Última foto: $lastVisionStats" else "")
 
     private fun readModelInfo(modelPath: String): String = try {
         com.google.ai.edge.litertlm.ModelInfo.from(modelPath).use { info ->
             val m = info.inputModalities()
+            modelHasVision = m.vision
             fun yes(b: Boolean) = if (b) "SÍ ✅" else "no"
             fun backends(mod: com.google.ai.edge.litertlm.Modality) =
                 runCatching { info.supportedBackends(mod).joinToString(", ") { it.name } }.getOrDefault("?").ifBlank { "—" }
@@ -119,10 +130,11 @@ object LiteRtLmEngineManager {
                     ?.let { append("\n📏 Contexto máximo: ").append(it).append(" tokens") }
                 runCatching { info.minRuntimeVersion() }.getOrNull()?.takeIf { it.isNotBlank() }
                     ?.let { append("\n🔧 Necesita LiteRT-LM ").append(it).append(" o más nuevo") }
-                append("\n⚙️ Hoy la app le pasa solo texto (las fotos aún no van a LiteRT)")
+                if (!m.vision) append("\n⚙️ Este archivo no trae visión: con él no se pueden mirar fotos")
             }
         }
     } catch (t: Throwable) {
+        modelHasVision = false
         "📄 ${File(modelPath).name}: no se pudo leer qué trae (${t.javaClass.simpleName}: ${t.message?.take(160)})"
     }
 
@@ -226,14 +238,41 @@ object LiteRtLmEngineManager {
             var candidateEngine: Engine? = null
             try {
                 Log.i(TAG, "Inicializando $modelPath con ${candidate.label}")
-                candidateEngine = Engine(
-                    EngineConfig(
-                        modelPath = modelPath,
-                        backend = candidate.create(),
-                        cacheDir = appContext.cacheDir.absolutePath
+                // 👁️ Si el archivo trae visión, se enciende en la CPU (es donde este modelo la admite).
+                //    La visión se carga recién cuando llega una foto, así que no retrasa la carga.
+                //    Si la visión no arrancara, el modelo se carga igual en TU motor, solo con texto, y se anota.
+                visionReady = false
+                visionNote = ""
+                if (modelHasVision) {
+                    try {
+                        candidateEngine = Engine(
+                            EngineConfig(
+                                modelPath = modelPath,
+                                backend = candidate.create(),
+                                visionBackend = Backend.CPU(),
+                                cacheDir = appContext.cacheDir.absolutePath
+                            )
+                        )
+                        candidateEngine.initialize()
+                        visionReady = true
+                        visionNote = "👁️ Visión encendida (en la CPU) · el texto va en ${candidate.label}"
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "La visión no arrancó: ${t.message}")
+                        try { candidateEngine?.close() } catch (_: Throwable) {}
+                        candidateEngine = null
+                        visionNote = "⚠️ La visión no arrancó (${t.message?.take(160)}): el modelo quedó solo con texto"
+                    }
+                }
+                if (candidateEngine == null) {
+                    candidateEngine = Engine(
+                        EngineConfig(
+                            modelPath = modelPath,
+                            backend = candidate.create(),
+                            cacheDir = appContext.cacheDir.absolutePath
+                        )
                     )
-                )
-                candidateEngine.initialize()
+                    candidateEngine.initialize()
+                }
                 val candidateConversation = candidateEngine.createConversation()
                 engine = candidateEngine
                 conversation = candidateConversation
@@ -349,6 +388,43 @@ object LiteRtLmEngineManager {
         SamplingSettings.cutAtStops(text)
     }
 
+    @Volatile private var lastVisionStats: String = ""
+
+    /**
+     * 👁️ Mira fotos con LiteRT-LM: las fotos van ANTES del texto (como recomienda Gemma) en un solo mensaje.
+     * Con fotos se usa temperatura baja (≤ 0.2) para que describa lo que ve y no invente.
+     */
+    suspend fun generateWithImages(system: String, prompt: String, imagePaths: List<String>): String = engineMutex.withLock {
+        val currentEngine = engine ?: throw IllegalStateException("LiteRT-LM no tiene un modelo cargado")
+        check(visionReady) { "Este modelo .litertlm se cargó sin visión" }
+        try { conversation?.close() } catch (_: Throwable) {}
+        val base = if (system.isNotBlank()) ConversationConfig(systemInstruction = Contents.of(system)) else ConversationConfig()
+        val sampler = runCatching {
+            SamplerConfig(
+                topK = 40,
+                topP = 0.95,
+                temperature = SamplingSettings.temperature.toDouble().coerceIn(0.0, 0.2)
+            )
+        }.getOrNull()
+        conversation = if (sampler != null)
+            runCatching { currentEngine.createConversation(base.copy(samplerConfig = sampler)) }.getOrElse { currentEngine.createConversation(base) }
+        else currentEngine.createConversation(base)
+        val parts = imagePaths.map { Content.ImageFile(it) } + Content.Text(prompt)
+        val t0 = System.currentTimeMillis()
+        val response = conversation!!.sendMessage(Contents.of(parts))
+        val text = response.contents.contents
+            .filterIsInstance<Content.Text>()
+            .joinToString(separator = "") { it.text }
+            .ifBlank { response.toString() }
+        lastMs = System.currentTimeMillis() - t0
+        lastPromptChars = system.length + prompt.length
+        lastReplyChars = text.length
+        lastVisionStats = "${imagePaths.size} foto(s) · " + String.format(java.util.Locale.ROOT, "%.1f", lastMs / 1000f) +
+            " s en total (mirar + escribir) · " + text.length + " letras"
+        Log.i(TAG, "👁️ $lastVisionStats")
+        SamplingSettings.cutAtStops(text)
+    }
+
     suspend fun generate(prompt: String): String = engineMutex.withLock {
         val currentConversation = conversation
             ?: throw IllegalStateException("LiteRT-LM no tiene un modelo cargado")
@@ -387,9 +463,11 @@ object LiteRtLmEngineManager {
         }
         conversation = null
         engine = null
+        visionReady = false
         loadedModelPath = null
         requestedBackendKey = null
         activeBackendLabel = "LiteRT-LM sin cargar"
     }
 }
+
 
