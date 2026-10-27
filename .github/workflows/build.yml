@@ -62,7 +62,8 @@ jobs:
             echo "JAVA_HOME=/opt/jdk17" >> "$GITHUB_ENV"
             echo "/opt/jdk17/bin" >> "$GITHUB_PATH"
           fi
-          java -version 2>&1 || true
+          # (el java nuevo recien queda en el PATH en el paso siguiente: se prueba con su ruta completa)
+          if [ -x /opt/jdk17/bin/java ]; then /opt/jdk17/bin/java -version 2>&1; else java -version 2>&1 || true; fi
 
       # Gradle 8.14.3: lo pide el plugin de Android 8.13.2 (compila para Android 16 / API 36)
       - name: Install Gradle 8.14.3
@@ -86,27 +87,53 @@ jobs:
                -o /tmp/ndk29.zip https://dl.google.com/android/repository/android-ndk-r29-linux.zip
           ls -lh /tmp/ndk29.zip
           mkdir -p /opt/ndk29
-          # Se extrae con sus carpetas originales: glslc encuentra solo sus librerias
           unzip -q -o /tmp/ndk29.zip "android-ndk-r29/shader-tools/*" -d /opt/ndk29
-          unzip -q -o /tmp/ndk29.zip "android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/lib/*" -d /opt/ndk29 || true
-          unzip -q -o /tmp/ndk29.zip "android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/lib64/*" -d /opt/ndk29 || true
+          # glslc del NDK r29 esta hecho con musl: ademas de libc++ necesita libc_musl.so.
+          # Se busca dentro del zip (este en la carpeta que este) y se extrae.
+          unzip -Z1 /tmp/ndk29.zip | grep -E 'linux-x86_64/.*(libc_musl\.so|x86_64-unknown-linux-musl/libc\+\+\.so)' | grep -v sysroot > /tmp/musl.txt || true
+          echo "Librerias musl encontradas en el NDK:"; cat /tmp/musl.txt || true
+          if [ -s /tmp/musl.txt ]; then
+            xargs unzip -q -o /tmp/ndk29.zip -d /opt/ndk29 < /tmp/musl.txt
+          fi
           rm -f /tmp/ndk29.zip
           NDK=/opt/ndk29/android-ndk-r29
           REAL=$NDK/shader-tools/linux-x86_64/glslc
-          # Carpeta con libc++ (con el nombre exacto libc++.so que pide glslc)
-          mkdir -p /opt/glslc29/lib
-          find $NDK -name 'libc++.so*' -path '*linux-x86_64*' -not -path '*sysroot*' | tee /tmp/libcxx.txt
-          while read -r f; do cp -f "$f" /opt/glslc29/lib/; done < /tmp/libcxx.txt
-          if [ ! -e /opt/glslc29/lib/libc++.so ]; then
-            ONE=$(ls /opt/glslc29/lib/libc++.so* | head -n 1)
-            ln -sf "$ONE" /opt/glslc29/lib/libc++.so
+          LIB=/opt/glslc29/lib
+          rm -rf "$LIB"
+          mkdir -p "$LIB"
+          # 1) libc_musl.so del NDK
+          find "$NDK" -name 'libc_musl.so*' -not -path '*sysroot*' -exec cp -f {} "$LIB"/ \;
+          # 2) Si el NDK no la trae, se usa la musl de Debian con el nombre que pide glslc
+          if ! ls "$LIB"/libc_musl.so* >/dev/null 2>&1; then
+            echo "libc_musl.so no viene en el NDK: se instala musl de Debian"
+            apt-get install -y --no-install-recommends musl
+            MUSL=$(ls /usr/lib/x86_64-linux-musl/libc.so /lib/x86_64-linux-musl/libc.so 2>/dev/null | head -n 1)
+            if [ -n "$MUSL" ]; then
+              ln -sf "$MUSL" "$LIB/libc_musl.so"
+            fi
           fi
-          ls -la /opt/glslc29/lib
-          # Lanzador que le indica a glslc donde esta libc++
+          # 3) libc++ de 64 bits que va con glslc (antes se mezclaban copias de 32 bits y de glibc)
+          for f in "$NDK"/shader-tools/linux-x86_64/libc++.so* "$NDK"/toolchains/llvm/prebuilt/linux-x86_64/lib/x86_64-unknown-linux-musl/libc++.so*; do
+            if [ -f "$f" ] && [ ! -e "$LIB/$(basename "$f")" ]; then
+              cp -f "$f" "$LIB"/
+            fi
+          done
+          if [ ! -e "$LIB/libc++.so" ]; then
+            ONE=$(ls "$LIB"/libc++.so* 2>/dev/null | head -n 1)
+            if [ -n "$ONE" ]; then
+              ln -sf "$ONE" "$LIB/libc++.so"
+            fi
+          fi
+          ls -la "$LIB"
+          # Lanzador que le indica a glslc donde estan libc++ y libc_musl
           printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/opt/glslc29/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\nexec %s "$@"\n' "$REAL" > /opt/glslc29/glslc
           chmod +x /opt/glslc29/glslc "$REAL"
-          # Prueba real: si glslc no arranca, el build se detiene aqui
-          /opt/glslc29/glslc --version
+          # Prueba real: si glslc no arranca, el build se detiene aqui (y muestra que le falta)
+          if ! /opt/glslc29/glslc --version; then
+            echo "ERROR: glslc no arranca. Librerias que pide:"
+            (command -v readelf >/dev/null && readelf -d "$REAL" | grep -E 'NEEDED|RUNPATH|RPATH') || true
+            exit 1
+          fi
           echo "CUMULUS_GLSLC=/opt/glslc29/glslc" >> "$GITHUB_ENV"
 
       - name: Clone repository
