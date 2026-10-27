@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Ícono de Cumulus en la pantalla de inicio: usa la MISMA imagen del chat (res/drawable/cumulus_icon).
-     Para cambiar el ícono y el logo del chat a la vez, basta con reemplazar esa imagen.
-     El 16.7% de margen deja la imagen completa justo en la parte visible del ícono (así no se corta "CUMULUS"). -->
+<!-- Ícono de Cumulus en la pantalla de inicio: usa la MISMA imagen del chat (cumulus_icon).
+     La imagen viene ya achicada con buena calidad en res/drawable-mdpi … drawable-xxxhdpi (así no se pixela).
+     Para cambiar el ícono y el logo del chat a la vez, se reemplaza cumulus_icon en esas carpetas.
+     El 16.7% de margen deja la imagen completa justo en la parte visible del ícono (así no se corta «CUMULUS»). -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@android:color/black" />
     <foreground>
