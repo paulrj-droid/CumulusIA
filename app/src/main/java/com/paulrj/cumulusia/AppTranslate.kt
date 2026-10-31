@@ -55,7 +55,13 @@ object AppTranslate {
         Regex("^lee ≈") to "Leídos ≈",
         Regex("^escribe ≈") to "Escritura ≈",
         Regex("^rapido$") to "rápido",
-        Regex("^Sin datos de internet") to "No se usaron datos de internet"
+        Regex("^Sin datos de internet") to "No se usaron datos de internet",
+        Regex("^Quieres que te busque «(.+?)» en internet, o me lo estás diciendo para conversar\\?") to
+            "¿Quieres que yo busque \"$1\" en internet, o solo quieres conversar?",
+        Regex("^Me lo estás contando para conversar, o quieres que te busque algo sobre eso en internet\\?") to
+            "¿Solo quieres conversar, o quieres que yo busque información sobre eso en internet?",
+        Regex("^Dime «búscalo» o «solo conversando»\\.") to "Responde \"busca\" o \"solo conversar\".",
+        Regex("^Conversamos o lo busco\\?") to "¿Conversar o buscar?"
     )
 
     /** Código de la app («en», «zh-CN», «pt-BR»…) → idioma del traductor (null = no lo traduce). */
@@ -117,8 +123,9 @@ object AppTranslate {
         var last = 0
         fun plain(part: String) {
             if (part.none { it.isLetter() }) { out.append(part); return }
-            val lead = part.takeWhile { !it.isLetter() }
+            var lead = part.takeWhile { !it.isLetter() }
             val rest = part.substring(lead.length)
+            if (!key.endsWith(">es")) lead = lead.replace("¿", "").replace("¡", "")
             val trail = rest.takeLastWhile { it.isWhitespace() }
             val core = rest.substring(0, rest.length - trail.length)
             out.append(lead).append(piece(core, tr, key)).append(trail)
