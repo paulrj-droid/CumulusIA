@@ -6,8 +6,9 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:paddingHorizontal="16dp"
+    android:paddingHorizontal="4dp"
     android:paddingVertical="8dp">
+    <!-- 📐 A los lados solo 4dp (antes 16dp): el chat usa casi todo el ancho de la pantalla -->
 
     <!-- Fila superior: avatar de la IA + nombre -->
     <LinearLayout
@@ -116,4 +117,3 @@
         android:textSize="11sp"
         android:textColor="#808080" />
 </LinearLayout>
-
