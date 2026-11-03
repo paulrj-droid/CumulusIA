@@ -45,14 +45,31 @@
             android:name="libOpenCL.so"
             android:required="false" />
 
-        <!-- Actividad Principal -->
+        <!-- Actividad Principal
+             📥 singleTask: al compartirle algo a Cumulus se usa la Cumulus que ya está abierta (con su modelo cargado),
+             en vez de abrir otra copia encima que cargaría el modelo dos veces -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- 📥 «Compartir» → Cumulus: un archivo, foto, video o texto desde Mis archivos, Galería, Chrome… -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+
+            <!-- 📥 «Compartir» → Cumulus: varios archivos a la vez -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
 
@@ -81,4 +98,3 @@
     </application>
 
 </manifest>
-
