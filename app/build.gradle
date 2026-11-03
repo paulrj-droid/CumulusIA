@@ -4,6 +4,18 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
+// Motor de las voces descargadas o subidas (.onnx, Piper): sherpa-onnx, dentro del telefono y sin internet.
+// Se usa el archivo oficial (.aar) de sherpa-onnx: al compilar se baja solo la primera vez a app/libs/.
+def sherpaOnnxVersion = "1.13.7"
+def sherpaOnnxAar = file("libs/sherpa-onnx-${sherpaOnnxVersion}.aar")
+if (!sherpaOnnxAar.exists()) {
+    sherpaOnnxAar.parentFile.mkdirs()
+    def part = file("libs/sherpa-onnx-${sherpaOnnxVersion}.aar.part")
+    new URL("https://github.com/k2-fsa/sherpa-onnx/releases/download/v${sherpaOnnxVersion}/sherpa-onnx-${sherpaOnnxVersion}.aar")
+        .withInputStream { input -> part.withOutputStream { out -> out << input } }
+    part.renameTo(sherpaOnnxAar)
+}
+
 android {
     namespace 'com.paulrj.cumulusia'
     //  Android 16 (API 36): lo exige Google Play para apps nuevas y actualizaciones desde el 31 de agosto de 2026
@@ -87,6 +99,8 @@ android {
             useLegacyPackaging true
             // El telefono usa su propio libOpenCL.so (/vendor/lib64), no el de la compilacion
             excludes += ['**/libOpenCL.so']
+            // Las voces .onnx (sherpa-onnx) y la palabra de activacion pueden traer el mismo motor ONNX: se deja uno solo
+            pickFirsts += ['**/libonnxruntime.so', '**/libc++_shared.so']
         }
     }
 }
@@ -123,6 +137,11 @@ dependencies {
     implementation 'com.google.mlkit:translate:17.0.3'
     //  Reconoce en que idioma esta cada linea (para traducir solo lo que esta en espanol)
     implementation 'com.google.mlkit:language-id:17.0.6'
+
+    // Voces descargadas o subidas (.onnx, Piper): motor sherpa-onnx (va ANTES que openwakeword: se usa su motor ONNX)
+    implementation files(sherpaOnnxAar)
+    // Abrir los datos de pronunciacion de las voces (espeak-ng-data.tar.bz2, se bajan una sola vez)
+    implementation 'org.apache.commons:commons-compress:1.27.1'
 
     implementation("xyz.rementia:openwakeword:0.1.3")
 
