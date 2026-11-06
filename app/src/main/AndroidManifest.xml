@@ -32,10 +32,11 @@
         android:largeHeap="true"
         android:theme="@style/Theme.CumulusIA">
 
-        <!-- 🧠 IA de Google para separar personas y objetos del fondo (editor de imágenes) -->
+        <!-- 🧠 IA de Google para separar personas y objetos del fondo (editor de imágenes)
+             📄 y el lector de letras (ocr) de la ventana «Currículum»: se descargan con Google Play al instalar la app -->
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="subject_segment" />
+            android:value="subject_segment,ocr" />
 
         <!-- Bibliotecas opcionales usadas por LiteRT-LM para aceleración. -->
         <uses-native-library
