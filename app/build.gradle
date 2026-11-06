@@ -137,6 +137,13 @@ dependencies {
     implementation 'com.google.mlkit:translate:17.0.3'
     //  Reconoce en que idioma esta cada linea (para traducir solo lo que esta en espanol)
     implementation 'com.google.mlkit:language-id:17.0.6'
+    //  📄 Lector de letras del telefono (ML Kit) para la ventana «Curriculum»: lee una FOTO o un PDF escaneado y pone
+    //  los datos en las casillas (no es la IA del chat). Latino (espanol, ingles, portugues, frances...) + chino, japones y coreano.
+    //  Se descarga solo con Google Play (el latino al instalar la app; los otros la primera vez que se usan).
+    implementation 'com.google.android.gms:play-services-mlkit-text-recognition:19.0.1'
+    implementation 'com.google.android.gms:play-services-mlkit-text-recognition-chinese:16.0.1'
+    implementation 'com.google.android.gms:play-services-mlkit-text-recognition-japanese:16.0.1'
+    implementation 'com.google.android.gms:play-services-mlkit-text-recognition-korean:16.0.1'
 
     // Voces descargadas o subidas (.onnx, Piper): motor sherpa-onnx (va ANTES que openwakeword: se usa su motor ONNX)
     implementation files(sherpaOnnxAar)
