@@ -243,6 +243,23 @@ jobs:
           if [ ! -f app/src/main/sdcpp/sd-jni.cpp ]; then
             echo "AVISO: falta app/src/main/sdcpp/sd-jni.cpp"; exit 0
           fi
+          # NPU (crear imagenes desde cero en la NPU, sd-qnn.cpp): necesita los headers de QNN 2.50.40.
+          # Vienen del repositorio oficial de Qualcomm (qualcomm/geniex-qairt-plugin, BSD-3), en la misma
+          # version que usa GenieX 0.9.1. Si no se pueden bajar, la libreria se compila igual, sin la NPU.
+          QNN_INC=""
+          QNN_API_COMMIT=34cc633df34c69acb478305c917d5256cafb3551
+          rm -rf /tmp/qnnapi
+          if [ -f app/src/main/sdcpp/sd-qnn.cpp ] && \
+             git clone -q --filter=blob:none --no-checkout https://github.com/qualcomm/geniex-qairt-plugin /tmp/qnnapi && \
+             git -C /tmp/qnnapi sparse-checkout set --no-cone '/qnn-api/include/*.h' '/qnn-api/include/HTP/*.h' '/qnn-api/include/System/*.h' && \
+             git -C /tmp/qnnapi checkout -q "$QNN_API_COMMIT" && \
+             [ -f /tmp/qnnapi/qnn-api/include/QnnInterface.h ]; then
+            QNN_INC=/tmp/qnnapi/qnn-api/include
+            grep -h 'QNN_SDK_BUILD_ID "' "$QNN_INC/QnnSdkBuildId.h" || true
+            echo "OK: headers de QNN listos (la IA de imagenes tambien ira en la NPU)"
+          else
+            echo "AVISO: sin headers de QNN: la IA de imagenes ira solo en la CPU"
+          fi
           # El CMakeLists de esta libreria se escribe aqui (no va en el repo: asi no se confunde con el del chat)
           mkdir -p /tmp/sdwrap
           cat > /tmp/sdwrap/CMakeLists.txt <<'CMAKE_EOF'
@@ -296,6 +313,17 @@ jobs:
             target_link_libraries(cumulus_sd PRIVATE stable-diffusion)
             target_include_directories(cumulus_sd PRIVATE "${SDCPP_DIR}/include" "${SDCPP_DIR}/ggml/include")
 
+            # NPU: crear imagenes desde cero con el Stable Diffusion oficial de Qualcomm (sd-qnn.cpp).
+            # Las librerias QNN no se enlazan: se abren al usarlas (dlopen), las mismas de GenieX.
+            if (CUMULUS_QNN_JNI AND QNN_INCLUDE_DIR AND EXISTS "${CUMULUS_QNN_JNI}" AND EXISTS "${QNN_INCLUDE_DIR}/QnnInterface.h")
+                target_sources(cumulus_sd PRIVATE "${CUMULUS_QNN_JNI}")
+                target_include_directories(cumulus_sd PRIVATE "${QNN_INCLUDE_DIR}" "${SDCPP_DIR}/src")
+                target_link_libraries(cumulus_sd PRIVATE ${CMAKE_DL_LIBS})
+                message(STATUS "IA de imagenes: motor de la NPU INCLUIDO")
+            else()
+                message(STATUS "IA de imagenes: motor de la NPU no incluido (solo CPU)")
+            endif()
+
             if (ANDROID)
                 find_library(log-lib log)
                 target_link_libraries(cumulus_sd PRIVATE ${log-lib})
@@ -314,6 +342,7 @@ jobs:
           GEN="Unix Makefiles"; command -v ninja >/dev/null && GEN=Ninja
           cmake -S /tmp/sdwrap -B /tmp/sdbuild -G "$GEN" \
             -DSDCPP_DIR=/tmp/sdcpp -DCUMULUS_SD_JNI="$PWD/app/src/main/sdcpp/sd-jni.cpp" \
+            -DCUMULUS_QNN_JNI="$PWD/app/src/main/sdcpp/sd-qnn.cpp" -DQNN_INCLUDE_DIR="$QNN_INC" \
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-34 -DANDROID_STL=c++_static \
             -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -n 25
