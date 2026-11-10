@@ -9,11 +9,14 @@ import java.net.URL
 import java.util.Locale
 
 /**
- * ⚡🎨 Crear imágenes DESDE CERO en la NPU (Snapdragon), en segundos.
+ * ⚡🎨 Crear imágenes DESDE CERO y CAMBIAR FOTOS en la NPU (Snapdragon), en segundos.
  *
- * Usa el Stable Diffusion 1.5 OFICIAL de Qualcomm AI Hub (licencia CreativeML OpenRAIL-M), que Qualcomm publica
- * ya compilado para cada chip (QNN context binary, w8a16, QAIRT 2.50 = la misma versión de QNN que trae GenieX).
- * Se descarga SOLO el del chip de tu teléfono (≈1,1 GB, una sola vez).
+ * Usa el ControlNet-Canny OFICIAL de Qualcomm AI Hub (Stable Diffusion 1.5 + ControlNet; licencias CreativeML
+ * OpenRAIL-M y Apache-2.0), que Qualcomm publica ya compilado para cada chip (QNN context binary, w8a16).
+ * Un solo paquete sirve para las dos cosas: con una foto, el ControlNet sigue sus contornos; sin foto, va en cero.
+ * Se descarga SOLO el del chip de tu teléfono (≈1,4 GB, una sola vez).
+ * (Si ya bajaste el Stable Diffusion 1.5 solo —≈1,1 GB, de la versión anterior—, sirve para crear desde cero;
+ *  para cambiar fotos se baja el paquete con ControlNet y el anterior se borra.)
  *
  * Chips con modelo oficial: Snapdragon 8 Elite Gen 5 · 8 Elite (S25) · 8 Gen 3 · 8 Gen 2 · 7 Gen 4.
  * En los demás teléfonos (o si la NPU falla) se crea en la CPU, como antes.
@@ -25,11 +28,16 @@ object ImageGenNpu {
     /** Cómo se llama el chip en los archivos de Qualcomm AI Hub. */
     class Chip(val aiHubName: String, val label: String)
 
-    private const val AIHUB = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/stable_diffusion_v1_5/releases"
-    /** Versiones publicadas a probar (la más nueva primero). */
-    private val RELEASES = listOf("v0.66.0")
-    /** Lo que pesa la descarga (aprox.: text encoder + UNet + VAE en w8a16). */
-    const val SIZE_MB = 1100
+    private const val AIHUB = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models"
+
+    /** Un paquete de Qualcomm AI Hub (carpeta propia en el teléfono). */
+    class Bundle(val modelId: String, val releases: List<String>, val sizeMb: Int, val control: Boolean)
+    /** Stable Diffusion 1.5 solo (versión anterior de Cumulus): crea desde cero. */
+    val SD = Bundle("stable_diffusion_v1_5", listOf("v0.66.0", "v0.65.0"), 1100, false)
+    /** ControlNet-Canny (SD 1.5 + ControlNet): crea desde cero Y cambia fotos. Es el que se descarga ahora. */
+    val CN = Bundle("controlnet_canny", listOf("v0.66.0", "v0.65.0"), 1400, true)
+    /** Lo que pesa la descarga (el paquete con ControlNet). */
+    val SIZE_MB get() = CN.sizeMb
 
     // =====================================================================
     // 🔌 ¿Está el motor en esta compilación de la app?
@@ -40,9 +48,11 @@ object ImageGenNpu {
     }
 
     private external fun nativeNpuAvailable(): Boolean
-    private external fun nativeNpuLoad(textEncoder: String, unet: String, vae: String, libDir: String): Boolean
-    /** Devuelve [ancho (4 bytes), alto (4 bytes), RGB…] o null. */
-    private external fun nativeNpuTxt2Img(prompt: String, negative: String, steps: Int, cfg: Float, seed: Long): ByteArray?
+    private external fun nativeNpuLoad(paths: Array<String>, libDir: String): Boolean
+    private external fun nativeNpuHasControl(): Boolean
+    /** Devuelve [ancho (4 bytes), alto (4 bytes), RGB…] o null. control = foto RGB de cw×ch (null = desde cero). */
+    private external fun nativeNpuGenerate(prompt: String, negative: String, steps: Int, cfg: Float, seed: Long,
+                                           control: ByteArray?, cw: Int, ch: Int, controlStrength: Float): ByteArray?
     private external fun nativeNpuCancel()
     private external fun nativeNpuFree()
     private external fun nativeNpuProgress(): Int
@@ -86,62 +96,72 @@ object ImageGenNpu {
     fun useNpu(context: Context): Boolean = supported() && engineChoice(context) != "cpu"
 
     // =====================================================================
-    // 📥 Archivos del modelo (uno por parte, del chip de este teléfono)
+    // 📥 Archivos del modelo (las partes del paquete, del chip de este teléfono)
     // =====================================================================
-    class Files(val textEncoder: File, val unet: File, val vae: File)
+    /** Las partes (.bin) de un paquete listo · control = trae el ControlNet (sirve para cambiar fotos). */
+    class Files(val parts: List<File>, val control: Boolean)
 
-    fun dir(context: Context): File = File(File(context.filesDir, "image_ai"), "npu_" + (chip?.aiHubName ?: "none"))
-    private fun okMark(context: Context) = File(dir(context), "listo.txt")
+    fun dir(context: Context, b: Bundle = CN): File =
+        File(File(context.filesDir, "image_ai"), (if (b === CN) "npu_cn_" else "npu_") + (chip?.aiHubName ?: "none"))
+    private fun okMark(context: Context, b: Bundle) = File(dir(context, b), "listo.txt")
 
-    /** Las 3 partes, si ya están descargadas y completas. */
-    fun files(context: Context): Files? {
-        if (!okMark(context).exists()) return null
-        val bins = dir(context).listFiles()?.filter { it.isFile && it.name.endsWith(".bin", true) && it.length() > 1_000_000 }.orEmpty()
-        fun pick(vararg keys: String) = bins.firstOrNull { f -> keys.any { f.name.lowercase(Locale.ROOT).contains(it) } }
-        val text = pick("text_encoder", "textencoder", "text-encoder", "clip") ?: return null
-        val unet = pick("unet") ?: return null
-        val vae = pick("vae") ?: return null
-        return Files(text, unet, vae)
+    private fun bundleFiles(context: Context, b: Bundle): Files? {
+        if (!okMark(context, b).exists()) return null
+        val bins = dir(context, b).listFiles()?.filter { it.isFile && it.name.endsWith(".bin", true) && it.length() > 1_000_000 }.orEmpty()
+        if (bins.size < (if (b.control) 4 else 3)) return null
+        return Files(bins.sortedBy { it.name }, b.control)
     }
 
-    fun isReady(context: Context): Boolean = chip != null && files(context) != null
+    /**
+     * Las partes listas para usar. needControl = para cambiar una foto (hace falta el paquete con ControlNet).
+     * Para crear desde cero sirve cualquiera de los dos (primero el del ControlNet).
+     */
+    fun files(context: Context, needControl: Boolean = false): Files? =
+        bundleFiles(context, CN) ?: if (needControl) null else bundleFiles(context, SD)
+
+    fun isReady(context: Context, needControl: Boolean = false): Boolean = chip != null && files(context, needControl) != null
 
     /**
-     * Descarga y descomprime el modelo del chip (≈1,1 GB). Continúa donde quedó si se cortó.
+     * Descarga y descomprime el paquete con ControlNet del chip (≈1,4 GB). Continúa donde quedó si se cortó.
      * @return null = listo · texto = por qué no se pudo
      */
     fun download(context: Context, onProgress: (String) -> Unit, isCancelled: () -> Boolean): String? {
         val c = chip ?: return "este chip no tiene el modelo oficial de Qualcomm"
-        if (isReady(context)) return null
-        val d = dir(context).apply { mkdirs() }
-        val need = SIZE_MB * 1024L * 1024L * 23 / 10   // (el .zip + lo descomprimido)
-        if (d.usableSpace < need) return "no hay espacio suficiente (se necesitan ≈" +
-            String.format(Locale.US, "%.1f", need / 1_000_000_000.0).replace('.', ',') + " GB libres)"
+        val b = CN
+        if (bundleFiles(context, b) != null) return null
+        val d = dir(context, b).apply { mkdirs() }
+        val need = b.sizeMb * 1024L * 1024L * 23 / 10   // (el .zip + lo descomprimido)
         val zip = File(d, "modelo.zip.part")
+        if (d.usableSpace + (if (zip.exists()) zip.length() else 0L) < need) return "no hay espacio suficiente (se necesitan ≈" +
+            String.format(Locale.US, "%.1f", need / 1_000_000_000.0).replace('.', ',') + " GB libres)"
         var lastErr = "no se pudo descargar"
-        for (rel in RELEASES) {
+        for (rel in b.releases) {
             if (isCancelled()) return "cancelado"
-            val url = "$AIHUB/$rel/stable_diffusion_v1_5-qnn_context_binary-w8a16-${c.aiHubName}.zip"
+            val url = "$AIHUB/${b.modelId}/releases/$rel/${b.modelId}-qnn_context_binary-w8a16-${c.aiHubName}.zip"
             try {
                 fetch(url, zip, onProgress, isCancelled)
                 if (isCancelled()) return "cancelado"
                 onProgress("📦 Preparando la IA de imágenes de la NPU…")
                 unzipBins(zip, d)
                 zip.delete()
-                okMark(context).writeText("$url\n")
-                if (files(context) != null) return null
-                okMark(context).delete()
-                lastErr = "el archivo de Qualcomm no trae las 3 partes esperadas"
+                okMark(context, b).writeText("$url\n")
+                if (bundleFiles(context, b) != null) {
+                    // (el paquete anterior, sin ControlNet, ya no hace falta: se libera ≈1,1 GB)
+                    runCatching { dir(context, SD).deleteRecursively() }
+                    return null
+                }
+                okMark(context, b).delete()
+                lastErr = "el archivo de Qualcomm no trae las partes esperadas"
             } catch (t: Throwable) {
                 lastErr = t.message ?: t.javaClass.simpleName
-                if (lastErr.startsWith("HTTP 4")) zip.delete()   // (esa versión ya no está: se prueba la siguiente)
+                if (lastErr.startsWith("HTTP 4")) zip.delete()   // (esa versión no está: se prueba la siguiente)
             }
         }
         return lastErr
     }
 
-    /** Borra el modelo de la NPU (para liberar espacio o si quedó dañado). */
-    fun delete(context: Context) { dir(context).deleteRecursively() }
+    /** Borra los modelos de la NPU (para liberar espacio o si quedaron dañados). */
+    fun delete(context: Context) { dir(context, CN).deleteRecursively(); dir(context, SD).deleteRecursively() }
 
     private fun fetch(url: String, out: File, onProgress: (String) -> Unit, isCancelled: () -> Boolean) {
         var from = if (out.exists()) out.length() else 0L
@@ -208,12 +228,22 @@ object ImageGenNpu {
     // ▶️ Usar el motor
     // =====================================================================
     fun load(context: Context, f: Files): Boolean =
-        runCatching { nativeNpuLoad(f.textEncoder.absolutePath, f.unet.absolutePath, f.vae.absolutePath, context.applicationInfo.nativeLibraryDir) }
+        runCatching { nativeNpuLoad(f.parts.map { it.absolutePath }.toTypedArray(), context.applicationInfo.nativeLibraryDir) }
             .getOrDefault(false)
 
-    /** Imagen desde cero. Devuelve (ancho, alto, RGB) o null. */
-    fun txt2img(prompt: String, negative: String, steps: Int, cfg: Float, seed: Long): Triple<Int, Int, ByteArray>? {
-        val r = runCatching { nativeNpuTxt2Img(prompt, negative, steps, cfg, seed) }.getOrNull() ?: return null
+    /** ¿Lo cargado trae el ControlNet? */
+    fun hasControl(): Boolean = available && runCatching { nativeNpuHasControl() }.getOrDefault(false)
+
+    /** Tamaño de la imagen del modelo (Stable Diffusion 1.5 de Qualcomm: 512×512). */
+    const val SIDE = 512
+
+    /**
+     * Crea la imagen. Devuelve (ancho, alto, RGB) o null.
+     * control = foto RGB de SIDE×SIDE para seguir sus contornos (null = desde cero) · controlStrength = cuánto la sigue.
+     */
+    fun generate(prompt: String, negative: String, steps: Int, cfg: Float, seed: Long,
+                 control: ByteArray? = null, controlStrength: Float = 1f): Triple<Int, Int, ByteArray>? {
+        val r = runCatching { nativeNpuGenerate(prompt, negative, steps, cfg, seed, control, SIDE, SIDE, controlStrength) }.getOrNull() ?: return null
         if (r.size < 8) return null
         fun int(at: Int) = (r[at].toInt() and 0xFF) or ((r[at + 1].toInt() and 0xFF) shl 8) or ((r[at + 2].toInt() and 0xFF) shl 16) or ((r[at + 3].toInt() and 0xFF) shl 24)
         val w = int(0); val h = int(4)
