@@ -34,6 +34,11 @@ object ImageGenNative {
         /** > 0 con ControlNet cargado: los contornos de la foto guían la imagen nueva (0 = sin ControlNet) */
         controlStrength: Float = 0f
     ): ByteArray?
+    /** 🎨 Imagen NUEVA desde cero, solo con la descripción (en inglés). Devuelve w*h*3 bytes RGB o null. */
+    external fun nativeTxt2Img(
+        prompt: String, negative: String, w: Int, h: Int,
+        steps: Int, cfg: Float, seed: Long, oneStep: Boolean, lcm: Boolean
+    ): ByteArray?
     external fun nativeCancel()
     external fun nativeFree()
     external fun nativeProgress(): Int
