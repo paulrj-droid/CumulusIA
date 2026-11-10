@@ -1,6 +1,9 @@
 // ============================================================================
 // 🎨 IA DE IMÁGENES DE CUMULUS (stable-diffusion.cpp, licencia MIT)
 //    Crea una "versión nueva" de una foto (img2img) dentro del teléfono, en la CPU.
+//    · Rápida: SDXS-512 (un solo paso).
+//    · Mejor calidad: DreamShaper 8 LCM (Stable Diffusion 1.5, 4-8 pasos) + ControlNet Canny, que sigue los
+//      contornos de la foto (la cara, el pelo, la postura) para cambiar el estilo sin cambiar a la persona.
 //    Va en su propia librería (libcumulus_sd.so) con su propio ggml escondido:
 //    así no choca con el llama.cpp del chat (libcumulus_native.so) ni con GenieX.
 // ============================================================================
@@ -35,6 +38,7 @@ static void android_set_abort_message(const char*) {}
 static std::mutex g_genMutex;                      // una sola carga / creación a la vez
 static std::atomic<sd_ctx_t*> g_ctx{nullptr};
 static std::string g_modelPath;
+static std::string g_controlPath;   // ControlNet cargado junto al modelo («» = ninguno)
 static int g_threads = 0;
 static std::atomic<bool> g_cancel{false};
 static std::atomic<int> g_step{0};
@@ -105,6 +109,7 @@ static void freeCtxLocked() {
     sd_ctx_t* ctx = g_ctx.exchange(nullptr);
     if (ctx) free_sd_ctx(ctx);
     g_modelPath.clear();
+    g_controlPath.clear();
 }
 
 extern "C" {
@@ -121,19 +126,21 @@ Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeInit(JNIEnv* env, jobject, jst
     g_crashDir = jstr(env, crashDir);
 }
 
-/** Carga el modelo (si ya está cargado el mismo, no hace nada). */
+/** Carga el modelo (si ya está cargado el mismo, no hace nada). controlNetPath: «» = sin ControlNet. */
 JNIEXPORT jboolean JNICALL
-Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeLoad(JNIEnv* env, jobject, jstring modelPath, jint threads) {
+Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeLoad(JNIEnv* env, jobject, jstring modelPath, jstring controlNetPath, jint threads) {
     std::lock_guard<std::mutex> lk(g_genMutex);
     const std::string path = jstr(env, modelPath);
+    const std::string cnPath = jstr(env, controlNetPath);
     if (path.empty()) { setError("Falta el archivo del modelo"); return JNI_FALSE; }
-    if (g_ctx.load() && g_modelPath == path && g_threads == threads) return JNI_TRUE;
+    if (g_ctx.load() && g_modelPath == path && g_controlPath == cnPath && g_threads == threads) return JNI_TRUE;
     freeCtxLocked();
     setError("");
     phase("cargando el modelo " + path.substr(path.find_last_of('/') + 1));
     sd_ctx_params_t p;
     sd_ctx_params_init(&p);
     p.model_path = path.c_str();
+    if (!cnPath.empty()) p.control_net_path = cnPath.c_str();   // 🧭 ControlNet (sigue los contornos de la foto)
     if (threads > 0) p.n_threads = threads;
     p.enable_mmap = true;              // menos RAM: el modelo se lee del archivo
     p.diffusion_flash_attn = true;     // menos memoria en la atención
@@ -160,6 +167,7 @@ Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeLoad(JNIEnv* env, jobject, jst
     }
     g_ctx = ctx;
     g_modelPath = path;
+    g_controlPath = cnPath;
     g_threads = threads;
     return JNI_TRUE;
 }
@@ -176,11 +184,14 @@ Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeModelVersion(JNIEnv* env, jobj
  * Versión nueva de una imagen (img2img).
  * rgb: w*h*3 bytes (RGB). Devuelve la imagen nueva (w*h*3 RGB) o null si falló o se detuvo.
  * oneStep = modelos de un solo paso (SDXS / Turbo): la fuerza se usa como nivel de ruido.
+ * lcm = modelos LCM (DreamShaper 8 LCM): 4-8 pasos con el muestreador LCM.
+ * controlStrength > 0 y ControlNet cargado: los contornos (Canny) de la misma foto guían la imagen nueva.
  */
 JNIEXPORT jbyteArray JNICALL
 Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeImg2Img(JNIEnv* env, jobject, jbyteArray rgb, jint w, jint h,
                                                           jstring prompt, jstring negative, jfloat strength,
-                                                          jint steps, jfloat cfg, jlong seed, jboolean oneStep) {
+                                                          jint steps, jfloat cfg, jlong seed, jboolean oneStep,
+                                                          jboolean lcm, jfloat controlStrength) {
     std::lock_guard<std::mutex> lk(g_genMutex);
     sd_ctx_t* ctx = g_ctx.load();
     if (!ctx) { setError("El modelo de imágenes no está cargado"); return nullptr; }
@@ -216,6 +227,26 @@ Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeImg2Img(JNIEnv* env, jobject, 
     gp.sample_params.sample_steps = steps > 0 ? steps : 1;
     gp.sample_params.guidance.txt_cfg = cfg;
     if (oneStep) gp.sample_params.extra_sample_args = "strength_as_noise_level=true,force_first_sigma=true";
+    if (lcm) gp.sample_params.sample_method = LCM_SAMPLE_METHOD;   // (el programador de pasos queda automático)
+
+    // 🧭 ControlNet: los bordes (Canny) de la misma foto → la imagen nueva respeta la forma de la cara y de todo
+    std::vector<uint8_t> control;
+    if (controlStrength > 0.f && !g_controlPath.empty()) {
+        control = input;
+        sd_image_t ci;
+        ci.width = (uint32_t)w;
+        ci.height = (uint32_t)h;
+        ci.channel = 3;
+        ci.data = control.data();
+        bool cannyOk = false;
+        try { cannyOk = preprocess_canny(ci, 0.08f, 0.08f, 0.8f, 1.f, false); } catch (...) { cannyOk = false; }
+        if (cannyOk) {
+            gp.control_image = ci;
+            gp.control_strength = controlStrength;
+        } else {
+            SD_LOG(ANDROID_LOG_WARN, "No se pudieron sacar los bordes de la foto: sigue sin ControlNet");
+        }
+    }
 
     sd_image_t* out = nullptr;
     int count = 0;
@@ -306,3 +337,4 @@ Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeLastError(JNIEnv* env, jobject
 }
 
 }  // extern "C"
+
