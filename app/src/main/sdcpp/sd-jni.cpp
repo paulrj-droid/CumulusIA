@@ -288,6 +288,83 @@ Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeImg2Img(JNIEnv* env, jobject, 
     return result;
 }
 
+/**
+ * 🎨 Imagen NUEVA desde cero, solo con la descripción (txt2img), en la CPU.
+ * Devuelve w*h*3 bytes (RGB) o null si falló o se detuvo.
+ * oneStep = SDXS (un paso) · lcm = DreamShaper 8 LCM (pocos pasos con el muestreador LCM).
+ * (no usa ControlNet: no hay una foto que seguir)
+ */
+JNIEXPORT jbyteArray JNICALL
+Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeTxt2Img(JNIEnv* env, jobject, jstring prompt, jstring negative,
+                                                          jint w, jint h, jint steps, jfloat cfg, jlong seed,
+                                                          jboolean oneStep, jboolean lcm) {
+    std::lock_guard<std::mutex> lk(g_genMutex);
+    sd_ctx_t* ctx = g_ctx.load();
+    if (!ctx) { setError("El modelo de imágenes no está cargado"); return nullptr; }
+    if (w <= 0 || h <= 0) { setError("Tamaño inválido"); return nullptr; }
+    const std::string p = jstr(env, prompt);
+    const std::string np = jstr(env, negative);
+
+    g_cancel = false;
+    g_step = 0;
+    g_steps = 0;
+    setError("");
+    sd_cancel_generation(ctx, SD_CANCEL_RESET);
+    phase("creando una imagen desde cero (" + std::to_string(w) + "x" + std::to_string(h) + ")");
+
+    sd_img_gen_params_t gp;
+    sd_img_gen_params_init(&gp);   // (sin init_image = imagen desde cero)
+    gp.prompt = p.c_str();
+    gp.negative_prompt = np.c_str();
+    gp.width = w;
+    gp.height = h;
+    gp.seed = (int64_t)seed;
+    gp.batch_count = 1;
+    gp.sample_params.sample_steps = steps > 0 ? steps : 1;
+    gp.sample_params.guidance.txt_cfg = cfg;
+    if (lcm) gp.sample_params.sample_method = LCM_SAMPLE_METHOD;
+    (void)oneStep;   // (SDXS desde cero: 1 paso y cfg 1, lo decide la app)
+
+    sd_image_t* out = nullptr;
+    int count = 0;
+    bool ok = false;
+    try {
+        ok = generate_image(ctx, &gp, &out, &count);
+    } catch (const std::exception& e) {
+        setError(std::string("Error al crear la imagen: ") + e.what());
+        ok = false;
+    } catch (...) {
+        setError("Error desconocido al crear la imagen");
+        ok = false;
+    }
+    phaseEnd();
+
+    jbyteArray result = nullptr;
+    if (ok && out && count > 0 && out[0].data && !g_cancel.load()) {
+        const sd_image_t& img = out[0];
+        if ((int)img.width == w && (int)img.height == h) {
+            const size_t pixels = (size_t)img.width * img.height;
+            std::vector<uint8_t> rgbOut(pixels * 3);
+            const uint32_t ch = img.channel == 0 ? 3 : img.channel;
+            for (size_t i = 0; i < pixels; ++i) {
+                const uint8_t* s = img.data + i * ch;
+                rgbOut[i * 3 + 0] = s[0];
+                rgbOut[i * 3 + 1] = ch >= 3 ? s[1] : s[0];
+                rgbOut[i * 3 + 2] = ch >= 3 ? s[2] : s[0];
+            }
+            result = env->NewByteArray((jsize)rgbOut.size());
+            if (result) env->SetByteArrayRegion(result, 0, (jsize)rgbOut.size(), reinterpret_cast<const jbyte*>(rgbOut.data()));
+        } else {
+            setError("La imagen salió de otro tamaño (" + std::to_string(img.width) + "x" + std::to_string(img.height) + ")");
+        }
+    } else if (!g_cancel.load()) {
+        std::lock_guard<std::mutex> lk2(g_logMutex);
+        if (g_lastError.empty()) g_lastError = "La IA no devolvió ninguna imagen";
+    }
+    if (out) free_sd_images(out, count);
+    return result;
+}
+
 /** ⏹️ Detener (se llama desde otro hilo). */
 JNIEXPORT void JNICALL
 Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeCancel(JNIEnv*, jobject) {
@@ -337,4 +414,3 @@ Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeLastError(JNIEnv* env, jobject
 }
 
 }  // extern "C"
-
