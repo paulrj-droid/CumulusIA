@@ -239,7 +239,9 @@ Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeImg2Img(JNIEnv* env, jobject, 
         ci.channel = 3;
         ci.data = control.data();
         bool cannyOk = false;
-        try { cannyOk = preprocess_canny(ci, 0.08f, 0.08f, 0.8f, 1.f, false); } catch (...) { cannyOk = false; }
+        // (umbrales 0,20 / 0,10: quedan los contornos de la cara, el pelo y la ropa, sin las rayitas sueltas de
+        //  brillos, energía o textura, que la IA dibujaba como ropa rota o manchas; con 0,08 salían el doble de bordes)
+        try { cannyOk = preprocess_canny(ci, 0.20f, 0.10f, 0.8f, 1.f, false); } catch (...) { cannyOk = false; }
         if (cannyOk) {
             gp.control_image = ci;
             gp.control_strength = controlStrength;
@@ -414,3 +416,4 @@ Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeLastError(JNIEnv* env, jobject
 }
 
 }  // extern "C"
+
