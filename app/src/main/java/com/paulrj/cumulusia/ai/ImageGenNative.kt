@@ -23,11 +23,16 @@ object ImageGenNative {
         private set
 
     external fun nativeInit(crashDir: String)
-    external fun nativeLoad(modelPath: String, threads: Int): Boolean
+    /** controlNetPath: el ControlNet que va junto al modelo («» = ninguno). */
+    external fun nativeLoad(modelPath: String, controlNetPath: String, threads: Int): Boolean
     external fun nativeModelVersion(): String
     external fun nativeImg2Img(
         rgb: ByteArray, w: Int, h: Int, prompt: String, negative: String,
-        strength: Float, steps: Int, cfg: Float, seed: Long, oneStep: Boolean
+        strength: Float, steps: Int, cfg: Float, seed: Long, oneStep: Boolean,
+        /** modelos LCM (DreamShaper 8 LCM): pocos pasos con el muestreador LCM */
+        lcm: Boolean = false,
+        /** > 0 con ControlNet cargado: los contornos de la foto guían la imagen nueva (0 = sin ControlNet) */
+        controlStrength: Float = 0f
     ): ByteArray?
     external fun nativeCancel()
     external fun nativeFree()
