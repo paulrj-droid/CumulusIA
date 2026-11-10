@@ -416,4 +416,3 @@ Java_com_paulrj_cumulusia_ai_ImageGenNative_nativeLastError(JNIEnv* env, jobject
 }
 
 }  // extern "C"
-
