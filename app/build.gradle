@@ -62,6 +62,19 @@ android {
     // Firma para Google Play: la llave la entrega GitHub Actions (secretos SIGNING_KEY y KEYSTORE_PASSWORD).
     // Sin llave, la version de prueba (debug) se arma igual que siempre.
     signingConfigs {
+        // 🔑 Firma FIJA para la versión de prueba (debug): sin esto, GitHub firma cada APK con una llave nueva,
+        // Android obliga a desinstalar para instalar la siguiente y se borran los modelos descargados
+        // (por ejemplo, los 1,4 GB de la IA de imágenes de la NPU). Con esta llave las versiones nuevas
+        // se instalan ENCIMA y todo lo descargado se conserva. (Es solo para pruebas: Google Play usa la llave de abajo.)
+        debug {
+            def dk = file("cumulus-debug.keystore")
+            if (dk.exists()) {
+                storeFile dk
+                storePassword "android"
+                keyAlias "androiddebugkey"
+                keyPassword "android"
+            }
+        }
         release {
             def ks = System.getenv("CUMULUS_KEYSTORE")
             if (ks != null && new File(ks).exists()) {
