@@ -57,6 +57,7 @@ object ImageGenNpu {
     private external fun nativeNpuFree()
     private external fun nativeNpuProgress(): Int
     private external fun nativeNpuLastError(): String
+    private external fun nativeNpuInfo(): String
 
     // =====================================================================
     // 📱 ¿Qué chip tiene el teléfono?
@@ -255,4 +256,6 @@ object ImageGenNpu {
     fun free() { if (available) runCatching { nativeNpuFree() } }
     fun progress(): Int = if (available) runCatching { nativeNpuProgress() }.getOrDefault(0) else 0
     fun lastError(): String = if (available) runCatching { nativeNpuLastError() }.getOrDefault("") else ""
+    /** 🔎 Diagnóstico: forma y tipo de cada parte del modelo + cómo salió la última imagen (σ del ruido, detalle…). */
+    fun info(): String = if (available) runCatching { nativeNpuInfo() }.getOrDefault("").trim() else ""
 }
