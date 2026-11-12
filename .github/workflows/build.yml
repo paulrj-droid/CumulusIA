@@ -149,7 +149,8 @@ jobs:
           set +e
           # GenieX: se usa SOLO la version mas reciente, bajada del GitHub oficial de Qualcomm.
           # Si algun dia esta version falla, se cambia aqui por una anterior (ej. GX="0.7.0").
-          GX="0.9.1"   # 21 oct 2026: la mas nueva (trae QAIRT 2.50). Si falla, volver a GX="0.8.0".
+          GX="0.11.0"  # 12 nov 2026: la mas nueva (QAIRT 2.50.40, igual que la 0.9.1; su llama.cpp ya entiende LFM3).
+                       # Si falla, volver a GX="0.10.0" (tambien entiende LFM3) o a GX="0.9.1" (la anterior).
           mkdir -p app/libs
           if ! curl -sfL -o "app/libs/geniex-android-aar-v$GX.aar" \
                "https://github.com/qualcomm/GenieX/releases/download/v$GX/geniex-android-aar-v$GX.aar"; then
@@ -245,7 +246,7 @@ jobs:
           fi
           # NPU (crear imagenes desde cero en la NPU, sd-qnn.cpp): necesita los headers de QNN 2.50.40.
           # Vienen del repositorio oficial de Qualcomm (qualcomm/geniex-qairt-plugin, BSD-3), en la misma
-          # version que usa GenieX 0.9.1. Si no se pueden bajar, la libreria se compila igual, sin la NPU.
+          # version que usa GenieX 0.9.1 y 0.11.0 (las dos traen QNN 2.50.40). Si no se pueden bajar, la libreria se compila igual, sin la NPU.
           QNN_INC=""
           QNN_API_COMMIT=34cc633df34c69acb478305c917d5256cafb3551
           rm -rf /tmp/qnnapi
