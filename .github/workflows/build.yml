@@ -1,0 +1,469 @@
+name: Build Android APK (CPU + GenieX NPU/GPU + LiteRT GPU)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+# Si subes varios archivos seguidos, solo se compila el ultimo cambio (las compilaciones viejas se cancelan solas)
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Si algo se traba, GitHub corta el build a los 60 min (antes podia quedar 6 horas colgado)
+    timeout-minutes: 120
+    container:
+      image: ghcr.io/snapdragon-toolchain/arm64-android:v0.7
+      volumes:
+        - /usr/share/dotnet:/host_free/dotnet
+        - /usr/local/lib/android:/host_free/android
+        - /opt/ghc:/host_free/ghc
+        - /usr/local/.ghcup:/host_free/ghcup
+
+    env:
+      # llama.cpp del motor CPU (con vision mtmd): b12323 = EXACTAMENTE el mismo llama.cpp que trae GenieX 0.11.0
+      # (12 nov 2026; ya entiende LFM3). IMPORTANTE: tiene que ser el MISMO que el de GenieX, porque este build
+      # tambien arma libggml-htp-v79.so (la parte que corre DENTRO de la NPU) y esa reemplaza a la de GenieX:
+      # si son de versiones distintas, la NPU no se entiende con la app y la app se cierra (paso con v0.9.0).
+      # Si se cambia la version de GenieX, cambiar esto tambien (GenieX 0.10.0 = b11938 · GenieX 0.9.1 = b11644).
+      LLAMA_GIT_TAG: b12323
+      # Version de las librerias QNN de Qualcomm (NPU). Cambiala aqui si hace falta.
+      QNN_VERSION: 2.47.0
+      # LiteRT-LM 0.17.x esta compilado con QAIRT 2.47  Dispatch de LiteRT v2.2.0 (tambien QAIRT 2.47)
+      LITERT_NPU_TAG: v2.2.0
+      HEXAGON_SDK_ROOT: /opt/hexagon/6.6.0.0
+      ANDROID_HOME: /opt/android-sdk
+
+    steps:
+      - name: Liberar espacio en disco
+        run: |
+          echo "Espacio antes:"
+          df -h / || true
+          rm -rf /host_free/dotnet/* /host_free/android/* /host_free/ghc/* /host_free/ghcup/* || true
+          echo "Espacio despues:"
+          df -h / || true
+
+      - name: Install JDK 17, node y herramientas
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends nodejs ca-certificates git curl unzip g++ python3 openssl
+          python3 --version || echo "python3 no disponible"
+          if ! apt-get install -y --no-install-recommends openjdk-17-jdk-headless; then
+            echo "openjdk-17 no disponible via apt, instalando Temurin 17 manualmente..."
+            ARCH=$(dpkg --print-architecture)
+            case "$ARCH" in
+              amd64) JDK_ARCH="x64" ;;
+              arm64) JDK_ARCH="aarch64" ;;
+              *) echo "Arquitectura no soportada: $ARCH"; exit 1 ;;
+            esac
+            echo "Arquitectura detectada: $ARCH -> descargando JDK para $JDK_ARCH"
+            curl -sL -o /tmp/jdk17.tar.gz "https://api.adoptium.net/v3/binary/latest/17/ga/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse"
+            mkdir -p /opt/jdk17
+            tar -xzf /tmp/jdk17.tar.gz -C /opt/jdk17 --strip-components=1
+            echo "JAVA_HOME=/opt/jdk17" >> "$GITHUB_ENV"
+            echo "/opt/jdk17/bin" >> "$GITHUB_PATH"
+          fi
+          # (el java nuevo recien queda en el PATH en el paso siguiente: se prueba con su ruta completa)
+          if [ -x /opt/jdk17/bin/java ]; then /opt/jdk17/bin/java -version 2>&1; else java -version 2>&1 || true; fi
+
+      # Gradle 8.14.3: lo pide el plugin de Android 8.13.2 (compila para Android 16 / API 36)
+      - name: Install Gradle 8.14.3
+        run: |
+          curl -sL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.14.3-bin.zip
+          unzip -q /tmp/gradle.zip -d /opt
+          rm -f /tmp/gradle.zip
+          echo "/opt/gradle-8.14.3/bin" >> "$GITHUB_PATH"
+
+      # glslc del NDK r29: el de NDK viejos genera shaders que hacen
+      # cerrar la app en la GPU Adreno 830 (llama.cpp issue #28635)
+      - name: Instalar glslc de NDK r29 (Vulkan compatible con Adreno 830)
+        shell: bash
+        # Normalmente tarda 1-2 min. Si la descarga se cuelga, se corta a los 15 min.
+        timeout-minutes: 15
+        run: |
+          set -eo pipefail
+          # Descarga con limite: si se queda trabada (menos de 100 KB/s por 60 s) se corta y reintenta sola (hasta 5 veces)
+          curl -fsSL --retry 5 --retry-delay 5 --connect-timeout 30 --max-time 600 \
+               --speed-limit 100000 --speed-time 60 \
+               -o /tmp/ndk29.zip https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+          ls -lh /tmp/ndk29.zip
+          mkdir -p /opt/ndk29
+          unzip -q -o /tmp/ndk29.zip "android-ndk-r29/shader-tools/*" -d /opt/ndk29
+          # glslc del NDK r29 esta hecho con musl: ademas de libc++ necesita libc_musl.so.
+          # Se busca dentro del zip (este en la carpeta que este) y se extrae.
+          unzip -Z1 /tmp/ndk29.zip | grep -E 'linux-x86_64/.*(libc_musl\.so|x86_64-unknown-linux-musl/libc\+\+\.so)' | grep -v sysroot > /tmp/musl.txt || true
+          echo "Librerias musl encontradas en el NDK:"; cat /tmp/musl.txt || true
+          if [ -s /tmp/musl.txt ]; then
+            xargs unzip -q -o /tmp/ndk29.zip -d /opt/ndk29 < /tmp/musl.txt
+          fi
+          rm -f /tmp/ndk29.zip
+          NDK=/opt/ndk29/android-ndk-r29
+          REAL=$NDK/shader-tools/linux-x86_64/glslc
+          LIB=/opt/glslc29/lib
+          rm -rf "$LIB"
+          mkdir -p "$LIB"
+          # 1) libc_musl.so del NDK
+          find "$NDK" -name 'libc_musl.so*' -not -path '*sysroot*' -exec cp -f {} "$LIB"/ \;
+          # 2) Si el NDK no la trae, se usa la musl de Debian con el nombre que pide glslc
+          if ! ls "$LIB"/libc_musl.so* >/dev/null 2>&1; then
+            echo "libc_musl.so no viene en el NDK: se instala musl de Debian"
+            apt-get install -y --no-install-recommends musl
+            MUSL=$(ls /usr/lib/x86_64-linux-musl/libc.so /lib/x86_64-linux-musl/libc.so 2>/dev/null | head -n 1)
+            if [ -n "$MUSL" ]; then
+              ln -sf "$MUSL" "$LIB/libc_musl.so"
+            fi
+          fi
+          # 3) libc++ de 64 bits que va con glslc (antes se mezclaban copias de 32 bits y de glibc)
+          for f in "$NDK"/shader-tools/linux-x86_64/libc++.so* "$NDK"/toolchains/llvm/prebuilt/linux-x86_64/lib/x86_64-unknown-linux-musl/libc++.so*; do
+            if [ -f "$f" ] && [ ! -e "$LIB/$(basename "$f")" ]; then
+              cp -f "$f" "$LIB"/
+            fi
+          done
+          if [ ! -e "$LIB/libc++.so" ]; then
+            ONE=$(ls "$LIB"/libc++.so* 2>/dev/null | head -n 1)
+            if [ -n "$ONE" ]; then
+              ln -sf "$ONE" "$LIB/libc++.so"
+            fi
+          fi
+          ls -la "$LIB"
+          # Lanzador que le indica a glslc donde estan libc++ y libc_musl
+          printf '#!/bin/sh\nexport LD_LIBRARY_PATH=/opt/glslc29/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\nexec %s "$@"\n' "$REAL" > /opt/glslc29/glslc
+          chmod +x /opt/glslc29/glslc "$REAL"
+          # Prueba real: si glslc no arranca, el build se detiene aqui (y muestra que le falta)
+          if ! /opt/glslc29/glslc --version; then
+            echo "ERROR: glslc no arranca. Librerias que pide:"
+            (command -v readelf >/dev/null && readelf -d "$REAL" | grep -E 'NEEDED|RUNPATH|RPATH') || true
+            exit 1
+          fi
+          echo "CUMULUS_GLSLC=/opt/glslc29/glslc" >> "$GITHUB_ENV"
+
+      - name: Clone repository
+        run: |
+          git clone --depth 1 --branch "${{ github.ref_name }}" \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
+            "$GITHUB_WORKSPACE/repo"
+
+      - name: Agregar GenieX de Qualcomm (GGUF en NPU/GPU)
+        working-directory: ${{ github.workspace }}/repo
+        shell: bash
+        run: |
+          set +e
+          # GenieX: se usa SOLO la version mas reciente, bajada del GitHub oficial de Qualcomm.
+          # Si algun dia esta version falla, se cambia aqui por una anterior (ej. GX="0.7.0").
+          GX="0.11.0"  # 12 nov 2026: la mas nueva (QAIRT 2.50.40, igual que la 0.9.1; su llama.cpp ya entiende LFM3).
+                       # Si falla, volver a GX="0.10.0" (tambien entiende LFM3) o a GX="0.9.1" (la anterior).
+          mkdir -p app/libs
+          if ! curl -sfL -o "app/libs/geniex-android-aar-v$GX.aar" \
+               "https://github.com/qualcomm/GenieX/releases/download/v$GX/geniex-android-aar-v$GX.aar"; then
+            echo "ERROR: no se pudo bajar GenieX $GX de GitHub"
+            exit 1
+          fi
+          GXDEP='files("libs/geniex-android-aar-v'"$GX"'.aar")'
+          cp -f "app/libs/geniex-android-aar-v$GX.aar" /tmp/gx.aar
+          echo "GenieX version: $GX  (dependencia: $GXDEP)"
+          # libggml-base.so de GenieX necesita SU libomp.so (OpenMP del NDK r29).
+          # Otra libreria trae un libomp.so viejo y pickFirst se quedaba con ese ->
+          # "cannot locate symbol __kmpc_dispatch_deinit". Se fija la de GenieX en jniLibs (gana siempre).
+          mkdir -p /tmp/gxaar app/src/main/jniLibs/arm64-v8a
+          if [ -s /tmp/gx.aar ]; then
+            unzip -o -q /tmp/gx.aar 'jni/arm64-v8a/*' -d /tmp/gxaar
+            ls /tmp/gxaar/jni/arm64-v8a | grep -i -E 'omp|c\+\+' || true
+            for L in libomp.so libc++_shared.so; do
+              if [ -f "/tmp/gxaar/jni/arm64-v8a/$L" ]; then
+                cp -f "/tmp/gxaar/jni/arm64-v8a/$L" app/src/main/jniLibs/arm64-v8a/
+                echo "OK: $L de GenieX fijado en jniLibs"
+              fi
+            done
+            # NPU: TODAS las librerias QNN de Qualcomm salen de GenieX (una sola version, ej. 2.50.40).
+            # El delegado QNN de Maven (IA de imagenes en NPU) trae otras copias y pickFirst podia mezclar
+            # versiones (ej. libQnnHtp.so de una y libQnnHtpV79Skel.so de otra) -> la app se cerraba en la NPU.
+            for F in /tmp/gxaar/jni/arm64-v8a/libQnn*.so /tmp/gxaar/jni/arm64-v8a/libhta*.so; do
+              [ -f "$F" ] || continue
+              cp -f "$F" app/src/main/jniLibs/arm64-v8a/
+            done
+            echo "OK: librerias QNN de GenieX fijadas en jniLibs:"
+            ls app/src/main/jniLibs/arm64-v8a | grep -i -E 'qnn|hta' || true
+            strings /tmp/gxaar/jni/arm64-v8a/libQnnHtp.so 2>/dev/null | grep -m1 'AISW_VERSION' || true
+          else
+            echo "AVISO: no se pudo bajar el AAR de GenieX"
+          fi
+          for G in app/build.gradle app/build.gradle.kts; do
+            [ -f "$G" ] || continue
+            if ! grep -q 'geniex-android' "$G"; then   # (tambien detecta el .aar de GitHub)
+              # dependencia (sirve igual en Groovy y en Kotlin DSL)
+              GXDEP_SED=$(printf '%s' "$GXDEP" | sed 's/[\/&]/\\&/g')   # las / de la ruta del .aar no deben romper el sed
+              sed -i -E '0,/^[[:space:]]*dependencies[[:space:]]*\{/s//dependencies {\n    implementation('"$GXDEP_SED"')/' "$G"
+              # GenieX trae sus propias librerias QNN de Qualcomm: se quitan las de Maven para que no choquen
+              sed -i -E 's#^([[:space:]]*)(implementation[ (]+["'"'"']com\.qualcomm\.qti:qnn-(runtime|litert-delegate):[^"'"'"']+["'"'"'][ )]*)#\1// \2  (lo reemplaza GenieX)#' "$G"
+              # GenieX pide minSdk 27 y compileSdk 35
+              sed -i -E 's/(minSdk(Version)?[[:space:]=]+)(1[0-9]|2[0-6])\b/\127/' "$G"
+              sed -i -E 's/(compileSdk(Version)?[[:space:]=]+)3[0-4]\b/\135/' "$G"
+              # si dos librerias traen el mismo .so, se usa uno
+              if [[ "$G" == *.kts ]]; then
+                printf '\nandroid {\n    packaging {\n        jniLibs { pickFirsts += setOf("**/*.so") }\n    }\n}\n' >> "$G"
+              else
+                printf "\nandroid {\n    packagingOptions {\n        pickFirst '**/*.so'\n    }\n}\n" >> "$G"
+              fi
+            fi
+            echo "=== $G (lineas relevantes)"
+            grep -n -E 'geniex|qnn-|minSdk|compileSdk|pickFirst' "$G"
+          done
+          exit 0
+
+      # IA DE IMAGENES (crear una version nueva de una foto): stable-diffusion.cpp en su propia
+      # libreria (libcumulus_sd.so), aparte del motor del chat. Si algo falla aqui, la app se compila
+      # igual: solo esa funcion avisa en el chat que no vino incluida (lo demas sigue funcionando).
+      - name: Compilar IA de imagenes (stable-diffusion.cpp)
+        working-directory: ${{ github.workspace }}/repo
+        shell: bash
+        timeout-minutes: 25
+        env:
+          SD_GIT_TAG: master-959-d637cfb
+        run: |
+          set +e
+          # NDK de Android que trae el contenedor de Snapdragon
+          NDK="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-${ANDROID_NDK:-}}}"
+          if [ -z "$NDK" ] || [ ! -f "$NDK/build/cmake/android.toolchain.cmake" ]; then
+            NDK=""
+            for d in /opt/android-ndk* /opt/android-sdk/ndk/* "$ANDROID_HOME"/ndk/*; do
+              [ -f "$d/build/cmake/android.toolchain.cmake" ] && NDK="$d"
+            done
+          fi
+          echo "NDK: ${NDK:-NO ENCONTRADO}"
+          if [ -z "$NDK" ]; then echo "AVISO: sin NDK, la IA de imagenes no se incluye"; exit 0; fi
+          if ! command -v cmake >/dev/null; then
+            apt-get install -y --no-install-recommends cmake ninja-build >/dev/null 2>&1 || true
+          fi
+          cmake --version | head -n 1
+          rm -rf /tmp/sdcpp /tmp/sdbuild
+          if ! git clone -q --depth 1 --branch "$SD_GIT_TAG" https://github.com/leejet/stable-diffusion.cpp /tmp/sdcpp; then
+            echo "AVISO: no se pudo bajar stable-diffusion.cpp $SD_GIT_TAG"; exit 0
+          fi
+          if ! git -C /tmp/sdcpp submodule update -q --init --depth 1 ggml; then
+            echo "AVISO: no se pudo bajar ggml de stable-diffusion.cpp"; exit 0
+          fi
+          if [ ! -f app/src/main/sdcpp/sd-jni.cpp ]; then
+            echo "AVISO: falta app/src/main/sdcpp/sd-jni.cpp"; exit 0
+          fi
+          # NPU (crear imagenes desde cero en la NPU, sd-qnn.cpp): necesita los headers de QNN 2.50.40.
+          # Vienen del repositorio oficial de Qualcomm (qualcomm/geniex-qairt-plugin, BSD-3), en la misma
+          # version que usa GenieX 0.9.1 y 0.11.0 (las dos traen QNN 2.50.40). Si no se pueden bajar, la libreria se compila igual, sin la NPU.
+          QNN_INC=""
+          QNN_API_COMMIT=34cc633df34c69acb478305c917d5256cafb3551
+          rm -rf /tmp/qnnapi
+          if [ -f app/src/main/sdcpp/sd-qnn.cpp ] && \
+             git clone -q --filter=blob:none --no-checkout https://github.com/qualcomm/geniex-qairt-plugin /tmp/qnnapi && \
+             git -C /tmp/qnnapi sparse-checkout set --no-cone '/qnn-api/include/*.h' '/qnn-api/include/HTP/*.h' '/qnn-api/include/System/*.h' && \
+             git -C /tmp/qnnapi checkout -q "$QNN_API_COMMIT" && \
+             [ -f /tmp/qnnapi/qnn-api/include/QnnInterface.h ]; then
+            QNN_INC=/tmp/qnnapi/qnn-api/include
+            grep -h 'QNN_SDK_BUILD_ID "' "$QNN_INC/QnnSdkBuildId.h" || true
+            echo "OK: headers de QNN listos (la IA de imagenes tambien ira en la NPU)"
+          else
+            echo "AVISO: sin headers de QNN: la IA de imagenes ira solo en la CPU"
+          fi
+          # El CMakeLists de esta libreria se escribe aqui (no va en el repo: asi no se confunde con el del chat)
+          mkdir -p /tmp/sdwrap
+          cat > /tmp/sdwrap/CMakeLists.txt <<'CMAKE_EOF'
+            # ============================================================================
+            # IA DE IMAGENES (libcumulus_sd.so): stable-diffusion.cpp + su propio ggml
+            # Se compila APARTE del motor del chat (lo hace el workflow de GitHub y copia el
+            # .so a jniLibs). Todo queda escondido dentro de la libreria: solo se ven las
+            # funciones JNI, asi su ggml no se mezcla con el de llama.cpp ni con el de GenieX.
+            #
+            # El workflow escribe este archivo en /tmp (asi no se confunde con el CMakeLists.txt del chat)
+            # y le pasa: -DSDCPP_DIR=/tmp/sdcpp -DCUMULUS_SD_JNI=app/src/main/sdcpp/sd-jni.cpp
+            # ============================================================================
+            cmake_minimum_required(VERSION 3.18)
+            project(cumulus_sd C CXX)
+
+            set(CMAKE_CXX_STANDARD 17)
+            set(CMAKE_CXX_STANDARD_REQUIRED ON)
+            set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+            set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+            if (NOT CMAKE_BUILD_TYPE)
+                set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+            endif()
+            set(CMAKE_C_FLAGS_RELEASE   "-O3 -DNDEBUG")
+            set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+
+            if (NOT SDCPP_DIR OR NOT EXISTS "${SDCPP_DIR}/CMakeLists.txt")
+                message(FATAL_ERROR "Falta SDCPP_DIR (carpeta de stable-diffusion.cpp con su submodulo ggml)")
+            endif()
+
+            # stable-diffusion.cpp: solo la libreria (sin ejemplos, sin WebP/WebM, sin OpenMP)
+            set(SD_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+            set(SD_WEBP OFF CACHE BOOL "" FORCE)
+            set(SD_WEBM OFF CACHE BOOL "" FORCE)
+            set(SD_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+            set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+            set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+            set(GGML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+            set(GGML_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+            if (ANDROID)
+                # Instrucciones rapidas del Snapdragon 8 Elite (S25): dotprod + i8mm + fp16
+                set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+i8mm+fp16" CACHE STRING "" FORCE)
+            endif()
+
+            add_subdirectory("${SDCPP_DIR}" "${CMAKE_BINARY_DIR}/stable-diffusion" EXCLUDE_FROM_ALL)
+
+            if (NOT CUMULUS_SD_JNI)
+                set(CUMULUS_SD_JNI "${CMAKE_CURRENT_SOURCE_DIR}/sd-jni.cpp")
+            endif()
+            add_library(cumulus_sd SHARED "${CUMULUS_SD_JNI}")
+            target_link_libraries(cumulus_sd PRIVATE stable-diffusion)
+            target_include_directories(cumulus_sd PRIVATE "${SDCPP_DIR}/include" "${SDCPP_DIR}/ggml/include")
+
+            # NPU: crear imagenes desde cero con el Stable Diffusion oficial de Qualcomm (sd-qnn.cpp).
+            # Las librerias QNN no se enlazan: se abren al usarlas (dlopen), las mismas de GenieX.
+            if (CUMULUS_QNN_JNI AND QNN_INCLUDE_DIR AND EXISTS "${CUMULUS_QNN_JNI}" AND EXISTS "${QNN_INCLUDE_DIR}/QnnInterface.h")
+                target_sources(cumulus_sd PRIVATE "${CUMULUS_QNN_JNI}")
+                target_include_directories(cumulus_sd PRIVATE "${QNN_INCLUDE_DIR}" "${SDCPP_DIR}/src")
+                target_link_libraries(cumulus_sd PRIVATE ${CMAKE_DL_LIBS})
+                message(STATUS "IA de imagenes: motor de la NPU INCLUIDO")
+            else()
+                message(STATUS "IA de imagenes: motor de la NPU no incluido (solo CPU)")
+            endif()
+
+            if (ANDROID)
+                find_library(log-lib log)
+                target_link_libraries(cumulus_sd PRIVATE ${log-lib})
+                # Solo se exportan las funciones JNI  paginas de 16 KB (requisito de Google Play)
+                target_link_options(cumulus_sd PRIVATE
+                    "-Wl,--exclude-libs,ALL"
+                    "-Wl,--gc-sections"
+                    "-Wl,-z,max-page-size=16384")
+            else()
+                # Prueba en PC: JNI del JDK
+                find_package(JNI REQUIRED)
+                target_include_directories(cumulus_sd PRIVATE ${JNI_INCLUDE_DIRS})
+                target_link_options(cumulus_sd PRIVATE "-Wl,--exclude-libs,ALL")
+            endif()
+          CMAKE_EOF
+          GEN="Unix Makefiles"; command -v ninja >/dev/null && GEN=Ninja
+          cmake -S /tmp/sdwrap -B /tmp/sdbuild -G "$GEN" \
+            -DSDCPP_DIR=/tmp/sdcpp -DCUMULUS_SD_JNI="$PWD/app/src/main/sdcpp/sd-jni.cpp" \
+            -DCUMULUS_QNN_JNI="$PWD/app/src/main/sdcpp/sd-qnn.cpp" -DQNN_INCLUDE_DIR="$QNN_INC" \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-34 -DANDROID_STL=c++_static \
+            -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -n 25
+          cmake --build /tmp/sdbuild --target cumulus_sd -j"$(nproc)" 2>&1 | grep -E "error|Error|warning: unused|Linking|cumulus_sd" | tail -n 40
+          if [ -f /tmp/sdbuild/libcumulus_sd.so ]; then
+            STRIP=$(ls "$NDK"/toolchains/llvm/prebuilt/*/bin/llvm-strip 2>/dev/null | head -n 1)
+            [ -n "$STRIP" ] && "$STRIP" --strip-unneeded /tmp/sdbuild/libcumulus_sd.so
+            mkdir -p app/src/main/jniLibs/arm64-v8a
+            cp -f /tmp/sdbuild/libcumulus_sd.so app/src/main/jniLibs/arm64-v8a/
+            ls -la app/src/main/jniLibs/arm64-v8a/libcumulus_sd.so
+            echo "OK: IA de imagenes (stable-diffusion.cpp $SD_GIT_TAG) incluida en el APK"
+          else
+            echo "AVISO: no se compilo la IA de imagenes (la app sigue funcionando; solo "version nueva" avisara)"
+          fi
+          exit 0
+
+      - name: Prepare Android SDK licenses
+        run: |
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf '24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n' > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf '84831b9409646a918e30573bab4c9c91346d8abd\n' > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+
+      - name: Build APK (CPU + GenieX NPU/GPU + LiteRT)
+        working-directory: ${{ github.workspace }}/repo
+        env:
+          HEXAGON_SDK_ROOT: /opt/hexagon/6.6.0.0
+          GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=1g"
+        run: |
+          set +e
+          echo "glslc para Vulkan: $CUMULUS_GLSLC"
+          # NPU: la app necesita permiso para usar libcdsprpc.so (canal hacia la NPU)
+          MANI=app/src/main/AndroidManifest.xml
+          # GenieX: su plugin llama_cpp necesita libOpenCL.so (GPU Adreno) y libcdsprpc.so (NPU)
+          # Sin este permiso Android le bloquea esas librerias  "Cannot registerPlugin llama_cpp"
+          for LIB in libcdsprpc.so libOpenCL.so libOpenCL_adreno.so; do
+            if [ -f "$MANI" ] && ! grep -q "\"$LIB\"" "$MANI"; then
+              sed -i "s#</application># <uses-native-library android:name=\"$LIB\" android:required=\"false\" />\n    </application>#" "$MANI"
+              echo "Manifest: agregado $LIB"
+            fi
+          done
+          grep -n "uses-native-library" "$MANI"
+          gradle assembleDebug --no-daemon --console=plain | tee /tmp/build.log
+          CODE=${PIPESTATUS[0]}
+          # NPU: las librerias que corren dentro de la NPU (libggml-htp-v79.so...)
+          # se copian al APK y se vuelve a empaquetar (segunda pasada, rapida)
+          if [ "$CODE" -eq 0 ]; then
+            SKELS=$(find app/.cxx -name 'libggml-htp-v*.so' 2>/dev/null | sort -u)
+            if [ -n "$SKELS" ]; then
+              mkdir -p app/src/main/jniLibs/arm64-v8a
+              for f in $SKELS; do cp -f "$f" app/src/main/jniLibs/arm64-v8a/; done
+              echo '================= NPU (librerias HTP) ================='
+              ls -la app/src/main/jniLibs/arm64-v8a/ | grep htp
+              gradle assembleDebug --no-daemon --console=plain | tee -a /tmp/build.log
+              CODE=${PIPESTATUS[0]}
+            else
+              echo " No se generaron librerias HTP (la NPU no quedara activa)"
+            fi
+          fi
+          echo "Espacio al terminar:"
+          df -h / || true
+          echo '================= VULKAN ================='
+          grep -n -E 'glslc elegido|Vulkan ACTIVADO|Vulkan desactivado|NPU Hexagon|hexagon: using' /tmp/build.log | head -n 12
+          if [ "$CODE" -ne 0 ]; then
+            echo '================= ERRORES (diagnostico) ================='
+            grep -n -E 'CMake Error|error:|Error:|FAILED|not found|Could not|No space' /tmp/build.log | head -n 60
+            echo '================= ERROR CMAKE (detalle) ================='
+            grep -B 5 -A 25 'CMake Error' /tmp/build.log | head -n 120
+            echo '========================================================='
+          fi
+          exit $CODE
+
+      # AAB FIRMADO PARA GOOGLE PLAY: solo si ya creaste la llave (workflow "Crear llave de firma")
+      # y guardaste los secretos SIGNING_KEY y KEYSTORE_PASSWORD. Si no, este paso se salta solo.
+      - name: Crear AAB firmado para Google Play
+        working-directory: ${{ github.workspace }}/repo
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=1g"
+        run: |
+          set +e
+          if [ -z "$SIGNING_KEY" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "Sin llave de firma todavia: no se arma el AAB (el APK de prueba si)."
+            exit 0
+          fi
+          printf '%s' "$SIGNING_KEY" | tr -d ' \r\n' | openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -a -A \
+            -pass env:KEYSTORE_PASSWORD -out /tmp/cumulus.jks
+          if [ ! -s /tmp/cumulus.jks ]; then
+            echo "ERROR: no se pudo abrir la llave. Revisa que KEYSTORE_PASSWORD sea la misma con la que la creaste."
+            exit 1
+          fi
+          export CUMULUS_KEYSTORE=/tmp/cumulus.jks
+          export CUMULUS_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
+          export CUMULUS_VERSION_CODE="${{ github.run_number }}"
+          gradle bundleRelease --no-daemon --console=plain | tee /tmp/bundle.log
+          CODE=${PIPESTATUS[0]}
+          rm -f /tmp/cumulus.jks
+          if [ "$CODE" -ne 0 ]; then
+            grep -n -E 'error:|Error:|FAILED|What went wrong' /tmp/bundle.log | head -n 40
+            exit $CODE
+          fi
+          ls -la app/build/outputs/bundle/release/
+          echo "AAB listo. Version (versionCode): $CUMULUS_VERSION_CODE"
+
+      - name: Upload AAB (Google Play)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab-google-play
+          path: ${{ github.workspace }}/repo/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: ignore
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-full-debug
+          path: ${{ github.workspace }}/repo/app/build/outputs/apk/debug/app-debug.apk
+
+
+
