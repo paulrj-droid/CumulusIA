@@ -43,6 +43,8 @@ object ImageGenNative {
     external fun nativeFree()
     external fun nativeProgress(): Int
     external fun nativeLastError(): String
+    /** ⏱️ Mensajes de la última imagen (cuánto tardó cada parte). Con una librería anterior, «». */
+    external fun nativeLastLogs(): String
 
     @Volatile private var inited = false
 
@@ -61,6 +63,8 @@ object ImageGenNative {
     fun free() {
         if (available) runCatching { nativeFree() }
     }
+
+    fun lastLogs(): String = if (available) runCatching { nativeLastLogs() }.getOrDefault("") else ""
 
     fun lastError(): String = if (available) runCatching { nativeLastError() }.getOrDefault("") else loadError
 }
