@@ -1,5 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    💾 Copia de seguridad de Google (Android 11 o anterior).
+    Se guardan los chats, ajustes y textos tuyos. NO se guardan los modelos de IA, voces ni descargas
+    (pesan varios GB y la copia de Google solo admite 25 MB: si se pasa, no se guarda nada).
+    Tampoco las claves de la IA en la nube: van cifradas con una llave que solo existe en este teléfono.
+-->
 <full-backup-content>
-    <!-- TODO: Add rules for full backup -->
+    <!-- Modelos GGUF / LiteRT-LM, voces .onnx y todo lo descargado -->
+    <exclude domain="external" path="Download" />
+    <exclude domain="external" path="tts_voices" />
+    <!-- IA de imágenes, datos de pronunciación de las voces e imágenes pesadas -->
+    <exclude domain="file" path="image_ai" />
+    <exclude domain="file" path="espeak-ng-data" />
+    <exclude domain="file" path="espeak-ng-data.ok" />
+    <exclude domain="file" path="chat_images" />
+    <exclude domain="file" path="chat_media" />
+    <exclude domain="file" path="entregas" />
+    <exclude domain="file" path="avatar_lib" />
+    <!-- Claves de la IA en la nube (cifradas solo para este teléfono) y el guardián de la NPU de este teléfono -->
+    <exclude domain="sharedpref" path="CumulusCloudAi.xml" />
+    <exclude domain="sharedpref" path="geniex_guard.xml" />
 </full-backup-content>
-
