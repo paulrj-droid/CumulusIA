@@ -27,8 +27,6 @@ object SamplingSettings {
 
     const val AUTO = ChatTemplateFormatter.AUTO
 
-    fun templateName(key: String = chatTemplate): String = ChatTemplateFormatter.label(key)
-
     /** «<|im_end|>, ###, \n\n» → lista (\n escrito como texto = salto de línea). */
     fun parseStops(text: String): List<String> =
         text.split(',')
