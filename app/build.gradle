@@ -1,7 +1,6 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
-    id 'org.jetbrains.kotlin.plugin.compose'
 }
 
 // Motor de las voces descargadas o subidas (.onnx, Piper): sherpa-onnx, dentro del telefono y sin internet.
@@ -53,10 +52,10 @@ android {
         }
     }
 
+    // (ViewBinding, DataBinding y Compose no se usan en la app: apagados, la compilación es más rápida y la app más liviana)
     buildFeatures {
-        viewBinding true
-        dataBinding true
-        compose true
+        viewBinding false
+        dataBinding false
     }
 
     // Firma para Google Play: la llave la entrega GitHub Actions (secretos SIGNING_KEY y KEYSTORE_PASSWORD).
@@ -112,7 +111,7 @@ android {
             useLegacyPackaging true
             // El telefono usa su propio libOpenCL.so (/vendor/lib64), no el de la compilacion
             excludes += ['**/libOpenCL.so']
-            // Las voces .onnx (sherpa-onnx) y la palabra de activacion pueden traer el mismo motor ONNX: se deja uno solo
+            // Si dos librerias traen el mismo motor ONNX o libc++, se deja uno solo
             pickFirsts += ['**/libonnxruntime.so', '**/libc++_shared.so']
         }
     }
@@ -161,21 +160,17 @@ dependencies {
     //  repasar la cara en grande (ojos, pupilas, boca) después de cambiar una foto
     implementation 'com.google.mlkit:face-detection:16.1.7'
 
-    // Voces descargadas o subidas (.onnx, Piper): motor sherpa-onnx (va ANTES que openwakeword: se usa su motor ONNX)
+    // Voces descargadas o subidas (.onnx, Piper): motor sherpa-onnx (trae su propio motor ONNX)
     implementation files(sherpaOnnxAar)
     // Abrir los datos de pronunciacion de las voces (espeak-ng-data.tar.bz2, se bajan una sola vez)
     implementation 'org.apache.commons:commons-compress:1.27.1'
 
-    implementation("xyz.rementia:openwakeword:0.1.3")
+    // (openwakeword se quitó: no se usaba y sus modelos tienen licencia NO comercial, CC BY-NC-SA 4.0)
 
     //  Leer el texto de archivos PDF (Word, Excel y PowerPoint se leen sin librerias)
     implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
 
-    implementation 'androidx.compose.ui:ui:1.6.0'
-    implementation 'androidx.compose.ui:ui-graphics:1.6.0'
-    implementation 'androidx.compose.ui:ui-tooling-preview:1.6.0'
-    implementation 'androidx.compose.material3:material3:1.2.0'
-    implementation 'androidx.compose.material:material-icons-extended:1.6.0'
-    implementation 'androidx.activity:activity-compose:1.8.2'
-    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
+    // (Compose se quitó: solo lo usaban dos pantallas antiguas que ya no existen.
+    //  activity-ktx queda en la MISMA versión que traía Compose, para que nada más cambie)
+    implementation 'androidx.activity:activity-ktx:1.8.2'
 }
