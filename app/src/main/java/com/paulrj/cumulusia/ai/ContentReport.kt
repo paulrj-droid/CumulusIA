@@ -23,7 +23,9 @@ import java.net.URLEncoder
 object ContentReport {
 
     /** 📝 Pega aquí tu «enlace rellenado previamente» del Formulario de Google (ver arriba). */
-    const val REPORT_FORM_LINK = ""
+    // (17-nov-2026: formulario «Reportes Cumulus IA». En el formulario se escribió PREGUNTAS; aquí va PREGUNTA, que es
+    //  la palabra que usa la app: solo cambia la palabra de ejemplo, el número de la pregunta es el mismo)
+    const val REPORT_FORM_LINK = "https://docs.google.com/forms/d/e/1FAIpQLSck13IWHAx3CsBVsZn8fG4I5MiNQdq00BnzflqluRCCBwW9YQ/viewform?usp=pp_url&entry.526342736=MOTIVO&entry.198087223=COMENTARIO&entry.1282408627=RESPUESTA&entry.1702928919=PREGUNTA&entry.584370635=DETALLES"
 
     val REASONS = listOf(
         "😠 Ofensivo, odio o discriminación",
