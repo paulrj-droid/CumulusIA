@@ -159,6 +159,9 @@ dependencies {
     //  🙂 Detector de caras (ML Kit, viene dentro de la app, sin descargas): la IA de imágenes de la NPU lo usa para
     //  repasar la cara en grande (ojos, pupilas, boca) después de cambiar una foto
     implementation 'com.google.mlkit:face-detection:16.1.7'
+    //  🏷️ Avatar visión: reconoce QUÉ cosas hay en lo que ve la cámara (avión, cielo, perro, taza...) y se lo dice a la IA,
+    //  con cualquier modelo y en cualquier idioma (ML Kit, viene dentro de la app, sin internet ni descargas)
+    implementation 'com.google.mlkit:image-labeling:17.0.9'
 
     // Voces descargadas o subidas (.onnx, Piper): motor sherpa-onnx (trae su propio motor ONNX)
     implementation files(sherpaOnnxAar)
