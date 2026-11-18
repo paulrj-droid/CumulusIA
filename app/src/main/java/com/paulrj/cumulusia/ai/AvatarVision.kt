@@ -25,7 +25,7 @@ import java.io.File
 
 /**
  * 👁️ VISIÓN DEL AVATAR: la cámara queda prendida (sin mostrarse en pantalla) mientras «Avatar visión» está encendido,
- * y la IA mira lo primero que vio cada vez que le hablas o le escribes.
+ * y la IA mira y responde lo primero que vio cada vez que le hablas o le escribes.
  *
  * 📷 Solo la cámara DELANTERA (selfie), en baja resolución (480p): te mira a ti y gasta poco.
  *   (Para mostrarle cosas está la cámara para adjuntar fotos.)
