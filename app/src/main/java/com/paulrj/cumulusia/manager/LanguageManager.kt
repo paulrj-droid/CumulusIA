@@ -1,0 +1,2667 @@
+package com.paulrj.cumulusia.manager
+
+import android.app.Activity
+import android.app.Application
+import android.content.Context
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.Spanned
+import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import android.view.ViewTreeObserver
+import android.widget.EditText
+import android.widget.TextView
+import java.util.Collections
+import java.util.Locale
+import java.util.WeakHashMap
+
+object LanguageManager {
+    private const val PREFS_NAME = "CumulusAppPermissions"
+    private const val KEY_SELECTED_LANGUAGE = "selected_language_code"
+
+    fun setLocale(context: Context, languageCode: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_SELECTED_LANGUAGE, languageCode).apply()
+        onLanguageChanged(context, languageCode)
+        
+        val locale = Locale(languageCode)
+        Locale.setDefault(locale)
+        val config = context.resources.configuration
+        config.setLocale(locale)
+        context.resources.updateConfiguration(config, context.resources.displayMetrics)
+    }
+
+    // Mejorado: Evita problemas con createConfigurationContext en versiones antiguas
+    fun loadLocale(context: Context): Context {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val languageCode = prefs.getString(KEY_SELECTED_LANGUAGE, "es") ?: "es"
+        val locale = Locale(languageCode)
+        Locale.setDefault(locale)
+        val config = context.resources.configuration
+        config.setLocale(locale)
+        context.resources.updateConfiguration(config, context.resources.displayMetrics)
+        return context
+    }
+
+    fun getSelectedLanguage(context: Context): String {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_SELECTED_LANGUAGE, "es") ?: "es"
+    }
+
+    fun applyToViewTree(root: View, languageCode: String = getSelectedLanguage(root.context)) {
+        if (appContext == null) appContext = root.context.applicationContext
+        translateTree(root, languageCode)
+    }
+
+    fun text(context: Context, spanishText: String): String {
+        if (appContext == null) appContext = context.applicationContext
+        return translate(getSelectedLanguage(context), spanishText) ?: spanishText
+    }
+
+    private fun translate(code: String, source: String): String? {
+        if (code == "es") return source
+        return translateText(code, source) ?: translations[code]?.get(source)
+    }
+
+    // ========================================================================
+    // 🌐 TRADUCCIÓN DE TODA LA APP: pantalla principal, menús, ventanas emergentes, diálogos,
+    //    paneles y avisos. Se traduce todo lo que se ve con el diccionario de
+    //    assets/i18n/ui.json (español → inglés, portugués, ruso, chino, coreano y japonés).
+    //    No se traduce lo que escribes tú, las respuestas de la IA ni el código.
+    // ========================================================================
+    private const val DICT_ASSET = "i18n/ui.json"
+    @Volatile private var appContext: Context? = null
+    @Volatile private var dictLoaded = false
+    @Volatile private var currentLang: String? = null
+    private val dictLock = Any()
+    /** idioma → texto en español (tal cual) → traducción */
+    private val exactDict = HashMap<String, HashMap<String, String>>()
+    /** idioma → texto en español en minúsculas → traducción (para «GUARDAR API KEY» = «Guardar API Key») */
+    private val lowerDict = HashMap<String, HashMap<String, String>>()
+    /** idioma → frases con datos variables: «Modo: {0}», «Máximo {0} imágenes»… */
+    private val patterns = HashMap<String, MutableList<Triple<Regex, List<Int>, String>>>()
+    /** Resultados ya calculados (un texto se traduce una sola vez). "" = no tiene traducción. */
+    private val resultCache = HashMap<String, String>()
+    private val noTranslateViews: MutableSet<View> = Collections.newSetFromMap(WeakHashMap())
+    private val lastSetText = WeakHashMap<TextView, String>()
+    private val lastSetHint = WeakHashMap<TextView, String>()
+
+    /** Lo que nunca se traduce (por ejemplo un texto que el usuario escribió). */
+    fun noTranslate(view: View) { noTranslateViews.add(view) }
+
+    private fun currentLanguage(): String {
+        currentLang?.let { return it }
+        val c = appContext ?: return "es"
+        return getSelectedLanguage(c).also { currentLang = it }
+    }
+
+    private fun onLanguageChanged(context: Context, code: String) {
+        if (appContext == null) appContext = context.applicationContext
+        currentLang = code
+        langChangedAt = android.os.SystemClock.uptimeMillis()   // 🎞️ (unos segundos de revisión completa: todo al idioma nuevo)
+        synchronized(dictLock) { resultCache.clear() }
+        lastSetText.clear(); lastSetHint.clear()
+    }
+
+    private fun normalize(s: String): String =
+        s.trim().replace('…'.toString(), "...").replace(Regex("[ \\t\\u00A0]+"), " ").replace(Regex(" ?\\n ?"), "\n")
+
+    private fun isUpperText(s: String): Boolean {
+        var letters = 0
+        for (ch in s) if (ch.isLetter()) { letters++; if (ch.isLowerCase()) return false }
+        return letters >= 2 && s != s.lowercase(Locale.ROOT)
+    }
+
+    private fun isDecor(cp: Int): Boolean = !Character.isLetterOrDigit(cp) &&
+        cp != '¿'.code && cp != '¡'.code && cp != '«'.code && cp != '»'.code && cp != '('.code && cp != ')'.code &&
+        cp != '"'.code && cp != '\''.code && cp != '.'.code && cp != '?'.code && cp != '!'.code && cp != '%'.code && cp != '…'.code
+
+    /** Separa adornos del principio y del final (emojis, flechas, «▴», espacios): (antes, centro, después). */
+    private fun splitDecor(s: String): Triple<String, String, String> {
+        var a = 0
+        while (a < s.length) { val cp = s.codePointAt(a); if (!isDecor(cp)) break; a += Character.charCount(cp) }
+        var b = s.length
+        while (b > a) { val cp = s.codePointBefore(b); if (!isDecor(cp)) break; b -= Character.charCount(cp) }
+        return Triple(s.substring(0, a), s.substring(a, b), s.substring(b))
+    }
+
+    private fun addEntry(lang: String, es: String, tr: String) {
+        val key = normalize(es)
+        val value = normalize(tr)
+        if (key.isEmpty() || value.isEmpty()) return
+        if (key.contains("{0}")) {
+            // Frase con datos: se arma una expresión que reconoce el texto con cualquier dato en su lugar
+            val parts = key.split(Regex("\\{(\\d)\\}"))
+            val order = Regex("\\{(\\d)\\}").findAll(key).map { it.groupValues[1].toInt() }.toList()
+            if (parts.joinToString("").count { it.isLetter() } < 4) return
+            val rx = buildString {
+                append('^')
+                parts.forEachIndexed { i, p ->
+                    append(Regex.escape(p))
+                    if (i < parts.size - 1) append("(.+?)")
+                }
+                append('$')
+            }
+            runCatching { Regex(rx, RegexOption.DOT_MATCHES_ALL) }.getOrNull()?.let {
+                patterns.getOrPut(lang) { mutableListOf() }.add(Triple(it, order, value))
+            }
+            return
+        }
+        exactDict.getOrPut(lang) { HashMap() }.putIfAbsent(key, value)
+        lowerDict.getOrPut(lang) { HashMap() }.putIfAbsent(key.lowercase(Locale.ROOT), value)
+        // También sin adornos: «🌙 Modo oscuro» enseña «Modo oscuro»
+        val (_, coreEs, _) = splitDecor(key)
+        val (_, coreTr, _) = splitDecor(value)
+        if (coreEs != key && coreEs.isNotBlank() && coreTr.isNotBlank()) {
+            exactDict.getValue(lang).putIfAbsent(coreEs, coreTr)
+            lowerDict.getValue(lang).putIfAbsent(coreEs.lowercase(Locale.ROOT), coreTr)
+        }
+    }
+
+    private fun ensureDict(ctx: Context?): Boolean {
+        if (dictLoaded) return true
+        synchronized(dictLock) {
+            if (dictLoaded) return true
+            val c = ctx ?: appContext ?: return false
+            runCatching {
+                val json = c.assets.open(DICT_ASSET).bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val root = org.json.JSONObject(json)
+                val langs = root.getJSONArray("langs")
+                val s = root.getJSONObject("s")
+                val keys = s.keys()
+                while (keys.hasNext()) {
+                    val es = keys.next()
+                    val arr = s.getJSONArray(es)
+                    for (i in 0 until langs.length()) {
+                        val tr = arr.optString(i, "")
+                        if (tr.isNotEmpty()) addEntry(langs.getString(i), es, tr)
+                    }
+                }
+            }.onFailure { Log.e("LanguageManager", "No se pudo leer el diccionario: ${it.message}") }
+            // Lo que ya estaba en la app también sirve
+            translations.forEach { (lang, map) -> map.forEach { (es, tr) -> addEntry(lang, es, tr) } }
+            // 🆕 Los textos nuevos (y el indonesio también con su código antiguo «in»)
+            extraTranslations.forEach { (lang, list) ->
+                list.forEachIndexed { i, tr ->
+                    val es = extraKeys.getOrNull(i) ?: return@forEachIndexed
+                    addEntry(lang, es, tr)
+                    if (lang == "id") addEntry("in", es, tr)
+                }
+            }
+            patterns.values.forEach { list -> list.sortByDescending { it.first.pattern.length } }
+            dictLoaded = true
+            return true
+        }
+    }
+
+    private fun lookup(lang: String, text: String): String? {
+        val key = normalize(text)
+        if (key.isEmpty()) return null
+        exactDict[lang]?.get(key)?.let { return it }
+        val tr = lowerDict[lang]?.get(key.lowercase(Locale.ROOT)) ?: return null
+        val loc = Locale.forLanguageTag(lang)
+        return when {
+            isUpperText(key) -> tr.uppercase(loc)
+            isUpperText(tr) -> tr.lowercase(loc).replaceFirstChar { it.titlecase(loc) }
+            else -> tr
+        }
+    }
+
+    private fun matchPattern(lang: String, text: String): String? {
+        val key = normalize(text)
+        val list = patterns[lang] ?: return null
+        for ((rx, order, tpl) in list) {
+            val m = rx.matchEntire(key) ?: continue
+            var out = tpl
+            order.forEachIndexed { i, n ->
+                val v = m.groupValues[i + 1]
+                out = out.replace("{$n}", lookup(lang, v) ?: v)
+            }
+            return if (isUpperText(key)) out.uppercase(Locale.forLanguageTag(lang)) else out
+        }
+        return null
+    }
+
+    /** Un trozo que no hace falta traducir: nombres de archivo, marcas, números (gemma.gguf, mmproj, Q4_0). */
+    private fun isTokenLike(s: String): Boolean {
+        val t = s.trim()
+        if (t.isEmpty() || !t.any { it.isLetter() }) return true
+        if (t.length > 40 || t.contains(' ')) return false
+        return t.none { it in "áéíóúñÁÉÍÓÚÑ¿¡" }
+    }
+
+    private fun translateOne(lang: String, text: String): String? {
+        // Primero sin adornos: así el emoji y sus espacios quedan tal cual
+        val (pre, core, post) = splitDecor(text)
+        if (core.isNotEmpty() && (pre.isNotEmpty() || post.isNotEmpty())) {
+            lookup(lang, core)?.let { return pre + it + post }
+        }
+        lookup(lang, text)?.let { return it }
+        matchPattern(lang, text)?.let { return it }
+        if (core.isNotEmpty() && core != text) matchPattern(lang, core)?.let { return pre + it + post }
+        return null
+    }
+
+    private val segmentSplit = Regex("(\\n| · | — | – | \\| |: )")
+
+    /** Traduce un texto de la pantalla. null = no hay traducción (se deja como está). */
+    fun translateText(lang: String, text: String): String? {
+        if (lang == "es" || text.isBlank()) return null
+        if (!ensureDict(null)) return null
+        synchronized(dictLock) { resultCache[text]?.let { return it.ifEmpty { null } } }
+        val lead = text.takeWhile { it.isWhitespace() }
+        val trail = text.takeLastWhile { it.isWhitespace() }
+        var result = translateOne(lang, text)
+        if (result == null && text.length <= 300) {
+            // Texto armado por partes: «Carga automática: ACTIVADA», «mmproj\nNinguno», «Modelo: x [CPU - Activo]»
+            val pieces = mutableListOf<String>()
+            var last = 0
+            segmentSplit.findAll(text).forEach { m ->
+                pieces += text.substring(last, m.range.first); pieces += m.value; last = m.range.last + 1
+            }
+            pieces += text.substring(last)
+            if (pieces.size in 3..15) {
+                var any = false
+                var ok = true
+                val out = StringBuilder()
+                pieces.forEachIndexed { i, p ->
+                    if (i % 2 == 1) { out.append(p); return@forEachIndexed }
+                    val t = if (p.isBlank()) null else translateOne(lang, p)
+                    when {
+                        t != null -> { any = true; out.append(p.takeWhile { it.isWhitespace() }).append(t).append(p.takeLastWhile { it.isWhitespace() }) }
+                        isTokenLike(p) -> out.append(p)
+                        else -> ok = false
+                    }
+                }
+                if (any && ok) result = out.toString()
+            }
+        }
+        var final = result?.let { r -> if (r.startsWith(lead) && r.endsWith(trail)) r else lead + r.trim() + trail }
+        // 🌍 No está en el diccionario: lo traduce el traductor de Google del teléfono (en segundo plano) y se recuerda.
+        //    Mientras tanto se ve como está; apenas está listo, la pantalla se vuelve a revisar y sale en tu idioma.
+        if (final == null) {
+            val ml = mlFallback(lang, text)
+            if (ml == null) {
+                // 🎞️ (23-nov-2026) Si YA se sabe que no tiene traducción (números, nombres, «CPU 7%…», o el traductor del
+                //    teléfono ya respondió que queda igual), se recuerda «no tiene». Antes se volvía a buscar en CADA
+                //    revisión —y al subir la barra del chat con el teclado hay una revisión cada pocos milisegundos—:
+                //    eso daba tirones solo en los otros idiomas (en español no se traduce nada).
+                //    Si todavía está traduciéndose, NO se recuerda: se vuelve a mirar hasta que llegue, como antes.
+                val known = !mlWorth(text) || mlCache.containsKey("$lang|$text")
+                if (known) synchronized(dictLock) {
+                    if (resultCache.size > 4000) resultCache.clear()
+                    resultCache[text] = ""
+                }
+                return null
+            }
+            final = ml
+        }
+        synchronized(dictLock) {
+            if (resultCache.size > 4000) resultCache.clear()
+            resultCache[text] = final ?: ""
+        }
+        return final
+    }
+
+    // ---------- 🌍 Traductor del teléfono para los textos que NO están en el diccionario ----------
+    //    (ventanas y avisos nuevos: cámara en vivo, reportes, proyectos, voz MP3… y los que vengan)
+    private val mlCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val mlPending = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val mlWorker by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
+
+    /** ¿Es un texto de la pantalla que vale la pena traducir? (no números que cambian, ni código, ni enlaces) */
+    private fun mlWorth(text: String): Boolean {
+        val t = text.trim()
+        if (t.length < 2 || t.length > 400 || t.count { it.isLetter() } < 2) return false
+        if (t.count { it.isDigit() } > 3) return false                       // (CPU 3% · GPU 14% · RAM…: cambia a cada rato)
+        if (Regex("https?://|www\\.|[{};=<>]|\\.(kt|xml|js|html|gguf|litertlm|onnx|apk)\\b").containsMatchIn(t)) return false
+        return true
+    }
+
+    /** La traducción si ya está lista; si no, la pide (una sola vez) y devuelve null por ahora. */
+    private fun mlFallback(lang: String, text: String): String? {
+        if (lang == "es" || !mlWorth(text)) return null
+        val key = "$lang|$text"
+        mlCache[key]?.let { return it.ifEmpty { null } }
+        if (mlPending.size < 400 && mlPending.add(key)) mlWorker.execute {
+            val out = runCatching { com.paulrj.cumulusia.AppTranslate.spanishTo(text, lang) }.getOrDefault(text)
+            mlCache[key] = if (out == text) "" else out
+            mlPending.remove(key)
+            if (out != text) mainHandler.post { scanWindows(full = true) }
+        }
+        return null
+    }
+
+    /** Recorre una ventana, traduce sus textos y les pone los colores de las estrellas. Devuelve true si cambió algo. */
+    private fun translateTree(root: View, lang: String = currentLanguage()): Boolean {
+        val translate = lang != "es"   // en español no se traduce, pero igual se pintan los colores ✨
+        var changed = false
+        fun visit(v: View) {
+            if (v in noTranslateViews) return
+            if (v is android.webkit.WebView) return
+            if (v is TextView) {
+                // Lo que escribe el usuario y los mensajes del chat (texto que se puede seleccionar) no se tocan
+                if (translate && v !is EditText && !v.isTextSelectable) {
+                    val cs = v.text
+                    val cur = cs?.toString().orEmpty()
+                    if (cur.isNotEmpty() && lastSetText[v] != cur) {
+                        val spans = if (cs is Spanned) cs.getSpans(0, cs.length, Any::class.java) else emptyArray()
+                        if (spans.isEmpty()) {
+                            translateText(lang, cur)?.let { out ->
+                                if (out != cur) { v.text = out; changed = true }
+                                lastSetText[v] = out
+                            }
+                        } else {
+                            // Texto con estilo solo en el adorno del inicio (ej. «✔  Guardar» con el ✔ en negrita):
+                            // se traduce la palabra y el adorno conserva su estilo
+                            val pre = splitDecor(cur).first
+                            val sp = cs as Spanned
+                            if (pre.isNotEmpty() && spans.all { sp.getSpanEnd(it) <= pre.length }) {
+                                translateText(lang, cur)?.let { out ->
+                                    if (out != cur && out.startsWith(pre)) {
+                                        v.text = android.text.SpannableStringBuilder(cs.subSequence(0, pre.length)).append(out.substring(pre.length))
+                                        changed = true
+                                    }
+                                    lastSetText[v] = out
+                                }
+                            }
+                        }
+                    }
+                }
+                val h = v.hint
+                if (translate && !h.isNullOrEmpty() && h !is Spanned) {
+                    val cur = h.toString()
+                    if (lastSetHint[v] != cur) {
+                        translateText(lang, cur)?.let { out ->
+                            if (out != cur) { v.hint = out; changed = true }
+                            lastSetHint[v] = out
+                        }
+                    }
+                }
+            }
+            // ✨ Después de traducir: lo blanco (textos e íconos) toma el color de las estrellas
+            if (runCatching { StarText.apply(v) }.getOrDefault(false)) changed = true
+            if (v is ViewGroup) for (i in 0 until v.childCount) v.getChildAt(i)?.let { visit(it) }
+        }
+        runCatching { visit(root) }.onFailure { Log.e("LanguageManager", "Error al traducir: ${it.message}") }
+        return changed
+    }
+
+    // ---------- Vigilante: traduce cada ventana nueva (menús, diálogos, paneles) antes de dibujarse ----------
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val hooked = WeakHashMap<View, java.lang.ref.WeakReference<ViewTreeObserver>>()
+    private val dirty = WeakHashMap<View, Boolean>()
+    private var resumed = 0
+    private var tickerOn = false
+    // 🎞️ (23-nov-2026) SIN TIRONES. La revisión completa de todas las ventanas (traducir y pintar colores, texto por
+    //    texto) se hacía 4 veces por segundo, SIEMPRE, aunque el idioma no cambiara nunca (y aunque fuera español, que
+    //    no se traduce): por eso daba tironcitos todo el rato. Ahora se hace como una persona que habla su idioma:
+    //      • Al ABRIR la app o al CAMBIAR de idioma: unos segundos de revisión completa (todo queda en el idioma
+    //        elegido; ahí puede dar algún tironcito suave, solo en ese momento).
+    //      • Después, con el idioma ya cargado: NO se revisa todo el rato. Solo se traducen las ventanas NUEVAS (antes de
+    //        verse, como siempre) y lo que cambia en pantalla (aviso de Android al reacomodarse). En otros idiomas queda
+    //        una revisión completa de seguridad cada 3 s (por si un texto cambió sin aviso); en español, ninguna.
+    //      • Y nunca mientras tocas o justo después (0,6 s: lo que dura abrir o cerrar una ventana).
+    @Volatile private var touchAt = 0L
+    @Volatile private var langChangedAt = 0L
+    private var lastFullScan = 0L
+    /** Se llama al tocar la pantalla (cualquier toque): durante la animación no se hace la revisión completa. */
+    fun noteTouch() { touchAt = android.os.SystemClock.uptimeMillis() }
+    private val ticker = object : Runnable {
+        override fun run() {
+            if (resumed <= 0) { tickerOn = false; return }
+            val now = android.os.SystemClock.uptimeMillis()
+            if (langChangedAt == 0L) langChangedAt = now   // (al abrir la app cuenta como «recién elegido»)
+            val calm = now - touchAt > 600L
+            val warming = now - langChangedAt < 5000L      // (los primeros 5 s: todo al idioma)
+            val every = when {
+                warming -> 250L
+                currentLanguage() == "es" -> Long.MAX_VALUE   // (español: nada que traducir; los colores van por aviso)
+                else -> 3000L
+            }
+            val full = calm && now - lastFullScan >= every
+            if (full) lastFullScan = now
+            scanWindows(full = full)
+            mainHandler.postDelayed(this, 250)
+        }
+    }
+
+    private fun hook(root: View) {
+        runCatching { fixDirection(root) }
+        val vto = root.viewTreeObserver
+        if (!vto.isAlive || hooked[root]?.get() === vto) return
+        hooked[root] = java.lang.ref.WeakReference(vto)
+        vto.addOnGlobalLayoutListener { dirty[root] = true }
+        var lastWalk = 0L
+        var cancels = 0
+        vto.addOnPreDrawListener {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (dirty[root] == true && now - lastWalk >= 40) {
+                dirty[root] = false
+                lastWalk = now
+                // Si cambió algún texto, se salta este dibujo y se dibuja ya traducido (sin parpadeo)
+                if (translateTree(root) && cancels < 2) { cancels++; return@addOnPreDrawListener false }
+            }
+            cancels = 0
+            true
+        }
+        vto.addOnWindowFocusChangeListener { has -> if (!has) scanWindowsSoon() }
+    }
+
+    private fun scanWindows(full: Boolean) {
+        val roots = runCatching { android.view.inspector.WindowInspector.getGlobalWindowViews() }.getOrNull() ?: return
+        for (r in roots) {
+            // ↔️ Cada ventana (pantalla, menú ➕, ventanitas, paneles) en la dirección del idioma ELEGIDO
+            runCatching { fixDirection(r) }
+            val isNew = hooked[r]?.get() !== r.viewTreeObserver
+            if (isNew) hook(r)
+            if (isNew || full) translateTree(r)
+        }
+    }
+
+    /**
+     * ↔️ Árabe: de DERECHA a IZQUIERDA · los otros 13 idiomas: de IZQUIERDA a DERECHA.
+     * Se pone en cada ventana según el idioma elegido ahora. Antes algunas ventanas se quedaban con la dirección
+     * del idioma anterior: al pasar del árabe al español salían los botones al revés (y en árabe, al derecho).
+     */
+    private fun fixDirection(root: View) {
+        val dir = android.text.TextUtils.getLayoutDirectionFromLocale(Locale(currentLanguage()))
+        if (root.layoutDirection != dir) root.layoutDirection = dir
+    }
+
+    /** Revisa enseguida si se abrió un menú o una ventana (se llama al tocar la pantalla). */
+    fun scanWindowsSoon() {
+        mainHandler.post { scanWindows(full = false) }
+    }
+
+    /** Se llama una vez al abrir la app (CumulusApp). */
+    fun install(app: Application) {
+        appContext = app.applicationContext
+        currentLang = getSelectedLanguage(app)
+        if (currentLang != "es") Thread { ensureDict(app) }.start()
+        app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) {
+                resumed++
+                if (!tickerOn) { tickerOn = true; mainHandler.post(ticker) }
+                scanWindowsSoon()
+            }
+            override fun onActivityPaused(activity: Activity) { resumed = (resumed - 1).coerceAtLeast(0) }
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityStarted(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        })
+    }
+
+    // ========================================================================
+    // 🆕 Textos nuevos de la app (botones, interruptores y ventanas agregados después del diccionario ui.json):
+    //    TUS PROYECTOS DE APPS, ELIMINAR / ABRIR PROYECTO, VOZ MP3 y su aviso, EDITAR, Chat en pantalla,
+    //    Editar personalidad y las opciones de Plantilla de chat. Van en los 13 idiomas que no son español.
+    //    (van escritos normal: en un botón en mayúsculas, como «ELIMINAR PROYECTO», la traducción sale en mayúsculas sola)
+    // ========================================================================
+    private val extraKeys = listOf(
+        "Tus proyectos de apps",
+        "Eliminar proyecto",
+        "Abrir proyecto",
+        "Voz MP3",
+        "Editar",
+        "Chat en pantalla",
+        "Editar personalidad",
+        "Desliza con el dedo para ver todo el texto. Toca LISTO y después GUARDAR.",
+        "Este botón es solo para subir tu propia voz en MP3, una voz autorizada o de dominio propio. Las voces que subas quedan bajo tu responsabilidad.",
+        "Acepto",
+        "Aceptar",
+        "La del propio modelo (recomendada)",
+        "La del propio GGUF (recomendada)",
+        "Automática (el GGUF no trae plantilla)",
+        "Automática: {0} (el GGUF no trae plantilla)",
+        // 🚩 Reportar respuesta · 📂 Proyectos (Proyecto 1, 2, 3 y la pregunta antes de eliminar)
+        "Reportar respuesta",
+        "Ofensivo, odio o discriminación",
+        "Sexual o inapropiado",
+        "Violento o peligroso",
+        "Información falsa o engañosa",
+        "Otro motivo",
+        "Enviar reporte",
+        "Gracias por avisar",
+        "Tu reporte nos ayuda a mejorar las respuestas de Cumulus IA. La banderita quedó en rojo para que sepas que ya lo reportaste.",
+        "Proyecto {0}",
+        "¿Quieres eliminar tu proyecto?\n\nSi lo eliminas no hay vuelta atrás: el proyecto se eliminará por completo.",
+        // 💬 Chats guardados (al tocar un chat)
+        "Guardado el {0}",
+        "¿Qué quieres hacer con este chat?",
+        // 🔄 Interruptor del menú ➕
+        "Actualización de códigos y programación",
+        // ▶ Probar una voz en «Voces guardadas»
+        "▶ Probar",
+        "⏹ Parar",
+        // ➕ Ver el código que hiciste con otra IA
+        "Ver tu app y página web",
+        "Ver tu app Kotlin",
+        "Avatar",
+        "Imagen avatar",
+        "Letras del chat en blanco",
+        "Si las letras del chat te salen negras, aquí las puedes cambiar a blanco.",
+        "Avatares guardados",
+        "IA en la nube",
+        "Usar IA en la nube",
+        "Personalizado",
+        "Dirección del servicio (URL)",
+        "Clave (API key)",
+        "Clave guardada",
+        "Elegir modelo",
+        "Modelo",
+        "Escribir a mano",
+        "Código",
+        "Datos",
+        "Tabla",
+        "Página web",
+        "Texto",
+        "Comandos",
+        "Imagen SVG",
+        "Copiar",
+        "Descargar",
+        "Compartir",
+        "Ver página",
+        "Ver tabla",
+        "Ver imagen",
+        "Información",
+        "Términos de uso",
+        "Créditos y licencias",
+        // 🌍 Ventanas y botones que faltaban traducir
+        "Repetir",
+        "Borrar avatar",
+        "Seleccionar Backend",
+        "Seleccionar mmproj",
+        "Quitar mmproj de la app",
+        "Lo siento, este modelo no es para la CPU",
+        // ✂️ Imagen avatar: modos y deshacer/rehacer
+        "Mover",
+        "Dibujar",
+        "Recortar",
+        "Deshacer",
+        "Rehacer",
+        // 👁️ Avatar visión
+        "Avatar visión",
+        // 🖌️ Imagen avatar: pincel
+        "Pincel",
+        "Tamaño",
+        "Dureza",
+        // 💥 Sonido de poder (aura que explota)
+        "Sonido de poder",
+        // 🗂️ Mis personalidades (tarjetas)
+        "Mis personalidades",
+        "Nombre del personaje o persona",
+        "Guardar en tarjeta",
+        "Tarjetas guardadas",
+        "En uso",
+        "Todavía no tienes personalidades guardadas",
+        "¿Borrar esta personalidad?",
+        // 🌙 Apariencia: Modo oscuro con círculos
+        "Modo oscuro",
+        "Activado",
+        "Desactivado",
+        "Usar configuración del sistema",
+        // 🖼️ Imagen avatar: botón ➕ para cambiar la imagen sin cerrar la ventana
+        "Nueva imagen",
+        // 🖌️ Imagen avatar: el modo «Pincel» se llama «Pintar» (y PINCEL abajo muestra Tamaño y Dureza)
+        "Pintar",
+        // 🗂️ Personalidad personalizada: NUEVA TARJETA abre el editor; LISTO guarda
+        "Nueva tarjeta",
+        "Desliza con el dedo para ver todo el texto. Toca LISTO para guardarla.",
+        "Editar personalidad y nueva tarjeta",
+        "Después de escribir o pegar tu nueva personalidad, al tocar LISTO quedará guardada como tarjeta y elegida automáticamente.",
+        "Después de corregir la tarjeta, al tocar LISTO solo quedará guardada. Para usarla, toca el botón USAR.",
+        // ✨ Efectos especiales del avatar personalizado
+        "Efectos especiales",
+        "Aura",
+        "Movimiento del cabello",
+        // 🎨 colores del aura
+        "Aura dorada",
+        "Aura azul",
+        "Aura roja",
+        "Aura celeste",
+        "Aura morada",
+        "Aura rosada",
+        "Aura lila",
+        "Aura blanca",
+        // ⚡🔥 efectos del aura
+        "Aura relámpago",
+        "Aura destello",
+        "Aura latente",
+        "Aura de fuego",
+        // 🔊 sonidos al enojarse (Efectos especiales)
+        "Sonido de trueno",
+        "Sonido de electricidad",
+        // 🖥️ frecuencia del avatar
+        "Frecuencia del avatar",
+        "Avatar adaptable a 120 Hz",
+        "Avatar estándar a 60 Hz",
+        // 🧑‍🔐 IA reconoce al usuario
+        "IA reconoce al usuario",
+        "Cara frontal",
+        "Cara de perfil DR",
+        "Cara de perfil IZ",
+        "Foto guardada y en uso.",
+        "Da permiso de cámara y vuelve a tocar el botón.",
+        "Preparando el reconocimiento de tu cara (la primera vez se descarga una IA de unos 66 MB)…",
+        "Listo: Cumulus ya te reconoce por tu cara.",
+        "No pude descargar la IA que reconoce tu cara. Revisa internet y vuelve a sacar una foto.",
+        "No encontré tu cara en las fotos de frente. Sácalas de nuevo, con buena luz.",
+        "Faltan fotos: saca las 6 (4 de frente, 1 de perfil derecho y 1 de perfil izquierdo).",
+        "Tu avatar y avatares personalizados",
+        "Voces ElevenLabs, voces ONNX y voces personalizadas",
+        "ElevenLabs API key, grabación de voz y voz MP3",
+        "Reconocer mi cara"
+    )
+
+    private val extraTranslations: Map<String, List<String>> = mapOf(
+        "en" to listOf(
+            "Your app projects",
+            "Delete project",
+            "Open project",
+            "MP3 voice",
+            "Edit",
+            "On-screen chat",
+            "Edit personality",
+            "Swipe to see all the text. Tap DONE and then SAVE.",
+            "This button is only for uploading your own voice as an MP3, an authorized voice or one you own the rights to. The voices you upload are your responsibility.",
+            "I accept",
+            "Accept",
+            "The model's own (recommended)",
+            "The GGUF's own (recommended)",
+            "Automatic (the GGUF has no template)",
+            "Automatic: {0} (the GGUF has no template)",
+            "Report response",
+            "Offensive, hate or discrimination",
+            "Sexual or inappropriate",
+            "Violent or dangerous",
+            "False or misleading information",
+            "Other reason",
+            "Send report",
+            "Thanks for letting us know",
+            "Your report helps us improve Cumulus IA's responses. The little flag turned red so you know you already reported it.",
+            "Project {0}",
+            "Do you want to delete your project?\n\nIf you delete it, there's no going back: the project will be deleted completely.",
+            "Saved on {0}",
+            "What do you want to do with this chat?",
+            "Code and programming updates",
+            "▶ Try",
+            "⏹ Stop",
+            "View your web app and page",
+            "View your Kotlin app",
+            "Avatar",
+            "Avatar image",
+            "White chat text",
+            "If the chat text looks black, you can make it white here.",
+            "Saved avatars",
+            "Cloud AI",
+            "Use cloud AI",
+            "Custom",
+            "Service address (URL)",
+            "Key (API key)",
+            "Key saved",
+            "Choose model",
+            "Model",
+            "Type it in",
+            "Code",
+            "Data",
+            "Table",
+            "Web page",
+            "Text",
+            "Commands",
+            "SVG image",
+            "Copy",
+            "Download",
+            "Share",
+            "View page",
+            "View table",
+            "View image",
+            "Information",
+            "Terms of use",
+            "Credits and licenses",
+            "Repeat",
+            "Delete avatar",
+            "Select backend",
+            "Select mmproj",
+            "Remove mmproj from the app",
+            "Sorry, this model isn't for the CPU",
+            "Move",
+            "Draw",
+            "Cut out",
+            "Undo",
+            "Redo",
+            "Avatar vision",
+            "Brush",
+            "Size",
+            "Hardness",
+            "Power sound",
+            "My personalities",
+            "Name of the character or person",
+            "Save as card",
+            "Saved cards",
+            "In use",
+            "You don't have saved personalities yet",
+            "Delete this personality?",
+            "Dark mode",
+            "On",
+            "Off",
+            "Use system settings",
+            "New image",
+            "Paint",
+            "New card",
+            "Swipe to see all the text. Tap DONE to save it.",
+            "Edit personality and new card",
+            "After writing or pasting your new personality, tap DONE and it will be saved as a card and chosen automatically.",
+            "After correcting the card, tap DONE and it will only be saved. To use it, tap the USE button.",
+            "Special effects",
+            "Aura",
+            "Hair movement",
+            "Gold aura",
+            "Blue aura",
+            "Red aura",
+            "Light blue aura",
+            "Purple aura",
+            "Pink aura",
+            "Lilac aura",
+            "White aura",
+            "Lightning aura",
+            "Flash aura",
+            "Heartbeat aura",
+            "Fire aura",
+            "Thunder sound",
+            "Electricity sound",
+            "Avatar frame rate",
+            "Adaptive avatar at 120 Hz",
+            "Standard avatar at 60 Hz",
+            "AI recognizes the user",
+            "Front face",
+            "Face profile R",
+            "Face profile L",
+            "Photo saved and in use.",
+            "Allow camera access and tap the button again.",
+            "Preparing face recognition (the first time an AI of about 66 MB is downloaded)…",
+            "Done: Cumulus now recognizes you by your face.",
+            "I couldn't download the face recognition AI. Check your internet and take a photo again.",
+            "I couldn't find your face in the front photos. Take them again in good light.",
+            "Photos missing: take all 6 (4 front, 1 right profile and 1 left profile).",
+            "Your avatar and custom avatars",
+            "ElevenLabs voices, ONNX voices and custom voices",
+            "ElevenLabs API key, voice recording and MP3 voice",
+            "Recognize my face"
+        ),
+        "ru" to listOf(
+            "Ваши проекты приложений",
+            "Удалить проект",
+            "Открыть проект",
+            "Голос MP3",
+            "Изменить",
+            "Чат на экране",
+            "Изменить личность",
+            "Проведите пальцем, чтобы увидеть весь текст. Нажмите ГОТОВО, а затем СОХРАНИТЬ.",
+            "Эта кнопка только для загрузки вашего собственного голоса в MP3, разрешённого голоса или голоса, права на который принадлежат вам. Вы несёте ответственность за загруженные голоса.",
+            "Я принимаю",
+            "Принять",
+            "Встроенный в модель (рекомендуется)",
+            "Встроенный в GGUF (рекомендуется)",
+            "Автоматически (в GGUF нет шаблона)",
+            "Автоматически: {0} (в GGUF нет шаблона)",
+            "Пожаловаться на ответ",
+            "Оскорбление, ненависть или дискриминация",
+            "Сексуальный или неприемлемый",
+            "Насилие или опасность",
+            "Ложная или вводящая в заблуждение информация",
+            "Другая причина",
+            "Отправить жалобу",
+            "Спасибо, что сообщили",
+            "Ваша жалоба помогает нам улучшать ответы Cumulus IA. Флажок стал красным, чтобы вы знали, что уже пожаловались.",
+            "Проект {0}",
+            "Удалить ваш проект?\n\nЕсли вы его удалите, вернуть его будет нельзя: проект будет удалён полностью.",
+            "Сохранено {0}",
+            "Что вы хотите сделать с этим чатом?",
+            "Обновления кода и программирования",
+            "▶ Прослушать",
+            "⏹ Стоп",
+            "Посмотреть веб-приложение и сайт",
+            "Посмотреть приложение на Kotlin",
+            "Аватар",
+            "Изображение аватара",
+            "Белый текст чата",
+            "Если текст чата чёрный, здесь можно сделать его белым.",
+            "Сохранённые аватары",
+            "ИИ в облаке",
+            "Использовать ИИ в облаке",
+            "Свой",
+            "Адрес сервиса (URL)",
+            "Ключ (API key)",
+            "Ключ сохранён",
+            "Выбрать модель",
+            "Модель",
+            "Ввести вручную",
+            "Код",
+            "Данные",
+            "Таблица",
+            "Веб-страница",
+            "Текст",
+            "Команды",
+            "Изображение SVG",
+            "Копировать",
+            "Скачать",
+            "Поделиться",
+            "Открыть страницу",
+            "Открыть таблицу",
+            "Открыть изображение",
+            "Информация",
+            "Условия использования",
+            "Авторы и лицензии",
+            "Повторить",
+            "Удалить аватар",
+            "Выбрать бэкенд",
+            "Выбрать mmproj",
+            "Удалить mmproj из приложения",
+            "Извините, эта модель не для CPU",
+            "Двигать",
+            "Рисовать",
+            "Вырезать",
+            "Отменить",
+            "Повторить действие",
+            "Зрение аватара",
+            "Кисть",
+            "Размер",
+            "Жёсткость",
+            "Звук силы",
+            "Мои личности",
+            "Имя персонажа или человека",
+            "Сохранить в карточку",
+            "Сохранённые карточки",
+            "Используется",
+            "У тебя пока нет сохранённых личностей",
+            "Удалить эту личность?",
+            "Тёмная тема",
+            "Включено",
+            "Выключено",
+            "Использовать настройки системы",
+            "Новое изображение",
+            "Рисовать",
+            "Новая карточка",
+            "Проведите пальцем, чтобы увидеть весь текст. Нажмите ГОТОВО, чтобы сохранить.",
+            "Изменить личность и новая карточка",
+            "Напишите или вставьте новую личность и нажмите ГОТОВО: она сохранится как карточка и будет выбрана автоматически.",
+            "Исправьте карточку и нажмите ГОТОВО: она только сохранится. Чтобы использовать её, нажмите ИСПОЛЬЗОВАТЬ.",
+            "Спецэффекты",
+            "Аура",
+            "Движение волос",
+            "Золотая аура",
+            "Синяя аура",
+            "Красная аура",
+            "Голубая аура",
+            "Фиолетовая аура",
+            "Розовая аура",
+            "Сиреневая аура",
+            "Белая аура",
+            "Аура молний",
+            "Мерцающая аура",
+            "Пульсирующая аура",
+            "Огненная аура",
+            "Звук грома",
+            "Звук электричества",
+            "Частота аватара",
+            "Адаптивный аватар 120 Гц",
+            "Стандартный аватар 60 Гц",
+            "ИИ узнаёт пользователя",
+            "Лицо анфас",
+            "Профиль справа",
+            "Профиль слева",
+            "Фото сохранено и используется.",
+            "Разрешите доступ к камере и снова нажмите кнопку.",
+            "Готовлю распознавание лица (в первый раз загружается ИИ размером около 66 МБ)…",
+            "Готово: Cumulus теперь узнаёт вас по лицу.",
+            "Не удалось загрузить ИИ для распознавания лица. Проверьте интернет и сделайте фото снова.",
+            "Я не нашёл ваше лицо на фото анфас. Сделайте их снова при хорошем освещении.",
+            "Не хватает фото: сделайте все 6 (4 анфас, 1 в правый профиль и 1 в левый профиль).",
+            "Ваш аватар и собственные аватары",
+            "Голоса ElevenLabs, голоса ONNX и собственные голоса",
+            "API-ключ ElevenLabs, запись голоса и голос MP3",
+            "Узнавать моё лицо"
+        ),
+        "zh" to listOf(
+            "你的应用项目",
+            "删除项目",
+            "打开项目",
+            "MP3 语音",
+            "编辑",
+            "屏幕聊天",
+            "编辑个性",
+            "用手指滑动查看全部文字。点击“完成”，然后点击“保存”。",
+            "此按钮仅用于上传你自己的 MP3 声音、经授权的声音或你拥有权利的声音。你上传的声音由你自行负责。",
+            "我同意",
+            "接受",
+            "模型自带的（推荐）",
+            "GGUF 自带的（推荐）",
+            "自动（GGUF 不含模板）",
+            "自动：{0}（GGUF 不含模板）",
+            "举报回答",
+            "冒犯、仇恨或歧视",
+            "色情或不当内容",
+            "暴力或危险",
+            "虚假或误导性信息",
+            "其他原因",
+            "发送举报",
+            "感谢你的反馈",
+            "你的举报帮助我们改进 Cumulus IA 的回答。小旗子已变成红色，表示你已经举报过了。",
+            "项目 {0}",
+            "要删除你的项目吗？\n\n删除后无法恢复：项目将被彻底删除。",
+            "保存于 {0}",
+            "你想对这个聊天做什么？",
+            "代码与编程更新",
+            "▶ 试听",
+            "⏹ 停止",
+            "查看你的网页应用和网页",
+            "查看你的 Kotlin 应用",
+            "虚拟形象",
+            "头像图片",
+            "聊天文字显示为白色",
+            "如果聊天文字显示为黑色，可以在这里改成白色。",
+            "已保存的虚拟形象",
+            "云端 AI",
+            "使用云端 AI",
+            "自定义",
+            "服务地址 (URL)",
+            "密钥 (API key)",
+            "密钥已保存",
+            "选择模型",
+            "模型",
+            "手动输入",
+            "代码",
+            "数据",
+            "表格",
+            "网页",
+            "文本",
+            "命令",
+            "SVG 图像",
+            "复制",
+            "下载",
+            "分享",
+            "查看网页",
+            "查看表格",
+            "查看图像",
+            "信息",
+            "使用条款",
+            "致谢与许可",
+            "重复",
+            "删除头像",
+            "选择后端",
+            "选择 mmproj",
+            "从应用中移除 mmproj",
+            "抱歉，此模型不适用于 CPU",
+            "移动",
+            "绘制",
+            "抠图",
+            "撤销",
+            "重做",
+            "头像视觉",
+            "画笔",
+            "大小",
+            "硬度",
+            "力量音效",
+            "我的个性",
+            "角色或人物的名字",
+            "保存为卡片",
+            "已保存的卡片",
+            "使用中",
+            "你还没有保存的个性",
+            "删除这个个性吗？",
+            "深色模式",
+            "开启",
+            "关闭",
+            "跟随系统设置",
+            "新图片",
+            "涂色",
+            "新卡片",
+            "用手指滑动查看全部文字。点击“完成”即可保存。",
+            "编辑个性与新卡片",
+            "写好或粘贴新的个性后，点击“完成”，它会保存为卡片并自动选用。",
+            "修改卡片后，点击“完成”只会保存。要使用它，请点击“使用”。",
+            "特效",
+            "光环",
+            "头发飘动",
+            "金色光环",
+            "蓝色光环",
+            "红色光环",
+            "天蓝色光环",
+            "紫色光环",
+            "粉色光环",
+            "淡紫色光环",
+            "白色光环",
+            "闪电光环",
+            "闪烁光环",
+            "脉动光环",
+            "火焰光环",
+            "雷声",
+            "电流声",
+            "头像刷新率",
+            "自适应头像 120 Hz",
+            "标准头像 60 Hz",
+            "AI 识别用户",
+            "正脸",
+            "右侧脸",
+            "左侧脸",
+            "照片已保存并启用。",
+            "请允许使用相机，然后再次点按该按钮。",
+            "正在准备人脸识别（第一次会下载约 66 MB 的 AI）…",
+            "完成：Cumulus 现在能通过你的脸认出你。",
+            "无法下载人脸识别 AI。请检查网络后重新拍一张照片。",
+            "在正面照片中找不到你的脸。请在光线充足的地方重拍。",
+            "照片不足：请拍齐 6 张（4 张正面、1 张右侧面、1 张左侧面）。",
+            "你的头像和自定义头像",
+            "ElevenLabs 语音、ONNX 语音和自定义语音",
+            "ElevenLabs API 密钥、录音和 MP3 语音",
+            "识别我的脸"
+        ),
+        "ko" to listOf(
+            "내 앱 프로젝트",
+            "프로젝트 삭제",
+            "프로젝트 열기",
+            "MP3 음성",
+            "편집",
+            "화면 채팅",
+            "성격 편집",
+            "손가락으로 밀어 전체 텍스트를 보세요. 완료를 누른 다음 저장을 누르세요.",
+            "이 버튼은 본인의 MP3 음성, 허락받은 음성 또는 권리를 가진 음성을 올리는 용도로만 사용됩니다. 올린 음성에 대한 책임은 본인에게 있습니다.",
+            "동의합니다",
+            "확인",
+            "모델 자체 템플릿 (권장)",
+            "GGUF 자체 템플릿 (권장)",
+            "자동 (GGUF에 템플릿 없음)",
+            "자동: {0} (GGUF에 템플릿 없음)",
+            "답변 신고",
+            "불쾌감, 혐오 또는 차별",
+            "성적이거나 부적절함",
+            "폭력적이거나 위험함",
+            "거짓이거나 오해의 소지가 있는 정보",
+            "기타 사유",
+            "신고 보내기",
+            "알려 주셔서 감사합니다",
+            "신고는 Cumulus IA의 답변을 개선하는 데 도움이 됩니다. 이미 신고했다는 것을 알 수 있도록 깃발이 빨간색으로 바뀌었어요.",
+            "프로젝트 {0}",
+            "프로젝트를 삭제할까요?\n\n삭제하면 되돌릴 수 없어요: 프로젝트가 완전히 삭제됩니다.",
+            "{0}에 저장됨",
+            "이 채팅으로 무엇을 할까요?",
+            "코드 및 프로그래밍 업데이트",
+            "▶ 미리 듣기",
+            "⏹ 정지",
+            "웹 앱과 웹페이지 보기",
+            "Kotlin 앱 보기",
+            "아바타",
+            "아바타 이미지",
+            "채팅 글자를 흰색으로",
+            "채팅 글자가 검게 보이면 여기서 흰색으로 바꿀 수 있어요.",
+            "저장된 아바타",
+            "클라우드 AI",
+            "클라우드 AI 사용",
+            "사용자 지정",
+            "서비스 주소 (URL)",
+            "키 (API key)",
+            "키 저장됨",
+            "모델 선택",
+            "모델",
+            "직접 입력",
+            "코드",
+            "데이터",
+            "표",
+            "웹 페이지",
+            "텍스트",
+            "명령어",
+            "SVG 이미지",
+            "복사",
+            "다운로드",
+            "공유",
+            "페이지 보기",
+            "표 보기",
+            "이미지 보기",
+            "정보",
+            "이용 약관",
+            "크레딧 및 라이선스",
+            "반복",
+            "아바타 삭제",
+            "백엔드 선택",
+            "mmproj 선택",
+            "앱에서 mmproj 제거",
+            "죄송합니다. 이 모델은 CPU용이 아닙니다",
+            "이동",
+            "그리기",
+            "잘라내기",
+            "실행 취소",
+            "다시 실행",
+            "아바타 비전",
+            "브러시",
+            "크기",
+            "경도",
+            "파워 사운드",
+            "내 성격",
+            "캐릭터 또는 사람 이름",
+            "카드로 저장",
+            "저장된 카드",
+            "사용 중",
+            "아직 저장된 성격이 없어요",
+            "이 성격을 삭제할까요?",
+            "다크 모드",
+            "사용",
+            "사용 안 함",
+            "시스템 설정 사용",
+            "새 이미지",
+            "칠하기",
+            "새 카드",
+            "손가락으로 밀어 전체 텍스트를 보세요. 완료를 누르면 저장됩니다.",
+            "성격 편집 및 새 카드",
+            "새 성격을 쓰거나 붙여넣은 뒤 완료를 누르면 카드로 저장되고 자동으로 선택됩니다.",
+            "카드를 수정한 뒤 완료를 누르면 저장만 됩니다. 사용하려면 사용 버튼을 누르세요.",
+            "특수 효과",
+            "오라",
+            "머리카락 움직임",
+            "금색 오라",
+            "파란 오라",
+            "빨간 오라",
+            "하늘색 오라",
+            "보라 오라",
+            "분홍 오라",
+            "연보라 오라",
+            "흰 오라",
+            "번개 오라",
+            "섬광 오라",
+            "고동 오라",
+            "불꽃 오라",
+            "천둥 소리",
+            "전기 소리",
+            "아바타 주사율",
+            "적응형 아바타 120Hz",
+            "표준 아바타 60Hz",
+            "AI가 사용자를 알아봄",
+            "정면 얼굴",
+            "오른쪽 옆모습",
+            "왼쪽 옆모습",
+            "사진이 저장되어 사용 중입니다.",
+            "카메라 권한을 허용하고 버튼을 다시 누르세요.",
+            "얼굴 인식을 준비하는 중이에요 (처음에는 약 66MB의 AI를 내려받아요)…",
+            "완료: 이제 Cumulus가 얼굴로 당신을 알아봐요.",
+            "얼굴 인식 AI를 내려받지 못했어요. 인터넷을 확인하고 사진을 다시 찍어 주세요.",
+            "정면 사진에서 얼굴을 찾지 못했어요. 밝은 곳에서 다시 찍어 주세요.",
+            "사진이 부족해요: 6장 모두 찍어 주세요 (정면 4장, 오른쪽 옆모습 1장, 왼쪽 옆모습 1장).",
+            "당신의 아바타와 사용자 아바타",
+            "ElevenLabs 음성, ONNX 음성 및 사용자 음성",
+            "ElevenLabs API 키, 음성 녹음 및 MP3 음성",
+            "내 얼굴 인식"
+        ),
+        "ja" to listOf(
+            "あなたのアプリプロジェクト",
+            "プロジェクトを削除",
+            "プロジェクトを開く",
+            "MP3音声",
+            "編集",
+            "画面チャット",
+            "性格を編集",
+            "指でスクロールして全文を表示します。「完了」をタップしてから「保存」をタップしてください。",
+            "このボタンは、あなた自身の声のMP3、許可を得た声、または権利を持つ声をアップロードするためだけのものです。アップロードした声の責任はあなたにあります。",
+            "同意します",
+            "承諾",
+            "モデル内蔵のもの（推奨）",
+            "GGUF内蔵のもの（推奨）",
+            "自動（GGUFにテンプレートなし）",
+            "自動：{0}（GGUFにテンプレートなし）",
+            "回答を報告",
+            "攻撃的、憎悪または差別",
+            "性的または不適切",
+            "暴力的または危険",
+            "虚偽または誤解を招く情報",
+            "その他の理由",
+            "報告を送信",
+            "お知らせいただきありがとうございます",
+            "報告はCumulus IAの回答の改善に役立ちます。報告済みであることがわかるように、旗が赤くなりました。",
+            "プロジェクト {0}",
+            "プロジェクトを削除しますか？\n\n削除すると元に戻せません：プロジェクトは完全に削除されます。",
+            "{0} に保存",
+            "このチャットをどうしますか？",
+            "コードとプログラミングの更新",
+            "▶ 試聴",
+            "⏹ 停止",
+            "Webアプリとページを見る",
+            "Kotlinアプリを見る",
+            "アバター",
+            "アバター画像",
+            "チャットの文字を白に",
+            "チャットの文字が黒く表示される場合は、ここで白に変更できます。",
+            "保存したアバター",
+            "クラウドAI",
+            "クラウドAIを使う",
+            "カスタム",
+            "サービスのアドレス (URL)",
+            "キー (API key)",
+            "キーを保存済み",
+            "モデルを選ぶ",
+            "モデル",
+            "手入力",
+            "コード",
+            "データ",
+            "表",
+            "ウェブページ",
+            "テキスト",
+            "コマンド",
+            "SVG画像",
+            "コピー",
+            "ダウンロード",
+            "共有",
+            "ページを見る",
+            "表を見る",
+            "画像を見る",
+            "情報",
+            "利用規約",
+            "クレジットとライセンス",
+            "繰り返す",
+            "アバターを削除",
+            "バックエンドを選択",
+            "mmprojを選択",
+            "アプリからmmprojを削除",
+            "申し訳ありません。このモデルはCPU用ではありません",
+            "移動",
+            "描く",
+            "切り抜き",
+            "元に戻す",
+            "やり直す",
+            "アバタービジョン",
+            "ブラシ",
+            "サイズ",
+            "硬さ",
+            "パワーの音",
+            "マイ・パーソナリティ",
+            "キャラクターまたは人物の名前",
+            "カードに保存",
+            "保存したカード",
+            "使用中",
+            "まだ保存したパーソナリティはありません",
+            "このパーソナリティを削除しますか？",
+            "ダークモード",
+            "オン",
+            "オフ",
+            "システム設定を使用",
+            "新しい画像",
+            "塗る",
+            "新しいカード",
+            "指でスクロールして全文を表示します。「完了」をタップすると保存されます。",
+            "パーソナリティの編集と新しいカード",
+            "新しいパーソナリティを書くか貼り付けて「完了」をタップすると、カードとして保存され自動的に選択されます。",
+            "カードを修正して「完了」をタップすると保存だけされます。使うには「使う」をタップしてください。",
+            "特殊効果",
+            "オーラ",
+            "髪の動き",
+            "金色のオーラ",
+            "青いオーラ",
+            "赤いオーラ",
+            "水色のオーラ",
+            "紫のオーラ",
+            "ピンクのオーラ",
+            "ライラックのオーラ",
+            "白いオーラ",
+            "稲妻のオーラ",
+            "点滅するオーラ",
+            "鼓動するオーラ",
+            "炎のオーラ",
+            "雷の音",
+            "電気の音",
+            "アバターのリフレッシュレート",
+            "アダプティブアバター 120 Hz",
+            "標準アバター 60 Hz",
+            "AIがユーザーを認識",
+            "正面の顔",
+            "右の横顔",
+            "左の横顔",
+            "写真を保存し、使用中です。",
+            "カメラを許可して、もう一度ボタンをタップしてください。",
+            "顔認識を準備しています（初回は約66MBのAIをダウンロードします）…",
+            "完了：Cumulusが顔であなたを認識できるようになりました。",
+            "顔認識AIをダウンロードできませんでした。インターネットを確認して、もう一度写真を撮ってください。",
+            "正面の写真で顔が見つかりませんでした。明るい場所で撮り直してください。",
+            "写真が足りません：6枚すべて撮ってください（正面4枚、右横顔1枚、左横顔1枚）。",
+            "あなたのアバターとカスタムアバター",
+            "ElevenLabsの音声、ONNXの音声、カスタム音声",
+            "ElevenLabs APIキー、音声録音、MP3音声",
+            "私の顔を認識"
+        ),
+        "pt" to listOf(
+            "Seus projetos de apps",
+            "Excluir projeto",
+            "Abrir projeto",
+            "Voz MP3",
+            "Editar",
+            "Chat na tela",
+            "Editar personalidade",
+            "Deslize com o dedo para ver todo o texto. Toque em CONCLUIR e depois em SALVAR.",
+            "Este botão é apenas para enviar a sua própria voz em MP3, uma voz autorizada ou de sua propriedade. As vozes que você enviar são de sua responsabilidade.",
+            "Aceito",
+            "Aceitar",
+            "A do próprio modelo (recomendada)",
+            "A do próprio GGUF (recomendada)",
+            "Automática (o GGUF não traz modelo)",
+            "Automática: {0} (o GGUF não traz modelo)",
+            "Denunciar resposta",
+            "Ofensivo, ódio ou discriminação",
+            "Sexual ou inapropriado",
+            "Violento ou perigoso",
+            "Informação falsa ou enganosa",
+            "Outro motivo",
+            "Enviar denúncia",
+            "Obrigado por avisar",
+            "Sua denúncia nos ajuda a melhorar as respostas da Cumulus IA. A bandeirinha ficou vermelha para você saber que já denunciou.",
+            "Projeto {0}",
+            "Quer excluir seu projeto?\n\nSe excluir, não tem volta: o projeto será excluído por completo.",
+            "Salvo em {0}",
+            "O que você quer fazer com este chat?",
+            "Atualização de códigos e programação",
+            "▶ Testar",
+            "⏹ Parar",
+            "Ver seu app e página web",
+            "Ver seu app Kotlin",
+            "Avatar",
+            "Imagem do avatar",
+            "Letras do chat em branco",
+            "Se as letras do chat aparecerem pretas, aqui você pode deixá-las brancas.",
+            "Avatares salvos",
+            "IA na nuvem",
+            "Usar IA na nuvem",
+            "Personalizado",
+            "Endereço do serviço (URL)",
+            "Chave (API key)",
+            "Chave salva",
+            "Escolher modelo",
+            "Modelo",
+            "Digitar à mão",
+            "Código",
+            "Dados",
+            "Tabela",
+            "Página web",
+            "Texto",
+            "Comandos",
+            "Imagem SVG",
+            "Copiar",
+            "Baixar",
+            "Compartilhar",
+            "Ver página",
+            "Ver tabela",
+            "Ver imagem",
+            "Informações",
+            "Termos de uso",
+            "Créditos e licenças",
+            "Repetir",
+            "Apagar avatar",
+            "Selecionar backend",
+            "Selecionar mmproj",
+            "Remover mmproj do app",
+            "Desculpe, este modelo não é para a CPU",
+            "Mover",
+            "Desenhar",
+            "Recortar",
+            "Desfazer",
+            "Refazer",
+            "Visão do avatar",
+            "Pincel",
+            "Tamanho",
+            "Dureza",
+            "Som de poder",
+            "Minhas personalidades",
+            "Nome do personagem ou pessoa",
+            "Salvar em cartão",
+            "Cartões salvos",
+            "Em uso",
+            "Você ainda não tem personalidades salvas",
+            "Apagar esta personalidade?",
+            "Modo escuro",
+            "Ativado",
+            "Desativado",
+            "Usar configuração do sistema",
+            "Nova imagem",
+            "Pintar",
+            "Novo cartão",
+            "Deslize com o dedo para ver todo o texto. Toque em CONCLUIR para salvar.",
+            "Editar personalidade e novo cartão",
+            "Depois de escrever ou colar sua nova personalidade, toque em CONCLUIR e ela será salva como cartão e escolhida automaticamente.",
+            "Depois de corrigir o cartão, toque em CONCLUIR e ele só será salvo. Para usá-lo, toque no botão USAR.",
+            "Efeitos especiais",
+            "Aura",
+            "Movimento do cabelo",
+            "Aura dourada",
+            "Aura azul",
+            "Aura vermelha",
+            "Aura azul-clara",
+            "Aura roxa",
+            "Aura rosa",
+            "Aura lilás",
+            "Aura branca",
+            "Aura relâmpago",
+            "Aura cintilante",
+            "Aura pulsante",
+            "Aura de fogo",
+            "Som de trovão",
+            "Som de eletricidade",
+            "Frequência do avatar",
+            "Avatar adaptável a 120 Hz",
+            "Avatar padrão a 60 Hz",
+            "A IA reconhece o usuário",
+            "Rosto de frente",
+            "Perfil DIR",
+            "Perfil ESQ",
+            "Foto salva e em uso.",
+            "Permita a câmera e toque no botão de novo.",
+            "Preparando o reconhecimento do seu rosto (na primeira vez é baixada uma IA de uns 66 MB)…",
+            "Pronto: o Cumulus já reconhece você pelo rosto.",
+            "Não consegui baixar a IA que reconhece seu rosto. Verifique a internet e tire uma foto de novo.",
+            "Não encontrei seu rosto nas fotos de frente. Tire-as de novo, com boa luz.",
+            "Faltam fotos: tire as 6 (4 de frente, 1 de perfil direito e 1 de perfil esquerdo).",
+            "Seu avatar e avatares personalizados",
+            "Vozes ElevenLabs, vozes ONNX e vozes personalizadas",
+            "Chave API da ElevenLabs, gravação de voz e voz MP3",
+            "Reconhecer meu rosto"
+        ),
+        "de" to listOf(
+            "Deine App-Projekte",
+            "Projekt löschen",
+            "Projekt öffnen",
+            "MP3-Stimme",
+            "Bearbeiten",
+            "Chat auf dem Bildschirm",
+            "Persönlichkeit bearbeiten",
+            "Wische, um den ganzen Text zu sehen. Tippe auf FERTIG und dann auf SPEICHERN.",
+            "Diese Schaltfläche dient nur zum Hochladen deiner eigenen Stimme als MP3, einer autorisierten Stimme oder einer Stimme, an der du die Rechte hast. Du bist für die hochgeladenen Stimmen verantwortlich.",
+            "Ich stimme zu",
+            "Akzeptieren",
+            "Die des Modells (empfohlen)",
+            "Die der GGUF-Datei (empfohlen)",
+            "Automatisch (die GGUF-Datei hat keine Vorlage)",
+            "Automatisch: {0} (die GGUF-Datei hat keine Vorlage)",
+            "Antwort melden",
+            "Beleidigend, Hass oder Diskriminierung",
+            "Sexuell oder unangemessen",
+            "Gewalttätig oder gefährlich",
+            "Falsche oder irreführende Information",
+            "Anderer Grund",
+            "Meldung senden",
+            "Danke für den Hinweis",
+            "Deine Meldung hilft uns, die Antworten von Cumulus IA zu verbessern. Das Fähnchen ist rot geworden, damit du weißt, dass du es schon gemeldet hast.",
+            "Projekt {0}",
+            "Möchtest du dein Projekt löschen?\n\nWenn du es löschst, gibt es kein Zurück: Das Projekt wird vollständig gelöscht.",
+            "Gespeichert am {0}",
+            "Was möchtest du mit diesem Chat machen?",
+            "Code- und Programmier-Updates",
+            "▶ Anhören",
+            "⏹ Stopp",
+            "Deine Web-App und Webseite ansehen",
+            "Deine Kotlin-App ansehen",
+            "Avatar",
+            "Avatar-Bild",
+            "Chat-Text in Weiß",
+            "Wenn der Chat-Text schwarz erscheint, kannst du ihn hier weiß machen.",
+            "Gespeicherte Avatare",
+            "KI in der Cloud",
+            "KI in der Cloud verwenden",
+            "Benutzerdefiniert",
+            "Adresse des Dienstes (URL)",
+            "Schlüssel (API key)",
+            "Schlüssel gespeichert",
+            "Modell wählen",
+            "Modell",
+            "Von Hand eingeben",
+            "Code",
+            "Daten",
+            "Tabelle",
+            "Webseite",
+            "Text",
+            "Befehle",
+            "SVG-Bild",
+            "Kopieren",
+            "Herunterladen",
+            "Teilen",
+            "Seite ansehen",
+            "Tabelle ansehen",
+            "Bild ansehen",
+            "Informationen",
+            "Nutzungsbedingungen",
+            "Danksagungen und Lizenzen",
+            "Wiederholen",
+            "Avatar löschen",
+            "Backend auswählen",
+            "mmproj auswählen",
+            "mmproj aus der App entfernen",
+            "Entschuldigung, dieses Modell ist nicht für die CPU",
+            "Verschieben",
+            "Zeichnen",
+            "Ausschneiden",
+            "Rückgängig",
+            "Wiederholen",
+            "Avatar-Sicht",
+            "Pinsel",
+            "Größe",
+            "Härte",
+            "Kraft-Sound",
+            "Meine Persönlichkeiten",
+            "Name der Figur oder Person",
+            "Als Karte speichern",
+            "Gespeicherte Karten",
+            "In Verwendung",
+            "Du hast noch keine gespeicherten Persönlichkeiten",
+            "Diese Persönlichkeit löschen?",
+            "Dunkler Modus",
+            "Aktiviert",
+            "Deaktiviert",
+            "Systemeinstellung verwenden",
+            "Neues Bild",
+            "Malen",
+            "Neue Karte",
+            "Wische, um den ganzen Text zu sehen. Tippe auf FERTIG, um zu speichern.",
+            "Persönlichkeit bearbeiten und neue Karte",
+            "Schreibe oder füge deine neue Persönlichkeit ein und tippe auf FERTIG: Sie wird als Karte gespeichert und automatisch ausgewählt.",
+            "Korrigiere die Karte und tippe auf FERTIG: Sie wird nur gespeichert. Um sie zu verwenden, tippe auf VERWENDEN.",
+            "Spezialeffekte",
+            "Aura",
+            "Haarbewegung",
+            "Goldene Aura",
+            "Blaue Aura",
+            "Rote Aura",
+            "Hellblaue Aura",
+            "Violette Aura",
+            "Rosa Aura",
+            "Flieder-Aura",
+            "Weiße Aura",
+            "Blitz-Aura",
+            "Blink-Aura",
+            "Pulsierende Aura",
+            "Feuer-Aura",
+            "Donnergeräusch",
+            "Stromgeräusch",
+            "Bildfrequenz des Avatars",
+            "Adaptiver Avatar mit 120 Hz",
+            "Standard-Avatar mit 60 Hz",
+            "KI erkennt den Nutzer",
+            "Gesicht von vorn",
+            "Profil rechts",
+            "Profil links",
+            "Foto gespeichert und in Verwendung.",
+            "Erlaube die Kamera und tippe erneut auf die Taste.",
+            "Gesichtserkennung wird vorbereitet (beim ersten Mal wird eine KI von etwa 66 MB heruntergeladen)…",
+            "Fertig: Cumulus erkennt dich jetzt an deinem Gesicht.",
+            "Ich konnte die KI für die Gesichtserkennung nicht herunterladen. Prüfe das Internet und mach erneut ein Foto.",
+            "Ich habe dein Gesicht auf den Frontalfotos nicht gefunden. Mach sie bei gutem Licht noch einmal.",
+            "Es fehlen Fotos: mach alle 6 (4 frontal, 1 rechtes Profil und 1 linkes Profil).",
+            "Dein Avatar und eigene Avatare",
+            "ElevenLabs-Stimmen, ONNX-Stimmen und eigene Stimmen",
+            "ElevenLabs-API-Schlüssel, Sprachaufnahme und MP3-Stimme",
+            "Mein Gesicht erkennen"
+        ),
+        "fr" to listOf(
+            "Tes projets d'apps",
+            "Supprimer le projet",
+            "Ouvrir le projet",
+            "Voix MP3",
+            "Modifier",
+            "Chat à l'écran",
+            "Modifier la personnalité",
+            "Fais glisser ton doigt pour voir tout le texte. Touche TERMINÉ puis ENREGISTRER.",
+            "Ce bouton sert uniquement à envoyer ta propre voix en MP3, une voix autorisée ou dont tu possèdes les droits. Les voix que tu envoies sont sous ta responsabilité.",
+            "J'accepte",
+            "Accepter",
+            "Celui du modèle (recommandé)",
+            "Celui du GGUF (recommandé)",
+            "Automatique (le GGUF n'a pas de modèle de chat)",
+            "Automatique : {0} (le GGUF n'a pas de modèle de chat)",
+            "Signaler la réponse",
+            "Offensant, haine ou discrimination",
+            "Sexuel ou inapproprié",
+            "Violent ou dangereux",
+            "Information fausse ou trompeuse",
+            "Autre motif",
+            "Envoyer le signalement",
+            "Merci de nous avoir prévenus",
+            "Ton signalement nous aide à améliorer les réponses de Cumulus IA. Le petit drapeau est devenu rouge pour que tu saches que tu l'as déjà signalé.",
+            "Projet {0}",
+            "Veux-tu supprimer ton projet ?\n\nSi tu le supprimes, impossible de revenir en arrière : le projet sera supprimé complètement.",
+            "Enregistré le {0}",
+            "Que veux-tu faire de ce chat ?",
+            "Mise à jour du code et de la programmation",
+            "▶ Écouter",
+            "⏹ Arrêter",
+            "Voir ton app et ta page web",
+            "Voir ton app Kotlin",
+            "Avatar",
+            "Image de l'avatar",
+            "Texte du chat en blanc",
+            "Si le texte du chat apparaît en noir, tu peux le passer en blanc ici.",
+            "Avatars enregistrés",
+            "IA dans le cloud",
+            "Utiliser l'IA dans le cloud",
+            "Personnalisé",
+            "Adresse du service (URL)",
+            "Clé (API key)",
+            "Clé enregistrée",
+            "Choisir le modèle",
+            "Modèle",
+            "Saisir à la main",
+            "Code",
+            "Données",
+            "Tableau",
+            "Page web",
+            "Texte",
+            "Commandes",
+            "Image SVG",
+            "Copier",
+            "Télécharger",
+            "Partager",
+            "Voir la page",
+            "Voir le tableau",
+            "Voir l'image",
+            "Informations",
+            "Conditions d'utilisation",
+            "Crédits et licences",
+            "Répéter",
+            "Supprimer l'avatar",
+            "Choisir le backend",
+            "Choisir le mmproj",
+            "Retirer le mmproj de l'app",
+            "Désolé, ce modèle n'est pas pour le CPU",
+            "Déplacer",
+            "Dessiner",
+            "Détourer",
+            "Annuler",
+            "Rétablir",
+            "Vision de l'avatar",
+            "Pinceau",
+            "Taille",
+            "Dureté",
+            "Son de puissance",
+            "Mes personnalités",
+            "Nom du personnage ou de la personne",
+            "Enregistrer en carte",
+            "Cartes enregistrées",
+            "En cours d'utilisation",
+            "Tu n'as pas encore de personnalités enregistrées",
+            "Supprimer cette personnalité ?",
+            "Mode sombre",
+            "Activé",
+            "Désactivé",
+            "Utiliser les paramètres du système",
+            "Nouvelle image",
+            "Peindre",
+            "Nouvelle carte",
+            "Fais glisser ton doigt pour voir tout le texte. Touche TERMINÉ pour enregistrer.",
+            "Modifier la personnalité et nouvelle carte",
+            "Après avoir écrit ou collé ta nouvelle personnalité, touche TERMINÉ : elle sera enregistrée comme carte et choisie automatiquement.",
+            "Après avoir corrigé la carte, touche TERMINÉ : elle sera seulement enregistrée. Pour l’utiliser, touche UTILISER.",
+            "Effets spéciaux",
+            "Aura",
+            "Mouvement des cheveux",
+            "Aura dorée",
+            "Aura bleue",
+            "Aura rouge",
+            "Aura bleu ciel",
+            "Aura violette",
+            "Aura rose",
+            "Aura lilas",
+            "Aura blanche",
+            "Aura éclair",
+            "Aura clignotante",
+            "Aura palpitante",
+            "Aura de feu",
+            "Son de tonnerre",
+            "Son d'électricité",
+            "Fréquence de l'avatar",
+            "Avatar adaptatif à 120 Hz",
+            "Avatar standard à 60 Hz",
+            "L'IA reconnaît l'utilisateur",
+            "Visage de face",
+            "Profil droit",
+            "Profil gauche",
+            "Photo enregistrée et utilisée.",
+            "Autorisez la caméra et touchez à nouveau le bouton.",
+            "Préparation de la reconnaissance de ton visage (la première fois, une IA d'environ 66 Mo est téléchargée)…",
+            "C'est prêt : Cumulus te reconnaît maintenant à ton visage.",
+            "Je n'ai pas pu télécharger l'IA qui reconnaît ton visage. Vérifie internet et reprends une photo.",
+            "Je n'ai pas trouvé ton visage sur les photos de face. Reprends-les avec une bonne lumière.",
+            "Il manque des photos : prends les 6 (4 de face, 1 de profil droit et 1 de profil gauche).",
+            "Ton avatar et avatars personnalisés",
+            "Voix ElevenLabs, voix ONNX et voix personnalisées",
+            "Clé API ElevenLabs, enregistrement vocal et voix MP3",
+            "Reconnaître mon visage"
+        ),
+        "it" to listOf(
+            "I tuoi progetti di app",
+            "Elimina progetto",
+            "Apri progetto",
+            "Voce MP3",
+            "Modifica",
+            "Chat sullo schermo",
+            "Modifica personalità",
+            "Scorri con il dito per vedere tutto il testo. Tocca FATTO e poi SALVA.",
+            "Questo pulsante serve solo per caricare la tua voce in MP3, una voce autorizzata o di cui possiedi i diritti. Le voci che carichi sono sotto la tua responsabilità.",
+            "Accetto",
+            "Accetta",
+            "Quello del modello (consigliato)",
+            "Quello del GGUF (consigliato)",
+            "Automatico (il GGUF non ha un modello di chat)",
+            "Automatico: {0} (il GGUF non ha un modello di chat)",
+            "Segnala risposta",
+            "Offensivo, odio o discriminazione",
+            "Sessuale o inappropriato",
+            "Violento o pericoloso",
+            "Informazione falsa o ingannevole",
+            "Altro motivo",
+            "Invia segnalazione",
+            "Grazie per averci avvisato",
+            "La tua segnalazione ci aiuta a migliorare le risposte di Cumulus IA. La bandierina è diventata rossa così sai che l'hai già segnalata.",
+            "Progetto {0}",
+            "Vuoi eliminare il tuo progetto?\n\nSe lo elimini non si torna indietro: il progetto verrà eliminato completamente.",
+            "Salvata il {0}",
+            "Cosa vuoi fare con questa chat?",
+            "Aggiornamento di codice e programmazione",
+            "▶ Ascolta",
+            "⏹ Ferma",
+            "Vedi la tua app e pagina web",
+            "Vedi la tua app Kotlin",
+            "Avatar",
+            "Immagine avatar",
+            "Testo della chat in bianco",
+            "Se il testo della chat appare nero, qui puoi renderlo bianco.",
+            "Avatar salvati",
+            "IA nel cloud",
+            "Usa l'IA nel cloud",
+            "Personalizzato",
+            "Indirizzo del servizio (URL)",
+            "Chiave (API key)",
+            "Chiave salvata",
+            "Scegli modello",
+            "Modello",
+            "Scrivi a mano",
+            "Codice",
+            "Dati",
+            "Tabella",
+            "Pagina web",
+            "Testo",
+            "Comandi",
+            "Immagine SVG",
+            "Copia",
+            "Scarica",
+            "Condividi",
+            "Vedi pagina",
+            "Vedi tabella",
+            "Vedi immagine",
+            "Informazioni",
+            "Termini di utilizzo",
+            "Crediti e licenze",
+            "Ripeti",
+            "Elimina avatar",
+            "Seleziona backend",
+            "Seleziona mmproj",
+            "Rimuovi mmproj dall'app",
+            "Spiacente, questo modello non è per la CPU",
+            "Sposta",
+            "Disegna",
+            "Ritaglia",
+            "Annulla",
+            "Ripeti",
+            "Visione dell'avatar",
+            "Pennello",
+            "Dimensione",
+            "Durezza",
+            "Suono di potenza",
+            "Le mie personalità",
+            "Nome del personaggio o della persona",
+            "Salva come scheda",
+            "Schede salvate",
+            "In uso",
+            "Non hai ancora personalità salvate",
+            "Eliminare questa personalità?",
+            "Modalità scura",
+            "Attivata",
+            "Disattivata",
+            "Usa impostazioni di sistema",
+            "Nuova immagine",
+            "Dipingi",
+            "Nuova scheda",
+            "Scorri con il dito per vedere tutto il testo. Tocca FATTO per salvare.",
+            "Modifica personalità e nuova scheda",
+            "Dopo aver scritto o incollato la nuova personalità, tocca FATTO: verrà salvata come scheda e scelta automaticamente.",
+            "Dopo aver corretto la scheda, tocca FATTO: verrà solo salvata. Per usarla, tocca USA.",
+            "Effetti speciali",
+            "Aura",
+            "Movimento dei capelli",
+            "Aura dorata",
+            "Aura blu",
+            "Aura rossa",
+            "Aura azzurra",
+            "Aura viola",
+            "Aura rosa",
+            "Aura lilla",
+            "Aura bianca",
+            "Aura fulmine",
+            "Aura lampeggiante",
+            "Aura pulsante",
+            "Aura di fuoco",
+            "Suono di tuono",
+            "Suono di elettricità",
+            "Frequenza dell'avatar",
+            "Avatar adattivo a 120 Hz",
+            "Avatar standard a 60 Hz",
+            "L'IA riconosce l'utente",
+            "Viso frontale",
+            "Profilo destro",
+            "Profilo sinistro",
+            "Foto salvata e in uso.",
+            "Consenti la fotocamera e tocca di nuovo il pulsante.",
+            "Preparo il riconoscimento del tuo volto (la prima volta si scarica un'IA di circa 66 MB)…",
+            "Fatto: Cumulus ora ti riconosce dal volto.",
+            "Non sono riuscito a scaricare l'IA che riconosce il tuo volto. Controlla internet e scatta di nuovo una foto.",
+            "Non ho trovato il tuo volto nelle foto frontali. Rifalle con una buona luce.",
+            "Mancano foto: scatta tutte e 6 (4 frontali, 1 di profilo destro e 1 di profilo sinistro).",
+            "Il tuo avatar e avatar personalizzati",
+            "Voci ElevenLabs, voci ONNX e voci personalizzate",
+            "Chiave API ElevenLabs, registrazione vocale e voce MP3",
+            "Riconosci il mio volto"
+        ),
+        "id" to listOf(
+            "Proyek aplikasimu",
+            "Hapus proyek",
+            "Buka proyek",
+            "Suara MP3",
+            "Edit",
+            "Obrolan di layar",
+            "Edit kepribadian",
+            "Geser dengan jari untuk melihat seluruh teks. Ketuk SELESAI lalu SIMPAN.",
+            "Tombol ini hanya untuk mengunggah suaramu sendiri dalam MP3, suara yang diizinkan, atau suara yang haknya kamu miliki. Suara yang kamu unggah menjadi tanggung jawabmu.",
+            "Saya setuju",
+            "Terima",
+            "Bawaan model (disarankan)",
+            "Bawaan GGUF (disarankan)",
+            "Otomatis (GGUF tidak memiliki templat)",
+            "Otomatis: {0} (GGUF tidak memiliki templat)",
+            "Laporkan jawaban",
+            "Menyinggung, kebencian, atau diskriminasi",
+            "Seksual atau tidak pantas",
+            "Kekerasan atau berbahaya",
+            "Informasi palsu atau menyesatkan",
+            "Alasan lain",
+            "Kirim laporan",
+            "Terima kasih sudah memberi tahu",
+            "Laporanmu membantu kami memperbaiki jawaban Cumulus IA. Bendera kecil sudah berubah merah agar kamu tahu sudah melaporkannya.",
+            "Proyek {0}",
+            "Ingin menghapus proyekmu?\n\nJika dihapus, tidak bisa dikembalikan: proyek akan dihapus seluruhnya.",
+            "Disimpan pada {0}",
+            "Apa yang ingin kamu lakukan dengan obrolan ini?",
+            "Pembaruan kode dan pemrograman",
+            "▶ Coba",
+            "⏹ Berhenti",
+            "Lihat aplikasi dan halaman webmu",
+            "Lihat aplikasi Kotlin-mu",
+            "Avatar",
+            "Gambar avatar",
+            "Teks obrolan putih",
+            "Jika teks obrolan tampak hitam, kamu bisa mengubahnya menjadi putih di sini.",
+            "Avatar tersimpan",
+            "AI di cloud",
+            "Gunakan AI di cloud",
+            "Kustom",
+            "Alamat layanan (URL)",
+            "Kunci (API key)",
+            "Kunci tersimpan",
+            "Pilih model",
+            "Model",
+            "Ketik manual",
+            "Kode",
+            "Data",
+            "Tabel",
+            "Halaman web",
+            "Teks",
+            "Perintah",
+            "Gambar SVG",
+            "Salin",
+            "Unduh",
+            "Bagikan",
+            "Lihat halaman",
+            "Lihat tabel",
+            "Lihat gambar",
+            "Informasi",
+            "Ketentuan penggunaan",
+            "Kredit dan lisensi",
+            "Ulangi",
+            "Hapus avatar",
+            "Pilih backend",
+            "Pilih mmproj",
+            "Hapus mmproj dari aplikasi",
+            "Maaf, model ini bukan untuk CPU",
+            "Geser",
+            "Gambar",
+            "Potong",
+            "Urungkan",
+            "Ulangi",
+            "Penglihatan avatar",
+            "Kuas",
+            "Ukuran",
+            "Kekerasan",
+            "Suara kekuatan",
+            "Kepribadianku",
+            "Nama karakter atau orang",
+            "Simpan sebagai kartu",
+            "Kartu tersimpan",
+            "Sedang dipakai",
+            "Kamu belum punya kepribadian tersimpan",
+            "Hapus kepribadian ini?",
+            "Mode gelap",
+            "Aktif",
+            "Nonaktif",
+            "Gunakan pengaturan sistem",
+            "Gambar baru",
+            "Cat",
+            "Kartu baru",
+            "Geser dengan jari untuk melihat seluruh teks. Ketuk SELESAI untuk menyimpan.",
+            "Edit kepribadian dan kartu baru",
+            "Setelah menulis atau menempel kepribadian baru, ketuk SELESAI: akan disimpan sebagai kartu dan dipilih otomatis.",
+            "Setelah memperbaiki kartu, ketuk SELESAI: hanya akan disimpan. Untuk memakainya, ketuk tombol GUNAKAN.",
+            "Efek khusus",
+            "Aura",
+            "Gerakan rambut",
+            "Aura emas",
+            "Aura biru",
+            "Aura merah",
+            "Aura biru muda",
+            "Aura ungu",
+            "Aura merah muda",
+            "Aura lila",
+            "Aura putih",
+            "Aura petir",
+            "Aura berkedip",
+            "Aura berdenyut",
+            "Aura api",
+            "Suara guntur",
+            "Suara listrik",
+            "Frekuensi avatar",
+            "Avatar adaptif 120 Hz",
+            "Avatar standar 60 Hz",
+            "AI mengenali pengguna",
+            "Wajah depan",
+            "Profil kanan",
+            "Profil kiri",
+            "Foto tersimpan dan sedang dipakai.",
+            "Izinkan kamera lalu ketuk tombolnya lagi.",
+            "Menyiapkan pengenalan wajahmu (pertama kali akan diunduh AI sekitar 66 MB)…",
+            "Selesai: Cumulus sekarang mengenalimu dari wajahmu.",
+            "Aku tidak bisa mengunduh AI pengenal wajah. Periksa internet lalu ambil foto lagi.",
+            "Aku tidak menemukan wajahmu di foto depan. Ambil lagi dengan cahaya yang baik.",
+            "Foto kurang: ambil keenamnya (4 depan, 1 profil kanan, dan 1 profil kiri).",
+            "Avatarmu dan avatar kustom",
+            "Suara ElevenLabs, suara ONNX, dan suara kustom",
+            "Kunci API ElevenLabs, rekaman suara, dan suara MP3",
+            "Kenali wajahku"
+        ),
+        "vi" to listOf(
+            "Dự án ứng dụng của bạn",
+            "Xóa dự án",
+            "Mở dự án",
+            "Giọng MP3",
+            "Chỉnh sửa",
+            "Trò chuyện trên màn hình",
+            "Chỉnh sửa tính cách",
+            "Vuốt để xem toàn bộ văn bản. Chạm XONG rồi LƯU.",
+            "Nút này chỉ dùng để tải lên giọng nói MP3 của chính bạn, giọng nói được cho phép hoặc giọng nói bạn có quyền sở hữu. Bạn chịu trách nhiệm về các giọng nói đã tải lên.",
+            "Tôi đồng ý",
+            "Chấp nhận",
+            "Mẫu riêng của mô hình (khuyên dùng)",
+            "Mẫu riêng của GGUF (khuyên dùng)",
+            "Tự động (GGUF không có mẫu)",
+            "Tự động: {0} (GGUF không có mẫu)",
+            "Báo cáo câu trả lời",
+            "Xúc phạm, thù ghét hoặc phân biệt đối xử",
+            "Tình dục hoặc không phù hợp",
+            "Bạo lực hoặc nguy hiểm",
+            "Thông tin sai hoặc gây hiểu lầm",
+            "Lý do khác",
+            "Gửi báo cáo",
+            "Cảm ơn bạn đã báo",
+            "Báo cáo của bạn giúp chúng tôi cải thiện câu trả lời của Cumulus IA. Lá cờ nhỏ đã chuyển sang màu đỏ để bạn biết mình đã báo cáo.",
+            "Dự án {0}",
+            "Bạn muốn xóa dự án của mình?\n\nNếu xóa thì không thể khôi phục: dự án sẽ bị xóa hoàn toàn.",
+            "Đã lưu lúc {0}",
+            "Bạn muốn làm gì với cuộc trò chuyện này?",
+            "Cập nhật mã và lập trình",
+            "▶ Nghe thử",
+            "⏹ Dừng",
+            "Xem ứng dụng và trang web của bạn",
+            "Xem ứng dụng Kotlin của bạn",
+            "Hình đại diện",
+            "Ảnh đại diện AI",
+            "Chữ trò chuyện màu trắng",
+            "Nếu chữ trò chuyện hiển thị màu đen, bạn có thể đổi sang màu trắng tại đây.",
+            "Hình đại diện đã lưu",
+            "AI đám mây",
+            "Dùng AI đám mây",
+            "Tùy chỉnh",
+            "Địa chỉ dịch vụ (URL)",
+            "Khóa (API key)",
+            "Đã lưu khóa",
+            "Chọn mô hình",
+            "Mô hình",
+            "Nhập thủ công",
+            "Mã",
+            "Dữ liệu",
+            "Bảng",
+            "Trang web",
+            "Văn bản",
+            "Lệnh",
+            "Ảnh SVG",
+            "Sao chép",
+            "Tải xuống",
+            "Chia sẻ",
+            "Xem trang",
+            "Xem bảng",
+            "Xem ảnh",
+            "Thông tin",
+            "Điều khoản sử dụng",
+            "Ghi công và giấy phép",
+            "Lặp lại",
+            "Xóa avatar",
+            "Chọn backend",
+            "Chọn mmproj",
+            "Gỡ mmproj khỏi ứng dụng",
+            "Xin lỗi, mô hình này không dành cho CPU",
+            "Di chuyển",
+            "Vẽ",
+            "Cắt nền",
+            "Hoàn tác",
+            "Làm lại",
+            "Thị giác avatar",
+            "Cọ",
+            "Kích thước",
+            "Độ cứng",
+            "Âm thanh sức mạnh",
+            "Tính cách của tôi",
+            "Tên nhân vật hoặc người",
+            "Lưu thành thẻ",
+            "Thẻ đã lưu",
+            "Đang dùng",
+            "Bạn chưa có tính cách nào được lưu",
+            "Xóa tính cách này?",
+            "Chế độ tối",
+            "Bật",
+            "Tắt",
+            "Dùng cài đặt hệ thống",
+            "Ảnh mới",
+            "Tô màu",
+            "Thẻ mới",
+            "Vuốt để xem toàn bộ văn bản. Chạm XONG để lưu.",
+            "Sửa tính cách và thẻ mới",
+            "Sau khi viết hoặc dán tính cách mới, chạm XONG: nó sẽ được lưu thành thẻ và tự động được chọn.",
+            "Sau khi sửa thẻ, chạm XONG: thẻ chỉ được lưu. Để dùng, hãy chạm nút DÙNG.",
+            "Hiệu ứng đặc biệt",
+            "Hào quang",
+            "Chuyển động tóc",
+            "Hào quang vàng",
+            "Hào quang xanh dương",
+            "Hào quang đỏ",
+            "Hào quang xanh nhạt",
+            "Hào quang tím",
+            "Hào quang hồng",
+            "Hào quang tím nhạt",
+            "Hào quang trắng",
+            "Hào quang sấm sét",
+            "Hào quang chớp nháy",
+            "Hào quang nhịp đập",
+            "Hào quang lửa",
+            "Âm thanh sấm",
+            "Âm thanh điện",
+            "Tần số avatar",
+            "Avatar thích ứng 120 Hz",
+            "Avatar tiêu chuẩn 60 Hz",
+            "AI nhận ra người dùng",
+            "Mặt chính diện",
+            "Mặt nghiêng phải",
+            "Mặt nghiêng trái",
+            "Ảnh đã lưu và đang dùng.",
+            "Hãy cho phép máy ảnh rồi chạm lại nút.",
+            "Đang chuẩn bị nhận diện khuôn mặt của bạn (lần đầu sẽ tải một AI khoảng 66 MB)…",
+            "Xong: giờ Cumulus đã nhận ra bạn qua khuôn mặt.",
+            "Tôi không tải được AI nhận diện khuôn mặt. Hãy kiểm tra internet và chụp lại một ảnh.",
+            "Tôi không tìm thấy khuôn mặt bạn trong ảnh chính diện. Hãy chụp lại với ánh sáng tốt.",
+            "Thiếu ảnh: hãy chụp đủ 6 ảnh (4 chính diện, 1 nghiêng phải và 1 nghiêng trái).",
+            "Avatar của bạn và avatar tùy chỉnh",
+            "Giọng ElevenLabs, giọng ONNX và giọng tùy chỉnh",
+            "Khóa API ElevenLabs, ghi âm giọng nói và giọng MP3",
+            "Nhận diện khuôn mặt tôi"
+        ),
+        "th" to listOf(
+            "โปรเจกต์แอปของคุณ",
+            "ลบโปรเจกต์",
+            "เปิดโปรเจกต์",
+            "เสียง MP3",
+            "แก้ไข",
+            "แชทบนหน้าจอ",
+            "แก้ไขบุคลิก",
+            "เลื่อนนิ้วเพื่อดูข้อความทั้งหมด แตะ เสร็จสิ้น แล้วแตะ บันทึก",
+            "ปุ่มนี้ใช้สำหรับอัปโหลดเสียงของคุณเองเป็น MP3 เสียงที่ได้รับอนุญาต หรือเสียงที่คุณเป็นเจ้าของสิทธิ์เท่านั้น คุณต้องรับผิดชอบต่อเสียงที่อัปโหลด",
+            "ฉันยอมรับ",
+            "ยอมรับ",
+            "เทมเพลตของโมเดลเอง (แนะนำ)",
+            "เทมเพลตของ GGUF เอง (แนะนำ)",
+            "อัตโนมัติ (GGUF ไม่มีเทมเพลต)",
+            "อัตโนมัติ: {0} (GGUF ไม่มีเทมเพลต)",
+            "รายงานคำตอบ",
+            "ไม่เหมาะสม ความเกลียดชัง หรือการเลือกปฏิบัติ",
+            "เรื่องทางเพศหรือไม่เหมาะสม",
+            "ความรุนแรงหรืออันตราย",
+            "ข้อมูลเท็จหรือทำให้เข้าใจผิด",
+            "เหตุผลอื่น",
+            "ส่งรายงาน",
+            "ขอบคุณที่แจ้งให้ทราบ",
+            "รายงานของคุณช่วยให้เราปรับปรุงคำตอบของ Cumulus IA ธงเล็กเปลี่ยนเป็นสีแดงแล้วเพื่อให้คุณรู้ว่ารายงานไปแล้ว",
+            "โปรเจกต์ {0}",
+            "ต้องการลบโปรเจกต์ของคุณหรือไม่?\n\nถ้าลบแล้วจะกู้คืนไม่ได้: โปรเจกต์จะถูกลบทั้งหมด",
+            "บันทึกเมื่อ {0}",
+            "คุณต้องการทำอะไรกับแชทนี้?",
+            "อัปเดตโค้ดและการเขียนโปรแกรม",
+            "▶ ลองฟัง",
+            "⏹ หยุด",
+            "ดูแอปและหน้าเว็บของคุณ",
+            "ดูแอป Kotlin ของคุณ",
+            "อวาตาร์",
+            "รูปอวาตาร์",
+            "ตัวอักษรแชทสีขาว",
+            "หากตัวอักษรแชทเป็นสีดำ คุณเปลี่ยนเป็นสีขาวได้ที่นี่",
+            "อวาตาร์ที่บันทึกไว้",
+            "AI บนคลาวด์",
+            "ใช้ AI บนคลาวด์",
+            "กำหนดเอง",
+            "ที่อยู่บริการ (URL)",
+            "คีย์ (API key)",
+            "บันทึกคีย์แล้ว",
+            "เลือกโมเดล",
+            "โมเดล",
+            "พิมพ์เอง",
+            "โค้ด",
+            "ข้อมูล",
+            "ตาราง",
+            "หน้าเว็บ",
+            "ข้อความ",
+            "คำสั่ง",
+            "ภาพ SVG",
+            "คัดลอก",
+            "ดาวน์โหลด",
+            "แชร์",
+            "ดูหน้าเว็บ",
+            "ดูตาราง",
+            "ดูภาพ",
+            "ข้อมูล",
+            "ข้อกำหนดการใช้งาน",
+            "เครดิตและสัญญาอนุญาต",
+            "ทำซ้ำ",
+            "ลบอวาตาร์",
+            "เลือกแบ็กเอนด์",
+            "เลือก mmproj",
+            "ลบ mmproj ออกจากแอป",
+            "ขออภัย โมเดลนี้ไม่ได้ใช้กับ CPU",
+            "ย้าย",
+            "วาด",
+            "ตัดภาพ",
+            "เลิกทำ",
+            "ทำซ้ำ",
+            "การมองเห็นของอวาตาร์",
+            "แปรง",
+            "ขนาด",
+            "ความแข็ง",
+            "เสียงพลัง",
+            "บุคลิกของฉัน",
+            "ชื่อตัวละครหรือบุคคล",
+            "บันทึกเป็นการ์ด",
+            "การ์ดที่บันทึกไว้",
+            "กำลังใช้",
+            "คุณยังไม่มีบุคลิกที่บันทึกไว้",
+            "ลบบุคลิกนี้ไหม?",
+            "โหมดมืด",
+            "เปิด",
+            "ปิด",
+            "ใช้การตั้งค่าระบบ",
+            "รูปใหม่",
+            "ระบาย",
+            "การ์ดใหม่",
+            "เลื่อนนิ้วเพื่อดูข้อความทั้งหมด แตะ เสร็จสิ้น เพื่อบันทึก",
+            "แก้ไขบุคลิกและการ์ดใหม่",
+            "หลังจากเขียนหรือวางบุคลิกใหม่ แตะ เสร็จสิ้น แล้วจะถูกบันทึกเป็นการ์ดและเลือกใช้โดยอัตโนมัติ",
+            "หลังจากแก้ไขการ์ด แตะ เสร็จสิ้น จะบันทึกไว้เท่านั้น หากต้องการใช้ ให้แตะปุ่ม ใช้",
+            "เอฟเฟกต์พิเศษ",
+            "ออร่า",
+            "การเคลื่อนไหวของผม",
+            "ออร่าสีทอง",
+            "ออร่าสีน้ำเงิน",
+            "ออร่าสีแดง",
+            "ออร่าสีฟ้า",
+            "ออร่าสีม่วง",
+            "ออร่าสีชมพู",
+            "ออร่าสีม่วงอ่อน",
+            "ออร่าสีขาว",
+            "ออร่าสายฟ้า",
+            "ออร่ากะพริบ",
+            "ออร่าเต้นเป็นจังหวะ",
+            "ออร่าไฟ",
+            "เสียงฟ้าร้อง",
+            "เสียงไฟฟ้า",
+            "อัตรารีเฟรชอวตาร",
+            "อวตารแบบปรับได้ 120 Hz",
+            "อวตารมาตรฐาน 60 Hz",
+            "AI จดจำผู้ใช้",
+            "ใบหน้าด้านหน้า",
+            "ด้านข้างขวา",
+            "ด้านข้างซ้าย",
+            "บันทึกรูปแล้วและกำลังใช้งาน",
+            "อนุญาตกล้อง แล้วแตะปุ่มอีกครั้ง",
+            "กำลังเตรียมการจดจำใบหน้าของคุณ (ครั้งแรกจะดาวน์โหลด AI ขนาดประมาณ 66 MB)…",
+            "เสร็จแล้ว: ตอนนี้ Cumulus จำคุณได้จากใบหน้า",
+            "ดาวน์โหลด AI จดจำใบหน้าไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วถ่ายรูปอีกครั้ง",
+            "ไม่พบใบหน้าของคุณในรูปหน้าตรง ถ่ายใหม่ในที่ที่มีแสงดี",
+            "รูปยังไม่ครบ: ถ่ายให้ครบ 6 รูป (หน้าตรง 4 รูป ด้านขวา 1 รูป และด้านซ้าย 1 รูป)",
+            "อวาตาร์ของคุณและอวาตาร์ที่กำหนดเอง",
+            "เสียง ElevenLabs เสียง ONNX และเสียงที่กำหนดเอง",
+            "คีย์ API ของ ElevenLabs การบันทึกเสียง และเสียง MP3",
+            "จดจำใบหน้าของฉัน"
+        ),
+        "ar" to listOf(
+            "مشاريع تطبيقاتك",
+            "حذف المشروع",
+            "فتح المشروع",
+            "صوت MP3",
+            "تعديل",
+            "الدردشة على الشاشة",
+            "تعديل الشخصية",
+            "اسحب بإصبعك لرؤية النص كاملًا. اضغط تم ثم حفظ.",
+            "هذا الزر مخصص فقط لرفع صوتك أنت بصيغة MP3، أو صوت مُصرَّح به، أو صوت تملك حقوقه. أنت مسؤول عن الأصوات التي ترفعها.",
+            "أوافق",
+            "قبول",
+            "قالب النموذج نفسه (موصى به)",
+            "قالب GGUF نفسه (موصى به)",
+            "تلقائي (لا يحتوي GGUF على قالب)",
+            "تلقائي: {0} (لا يحتوي GGUF على قالب)",
+            "الإبلاغ عن الإجابة",
+            "مسيء أو كراهية أو تمييز",
+            "جنسي أو غير لائق",
+            "عنيف أو خطير",
+            "معلومات خاطئة أو مضللة",
+            "سبب آخر",
+            "إرسال البلاغ",
+            "شكرًا لإبلاغنا",
+            "بلاغك يساعدنا على تحسين إجابات Cumulus IA. أصبح العلم الصغير أحمر حتى تعرف أنك أبلغت عنه بالفعل.",
+            "المشروع {0}",
+            "هل تريد حذف مشروعك؟\n\nإذا حذفته فلا يمكن التراجع: سيُحذف المشروع بالكامل.",
+            "حُفظت في {0}",
+            "ماذا تريد أن تفعل بهذه الدردشة؟",
+            "تحديث الأكواد والبرمجة",
+            "▶ استمع",
+            "⏹ إيقاف",
+            "اعرض تطبيقك وصفحة الويب",
+            "اعرض تطبيق Kotlin الخاص بك",
+            "الصورة الرمزية",
+            "صورة الأفاتار",
+            "نص الدردشة باللون الأبيض",
+            "إذا ظهر نص الدردشة باللون الأسود، يمكنك تغييره إلى الأبيض هنا.",
+            "الصور الرمزية المحفوظة",
+            "الذكاء الاصطناعي السحابي",
+            "استخدام الذكاء الاصطناعي السحابي",
+            "مخصص",
+            "عنوان الخدمة (URL)",
+            "المفتاح (API key)",
+            "تم حفظ المفتاح",
+            "اختيار النموذج",
+            "النموذج",
+            "الكتابة يدويًا",
+            "الكود",
+            "البيانات",
+            "جدول",
+            "صفحة ويب",
+            "نص",
+            "الأوامر",
+            "صورة SVG",
+            "نسخ",
+            "تنزيل",
+            "مشاركة",
+            "عرض الصفحة",
+            "عرض الجدول",
+            "عرض الصورة",
+            "معلومات",
+            "شروط الاستخدام",
+            "الشكر والتراخيص",
+            "تكرار",
+            "حذف الصورة الرمزية",
+            "اختيار الواجهة الخلفية",
+            "اختيار mmproj",
+            "إزالة mmproj من التطبيق",
+            "عذرًا، هذا النموذج ليس للمعالج المركزي CPU",
+            "تحريك",
+            "رسم",
+            "قص",
+            "تراجع",
+            "إعادة",
+            "رؤية الصورة الرمزية",
+            "فرشاة",
+            "الحجم",
+            "الصلابة",
+            "صوت القوة",
+            "شخصياتي",
+            "اسم الشخصية أو الشخص",
+            "حفظ كبطاقة",
+            "البطاقات المحفوظة",
+            "قيد الاستخدام",
+            "ليس لديك شخصيات محفوظة بعد",
+            "حذف هذه الشخصية؟",
+            "الوضع الداكن",
+            "مفعّل",
+            "معطّل",
+            "استخدام إعدادات النظام",
+            "صورة جديدة",
+            "تلوين",
+            "بطاقة جديدة",
+            "اسحب بإصبعك لرؤية النص كاملًا. اضغط تم لحفظه.",
+            "تعديل الشخصية وبطاقة جديدة",
+            "بعد كتابة شخصيتك الجديدة أو لصقها، اضغط تم وستُحفظ كبطاقة وتُختار تلقائيًا.",
+            "بعد تصحيح البطاقة، اضغط تم وستُحفظ فقط. لاستخدامها، اضغط زر استخدام.",
+            "مؤثرات خاصة",
+            "هالة",
+            "حركة الشعر",
+            "هالة ذهبية",
+            "هالة زرقاء",
+            "هالة حمراء",
+            "هالة سماوية",
+            "هالة بنفسجية",
+            "هالة وردية",
+            "هالة ليلكية",
+            "هالة بيضاء",
+            "هالة البرق",
+            "هالة وامضة",
+            "هالة نابضة",
+            "هالة نارية",
+            "صوت الرعد",
+            "صوت الكهرباء",
+            "تردد الصورة الرمزية",
+            "صورة رمزية تكيفية بتردد 120 هرتز",
+            "صورة رمزية قياسية بتردد 60 هرتز",
+            "الذكاء الاصطناعي يتعرّف على المستخدم",
+            "الوجه من الأمام",
+            "الجانب الأيمن",
+            "الجانب الأيسر",
+            "تم حفظ الصورة وهي قيد الاستخدام.",
+            "اسمح بالكاميرا ثم اضغط الزر مرة أخرى.",
+            "جارٍ تجهيز التعرف على وجهك (في المرة الأولى يتم تنزيل ذكاء اصطناعي بحجم 66 ميغابايت تقريبًا)…",
+            "تم: أصبح Cumulus يتعرف عليك من وجهك.",
+            "لم أتمكن من تنزيل الذكاء الاصطناعي الذي يتعرف على وجهك. تحقق من الإنترنت والتقط صورة مرة أخرى.",
+            "لم أجد وجهك في الصور الأمامية. التقطها مرة أخرى في إضاءة جيدة.",
+            "الصور ناقصة: التقط الصور الست كلها (4 من الأمام، 1 من الجانب الأيمن، 1 من الجانب الأيسر).",
+            "صورتك الرمزية والصور الرمزية المخصصة",
+            "أصوات ElevenLabs وأصوات ONNX والأصوات المخصصة",
+            "مفتاح API لـ ElevenLabs وتسجيل الصوت وصوت MP3",
+            "التعرف على وجهي"
+        ),
+    )
+
+    private val translations = mapOf(
+        "en" to mapOf(
+            "Pregúntame..." to "Ask me...",
+            "SERVICIOS Y CONTROL" to "SERVICES AND CONTROL",
+            "Activar Burbuja" to "Enable Floating Bubble",
+            "Elegir imagen personalizada" to "Choose custom image",
+            "Elegir voz TTS" to "Choose TTS voice",
+            "Activar Accesibilidad" to "Enable Accessibility",
+            "Dar permisos de apps" to "Grant app permissions",
+            "Bloquear apps" to "Block apps",
+            "Guardar API Key" to "Save API key",
+            "Grabar" to "Record", "Probar" to "Test", "Usar" to "Use", "Eliminar" to "Delete",
+            "CONFIGURACIÓN PRINCIPAL" to "MAIN SETTINGS",
+            "Motor IA, personalidad, nombres e idiomas" to "AI engine, personality, names and languages",
+            "MODELOS GGUF" to "GGUF MODELS", "VOCES TTS" to "TTS VOICES",
+            "Nombre del modelo" to "Model name", "Cargar modelo" to "Load model",
+            "CARGAR MODELO" to "LOAD MODEL", "MODELO ACTIVO" to "MODEL ACTIVE",
+            "¡Hola! ¿En qué te puedo ayudar?" to "Hello! How can I help you?",
+            "Modelo: Ninguno" to "Model: None", "CONFIGURACIÓN DEL MODELO" to "MODEL SETTINGS",
+            "CONTEXTO" to "CONTEXT", "TEMPERATURA" to "TEMPERATURE",
+            "PERSONALIDAD" to "PERSONALITY", "Asistente General" to "General Assistant",
+            "Programador" to "Programmer", "Creativo" to "Creative",
+            "Escribe tu personalidad..." to "Describe your personality...",
+            "Guardar" to "Save", "CONFIGURACIÓN DE NOMBRES" to "NAME SETTINGS",
+            "Nombre de la IA" to "AI name", "Guardar nombre" to "Save name",
+            "Nombre del usuario" to "User name", "Guardar usuario" to "Save user",
+            "IDIOMAS" to "LANGUAGES", "Descargando..." to "Downloading...",
+            "Preparando descarga..." to "Preparing download...", "⏸ Pausar" to "⏸ Pause",
+            "▶ Reanudar" to "▶ Resume", "🗑 Eliminar" to "🗑 Delete"
+        ),
+        "pt" to mapOf(
+            "Pregúntame..." to "Pergunte-me...",
+            "SERVICIOS Y CONTROL" to "SERVIÇOS E CONTROLE",
+            "Activar Burbuja" to "Ativar bolha flutuante",
+            "Elegir imagen personalizada" to "Escolher imagem personalizada",
+            "Elegir voz TTS" to "Escolher voz TTS",
+            "Activar Accesibilidad" to "Ativar acessibilidade",
+            "Dar permisos de apps" to "Dar permissões aos aplicativos",
+            "Bloquear apps" to "Bloquear aplicativos",
+            "Guardar API Key" to "Salvar chave API",
+            "Grabar" to "Gravar", "Probar" to "Testar", "Usar" to "Usar", "Eliminar" to "Excluir",
+            "CONFIGURACIÓN PRINCIPAL" to "CONFIGURAÇÃO PRINCIPAL",
+            "Motor IA, personalidad, nombres e idiomas" to "Motor de IA, personalidade, nomes e idiomas",
+            "MODELOS GGUF" to "MODELOS GGUF", "VOCES TTS" to "VOZES TTS",
+            "Nombre del modelo" to "Nome do modelo", "Cargar modelo" to "Carregar modelo",
+            "CARGAR MODELO" to "CARREGAR MODELO", "MODELO ACTIVO" to "MODELO ATIVO",
+            "¡Hola! ¿En qué te puedo ayudar?" to "Olá! Como posso ajudar?",
+            "Modelo: Ninguno" to "Modelo: Nenhum", "CONFIGURACIÓN DEL MODELO" to "CONFIGURAÇÃO DO MODELO",
+            "CONTEXTO" to "CONTEXTO", "TEMPERATURA" to "TEMPERATURA",
+            "PERSONALIDAD" to "PERSONALIDADE", "Asistente General" to "Assistente geral",
+            "Programador" to "Programador", "Creativo" to "Criativo",
+            "Escribe tu personalidad..." to "Descreva sua personalidade...",
+            "Guardar" to "Salvar", "CONFIGURACIÓN DE NOMBRES" to "CONFIGURAÇÃO DE NOMES",
+            "Nombre de la IA" to "Nome da IA", "Guardar nombre" to "Salvar nome",
+            "Nombre del usuario" to "Nome do usuário", "Guardar usuario" to "Salvar usuário",
+            "IDIOMAS" to "IDIOMAS", "Descargando..." to "Baixando...",
+            "Preparando descarga..." to "Preparando download...", "⏸ Pausar" to "⏸ Pausar",
+            "▶ Reanudar" to "▶ Retomar", "🗑 Eliminar" to "🗑 Excluir"
+        ),
+        "ru" to mapOf(
+            "Pregúntame..." to "Спросите меня...",
+            "SERVICIOS Y CONTROL" to "СЕРВИСЫ И УПРАВЛЕНИЕ",
+            "Activar Burbuja" to "Включить плавающий пузырь",
+            "Elegir imagen personalizada" to "Выбрать изображение",
+            "Elegir voz TTS" to "Выбрать голос TTS",
+            "Activar Accesibilidad" to "Включить спец. возможности",
+            "Dar permisos de apps" to "Разрешения приложений", "Bloquear apps" to "Блокировать приложения",
+            "Guardar API Key" to "Сохранить API-ключ",
+            "Grabar" to "Записать", "Probar" to "Проверить", "Usar" to "Использовать", "Eliminar" to "Удалить",
+            "CONFIGURACIÓN PRINCIPAL" to "ОСНОВНЫЕ НАСТРОЙКИ",
+            "Motor IA, personalidad, nombres e idiomas" to "ИИ, личность, имена и языки",
+            "MODELOS GGUF" to "МОДЕЛИ GGUF", "VOCES TTS" to "ГОЛОСА TTS",
+            "Nombre del modelo" to "Название модели", "Cargar modelo" to "Загрузить модель",
+            "CARGAR MODELO" to "ЗАГРУЗИТЬ МОДЕЛЬ", "MODELO ACTIVO" to "МОДЕЛЬ АКТИВНА",
+            "¡Hola! ¿En qué te puedo ayudar?" to "Здравствуйте! Чем я могу помочь?",
+            "Modelo: Ninguno" to "Модель: нет", "CONFIGURACIÓN DEL MODELO" to "НАСТРОЙКИ МОДЕЛИ",
+            "CONTEXTO" to "КОНТЕКСТ", "TEMPERATURA" to "ТЕМПЕРАТУРА",
+            "PERSONALIDAD" to "ЛИЧНОСТЬ", "Asistente General" to "Общий помощник",
+            "Programador" to "Программист", "Creativo" to "Творческий",
+            "Escribe tu personalidad..." to "Опишите личность...",
+            "Guardar" to "Сохранить", "CONFIGURACIÓN DE NOMBRES" to "НАСТРОЙКИ ИМЁН",
+            "Nombre de la IA" to "Имя ИИ", "Guardar nombre" to "Сохранить имя",
+            "Nombre del usuario" to "Имя пользователя", "Guardar usuario" to "Сохранить пользователя",
+            "IDIOMAS" to "ЯЗЫКИ", "Descargando..." to "Загрузка...",
+            "Preparando descarga..." to "Подготовка загрузки...", "⏸ Pausar" to "⏸ Пауза",
+            "▶ Reanudar" to "▶ Продолжить", "🗑 Eliminar" to "🗑 Удалить"
+        ),
+        "zh" to mapOf(
+            "Pregúntame..." to "问我吧...",
+            "SERVICIOS Y CONTROL" to "服务与控制", "Activar Burbuja" to "启用悬浮窗",
+            "Elegir imagen personalizada" to "选择自定义图片", "Elegir voz TTS" to "选择 TTS 语音",
+            "Activar Accesibilidad" to "启用无障碍", "Dar permisos de apps" to "授予应用权限",
+            "Bloquear apps" to "屏蔽应用", "Guardar API Key" to "保存 API 密钥",
+            "Grabar" to "录制", "Probar" to "测试", "Usar" to "使用", "Eliminar" to "删除",
+            "CONFIGURACIÓN PRINCIPAL" to "主要设置",
+            "Motor IA, personalidad, nombres e idiomas" to "AI 引擎、个性、名称和语言",
+            "MODELOS GGUF" to "GGUF 模型", "VOCES TTS" to "TTS 语音",
+            "Nombre del modelo" to "模型名称", "Cargar modelo" to "加载模型",
+            "CARGAR MODELO" to "加载模型", "MODELO ACTIVO" to "模型已启用",
+            "¡Hola! ¿En qué te puedo ayudar?" to "你好！我能为你做什么？",
+            "Modelo: Ninguno" to "模型：无", "CONFIGURACIÓN DEL MODELO" to "模型设置",
+            "CONTEXTO" to "上下文", "TEMPERATURA" to "温度", "PERSONALIDAD" to "个性",
+            "Asistente General" to "通用助手", "Programador" to "程序员", "Creativo" to "创意",
+            "Escribe tu personalidad..." to "描述你的个性...", "Guardar" to "保存",
+            "CONFIGURACIÓN DE NOMBRES" to "名称设置", "Nombre de la IA" to "AI 名称",
+            "Guardar nombre" to "保存名称", "Nombre del usuario" to "用户名",
+            "Guardar usuario" to "保存用户", "IDIOMAS" to "语言",
+            "Descargando..." to "下载中...", "Preparando descarga..." to "准备下载...",
+            "⏸ Pausar" to "⏸ 暂停", "▶ Reanudar" to "▶ 继续", "🗑 Eliminar" to "🗑 删除"
+        ),
+        "ko" to mapOf(
+            "Pregúntame..." to "무엇이든 물어보세요...",
+            "SERVICIOS Y CONTROL" to "서비스 및 제어", "Activar Burbuja" to "플로팅 버블 켜기",
+            "Elegir imagen personalizada" to "사용자 이미지 선택", "Elegir voz TTS" to "TTS 음성 선택",
+            "Activar Accesibilidad" to "접근성 켜기", "Dar permisos de apps" to "앱 권한 부여",
+            "Bloquear apps" to "앱 차단", "Guardar API Key" to "API 키 저장",
+            "Grabar" to "녹음", "Probar" to "테스트", "Usar" to "사용", "Eliminar" to "삭제",
+            "CONFIGURACIÓN PRINCIPAL" to "기본 설정",
+            "Motor IA, personalidad, nombres e idiomas" to "AI 엔진, 성격, 이름 및 언어",
+            "MODELOS GGUF" to "GGUF 모델", "VOCES TTS" to "TTS 음성",
+            "Nombre del modelo" to "모델 이름", "Cargar modelo" to "모델 로드",
+            "CARGAR MODELO" to "모델 로드", "MODELO ACTIVO" to "모델 활성화됨",
+            "¡Hola! ¿En qué te puedo ayudar?" to "안녕하세요! 무엇을 도와드릴까요?",
+            "Modelo: Ninguno" to "모델: 없음", "CONFIGURACIÓN DEL MODELO" to "모델 설정",
+            "CONTEXTO" to "컨텍스트", "TEMPERATURA" to "온도", "PERSONALIDAD" to "성격",
+            "Asistente General" to "일반 도우미", "Programador" to "프로그래머", "Creativo" to "창의적",
+            "Escribe tu personalidad..." to "성격을 입력하세요...", "Guardar" to "저장",
+            "CONFIGURACIÓN DE NOMBRES" to "이름 설정", "Nombre de la IA" to "AI 이름",
+            "Guardar nombre" to "이름 저장", "Nombre del usuario" to "사용자 이름",
+            "Guardar usuario" to "사용자 저장", "IDIOMAS" to "언어",
+            "Descargando..." to "다운로드 중...", "Preparando descarga..." to "다운로드 준비 중...",
+            "⏸ Pausar" to "⏸ 일시정지", "▶ Reanudar" to "▶ 계속", "🗑 Eliminar" to "🗑 삭제"
+        ),
+        "ja" to mapOf(
+            "Pregúntame..." to "質問してください...",
+            "SERVICIOS Y CONTROL" to "サービスと制御", "Activar Burbuja" to "フローティングバブルを有効化",
+            "Elegir imagen personalizada" to "画像を選択", "Elegir voz TTS" to "TTS音声を選択",
+            "Activar Accesibilidad" to "ユーザー補助を有効化", "Dar permisos de apps" to "アプリ権限を許可",
+            "Bloquear apps" to "アプリをブロック", "Guardar API Key" to "APIキーを保存",
+            "Grabar" to "録音", "Probar" to "テスト", "Usar" to "使用", "Eliminar" to "削除",
+            "CONFIGURACIÓN PRINCIPAL" to "メイン設定",
+            "Motor IA, personalidad, nombres e idiomas" to "AIエンジン、性格、名前、言語",
+            "MODELOS GGUF" to "GGUFモデル", "VOCES TTS" to "TTS音声",
+            "Nombre del modelo" to "モデル名", "Cargar modelo" to "モデルを読み込む",
+            "CARGAR MODELO" to "モデルを読み込む", "MODELO ACTIVO" to "モデル有効",
+            "¡Hola! ¿En qué te puedo ayudar?" to "こんにちは！何をお手伝いできますか？",
+            "Modelo: Ninguno" to "モデル：なし", "CONFIGURACIÓN DEL MODELO" to "モデル設定",
+            "CONTEXTO" to "コンテキスト", "TEMPERATURA" to "温度", "PERSONALIDAD" to "性格",
+            "Asistente General" to "一般アシスタント", "Programador" to "プログラマー", "Creativo" to "クリエイティブ",
+            "Escribe tu personalidad..." to "性格を入力...", "Guardar" to "保存",
+            "CONFIGURACIÓN DE NOMBRES" to "名前の設定", "Nombre de la IA" to "AIの名前",
+            "Guardar nombre" to "名前を保存", "Nombre del usuario" to "ユーザー名",
+            "Guardar usuario" to "ユーザーを保存", "IDIOMAS" to "言語",
+            "Descargando..." to "ダウンロード中...", "Preparando descarga..." to "ダウンロードを準備中...",
+            "⏸ Pausar" to "⏸ 一時停止", "▶ Reanudar" to "▶ 再開", "🗑 Eliminar" to "🗑 削除"
+        )
+    )
+    
+    fun getLocalizedText(languageCode: String, key: String): String {
+        return when (languageCode) {
+            "en" -> when (key) {
+                "bubble" -> "Floating Bubble"
+                "accessibility" -> "Accessibility"
+                "authorized" -> "Authorized Apps"
+                "blocked" -> "Blocked Apps"
+                "es_button" -> "Spanish"
+                "en_button" -> "English"
+                "ru_button" -> "Russian"
+                "zh_button" -> "Chinese"
+                "ko_button" -> "Korean"
+                "ja_button" -> "Japanese"
+                "pt_button" -> "Portuguese"
+                else -> key
+            }
+            "ru" -> when (key) {
+                "bubble" -> "Плавающий пузырь"
+                "accessibility" -> "Доступность"
+                "authorized" -> "Авторизованные приложения"
+                "blocked" -> "Заблокированные приложения"
+                "es_button" -> "Испанский"
+                "en_button" -> "Английский"
+                "ru_button" -> "Русский"
+                "zh_button" -> "Китайский"
+                "ko_button" -> "Корейский"
+                "ja_button" -> "Японский"
+                "pt_button" -> "Португальский"
+                else -> key
+            }
+            "zh" -> when (key) {
+                "bubble" -> "悬浮窗"
+                "accessibility" -> "无障碍"
+                "authorized" -> "授权应用"
+                "blocked" -> "已阻止的应用"
+                "es_button" -> "西班牙语"
+                "en_button" -> "英语"
+                "ru_button" -> "俄语"
+                "zh_button" -> "中文"
+                "ko_button" -> "韩语"
+                "ja_button" -> "日语"
+                "pt_button" -> "葡萄牙语"
+                else -> key
+            }
+            "ko" -> when (key) {
+                "bubble" -> "플로팅 버블"
+                "accessibility" -> "접근성"
+                "authorized" -> "승인된 앱"
+                "blocked" -> "차단된 앱"
+                "es_button" -> "스페인어"
+                "en_button" -> "영어"
+                "ru_button" -> "러시아어"
+                "zh_button" -> "중국어"
+                "ko_button" -> "한국어"
+                "ja_button" -> "일본어"
+                "pt_button" -> "포르투갈어"
+                else -> key
+            }
+            "ja" -> when (key) {
+                "bubble" -> "フローティングバブル"
+                "accessibility" -> "ユーザー補助"
+                "authorized" -> "承認されたアプリ"
+                "blocked" -> "ブロックされたアプリ"
+                "es_button" -> "スペイン語"
+                "en_button" -> "英語"
+                "ru_button" -> "ロシア語"
+                "zh_button" -> "中国語"
+                "ko_button" -> "韓国語"
+                "ja_button" -> "日本語"
+                "pt_button" -> "ポルトガル語"
+                else -> key
+            }
+            "pt" -> when (key) {
+                "bubble" -> "Bolha Flutuante"
+                "accessibility" -> "Acessibilidade"
+                "authorized" -> "Aplicativos Autorizados"
+                "blocked" -> "Aplicativos Bloqueados"
+                "es_button" -> "Espanhol"
+                "en_button" -> "Inglês"
+                "ru_button" -> "Russo"
+                "zh_button" -> "Chinês"
+                "ko_button" -> "Coreano"
+                "ja_button" -> "Japonês"
+                "pt_button" -> "Português"
+                else -> key
+            }
+            else -> when (key) {
+                "bubble" -> "Burbuja Flotante"
+                "accessibility" -> "Accesibilidad"
+                "authorized" -> "Apps Autorizadas"
+                "blocked" -> "Apps Bloqueadas"
+                "es_button" -> "Español"
+                "en_button" -> "Inglés"
+                "ru_button" -> "Ruso"
+                "zh_button" -> "Chino"
+                "ko_button" -> "Coreano"
+                "ja_button" -> "Japonés"
+                "pt_button" -> "Portugués"
+                else -> key
+            }
+        }
+    }
+}
+
