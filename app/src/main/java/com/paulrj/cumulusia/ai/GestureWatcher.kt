@@ -110,7 +110,7 @@ class GestureWatcher(private val ctx: Context) {
 
     private fun analyze(nv: ByteArray, w: Int, h: Int, rot: Int) {
         if (!ensureModels()) return
-        val bmp = nv21Half(nv, w, h, rot) ?: return
+        val bmp = nv21Full(nv, w, h, rot) ?: return
         try {
             val img = BitmapImageBuilder(bmp).build()
             var kind = -1
@@ -133,26 +133,59 @@ class GestureWatcher(private val ctx: Context) {
         } finally { runCatching { bmp.recycle() } }
     }
 
+    // 🩹 (27-nov-2026) Tu cara EN REPOSO (cómo se ven tus cejas, ojos y nariz cuando no haces nada). Los gestos se miden
+    //    como CAMBIO desde ahí: así sirven para cualquier cara, con lentes o sin lentes, y con distinta luz.
+    private val base = HashMap<String, Float>()
+    private var baseN = 0
+    private val BASE_KEYS = listOf("eyeBlinkLeft", "eyeBlinkRight", "browOuterUpLeft", "browOuterUpRight", "browInnerUp",
+        "browDownLeft", "browDownRight", "noseSneerLeft", "noseSneerRight", "mouthSmileLeft", "mouthSmileRight", "jawOpen")
+    private var lastLogAt = 0L
+
     /** Qué gesto hay en la cara (o −1 si ninguno). El orden importa: lo más claro primero. */
     private fun classify(s: Map<String, Float>): Int {
         fun v(k: String) = s[k] ?: 0f
+        fun d(k: String) = v(k) - (base[k] ?: v(k))          // cuánto cambió desde tu cara en reposo
         val blinkL = v("eyeBlinkLeft"); val blinkR = v("eyeBlinkRight")
+        val dBlinkL = d("eyeBlinkLeft"); val dBlinkR = d("eyeBlinkRight")
         val smile = (v("mouthSmileLeft") + v("mouthSmileRight")) / 2f
         val jaw = v("jawOpen")
-        val outL = v("browOuterUpLeft"); val outR = v("browOuterUpRight"); val inner = v("browInnerUp")
-        val downB = (v("browDownLeft") + v("browDownRight")) / 2f
-        val sneer = (v("noseSneerLeft") + v("noseSneerRight")) / 2f
-        return when {
-            blinkL > 0.6f && blinkR > 0.6f && smile < 0.5f -> EYES_CLOSED
-            kotlin.math.max(blinkL, blinkR) > 0.6f && kotlin.math.min(blinkL, blinkR) < 0.3f -> WINK
-            smile > 0.5f && jaw > 0.3f -> LAUGH
-            smile > 0.55f -> SMILE
-            inner > 0.5f && kotlin.math.min(outL, outR) > 0.35f -> BROWS_BOTH
-            kotlin.math.max(outL, outR) > 0.45f && kotlin.math.abs(outL - outR) > 0.3f -> BROW_ONE
-            sneer > 0.45f -> NOSE
-            downB > 0.5f && smile < 0.2f -> ANGRY
+        val dOutL = d("browOuterUpLeft"); val dOutR = d("browOuterUpRight"); val dInner = d("browInnerUp")
+        // (al levantar UNA ceja, la otra suele bajar un poco: se cuenta también)
+        val liftL = dOutL - d("browDownLeft"); val liftR = dOutR - d("browDownRight")
+        val dDown = (d("browDownLeft") + d("browDownRight")) / 2f
+        val dSneer = (d("noseSneerLeft") + d("noseSneerRight")) / 2f
+        val ready = baseN >= 6
+        val kind = when {
+            blinkL > 0.5f && blinkR > 0.5f && smile < 0.5f -> EYES_CLOSED
+            kotlin.math.max(blinkL, blinkR) > 0.4f && kotlin.math.abs(blinkL - blinkR) > 0.25f &&
+                kotlin.math.max(dBlinkL, dBlinkR) > 0.25f -> WINK
+            smile > 0.45f && jaw > 0.25f -> LAUGH
+            smile > 0.5f -> SMILE
+            !ready -> -1                                       // (las cejas, la nariz y el enojo esperan a conocer tu cara)
+            dInner > 0.2f && kotlin.math.min(dOutL, dOutR) > 0.1f -> BROWS_BOTH
+            kotlin.math.max(liftL, liftR) > 0.18f && kotlin.math.abs(liftL - liftR) > 0.15f -> BROW_ONE
+            dSneer > 0.2f -> NOSE
+            dDown > 0.2f && smile < 0.2f -> ANGRY
             else -> -1
         }
+        // tu cara en reposo se va aprendiendo sola (solo cuando no haces ningún gesto)
+        if (kind < 0) {
+            val a = if (baseN < 6) 0.5f else 0.05f
+            for (k in BASE_KEYS) { val x = v(k); base[k] = base[k]?.let { it + (x - it) * a } ?: x }
+            baseN++
+        }
+        // 📝 al diagnóstico (cada 3 s): así se pueden ajustar los límites con lo que de verdad mide tu cara
+        val now = SystemClock.uptimeMillis()
+        if (now - lastLogAt > 3_000L) {
+            lastLogAt = now
+            runCatching {
+                com.paulrj.cumulusia.AiActivity.log("🙋 Gestos (mide tu cara)",
+                    "ojos I/D ${"%.2f".format(blinkL)}/${"%.2f".format(blinkR)} · ceja I/D +${"%.2f".format(liftL)}/+${"%.2f".format(liftR)} · " +
+                    "cejas al medio +${"%.2f".format(dInner)} · nariz +${"%.2f".format(dSneer)} · ceño +${"%.2f".format(dDown)} · " +
+                    "sonrisa ${"%.2f".format(smile)} · boca ${"%.2f".format(jaw)}")
+            }
+        }
+        return kind
     }
 
     /** Cuenta cuánto dura el gesto; al cumplir su tiempo avisa UNA vez (hasta que lo sueltes y lo vuelvas a hacer). */
@@ -162,11 +195,41 @@ class GestureWatcher(private val ctx: Context) {
         streak++
         if (streak >= HOLD[kind] && firedKind != kind) {
             firedKind = kind
+            runCatching { com.paulrj.cumulusia.AiActivity.log("🙋 Gesto visto", listOf("saludo", "una ceja", "dos cejas", "risa",
+                "sonrisa", "guiño", "ojos cerrados", "nariz arrugada", "enojo").getOrElse(kind) { "?" }) }
             runCatching { onGesture?.invoke(kind) }
         }
     }
 
-    /** NV21 → imagen a la mitad del tamaño (320×240), ya derecha. */
+    /** 🩹 (27-nov-2026) NV21 → imagen al tamaño completo (640×480), ya derecha: los ojos y las cejas se ven con más
+     *  detalle (a la mitad del tamaño se perdían el guiño y la ceja levantada). */
+    private fun nv21Full(nv: ByteArray, w: Int, h: Int, rot: Int): Bitmap? = runCatching {
+        val px = IntArray(w * h)
+        val frame = w * h
+        for (y in 0 until h) {
+            val yRow = y * w
+            val uvRow = frame + (y shr 1) * w
+            for (x in 0 until w) {
+                val yy = (nv[yRow + x].toInt() and 0xFF) - 16
+                val uvI = uvRow + (x and 1.inv())
+                val vv = (nv[uvI].toInt() and 0xFF) - 128
+                val uu = (nv[uvI + 1].toInt() and 0xFF) - 128
+                val y1 = 1192 * (if (yy < 0) 0 else yy)
+                val r = ((y1 + 1634 * vv) shr 10).coerceIn(0, 255)
+                val g = ((y1 - 833 * vv - 400 * uu) shr 10).coerceIn(0, 255)
+                val b = ((y1 + 2066 * uu) shr 10).coerceIn(0, 255)
+                px[yRow + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+        val bmp = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+        if (rot == 0) bmp else {
+            val r = Bitmap.createBitmap(bmp, 0, 0, w, h, Matrix().apply { postRotate(rot.toFloat()) }, true)
+            if (r !== bmp) bmp.recycle()
+            r
+        }
+    }.getOrNull()
+
+    /** NV21 → imagen a la mitad del tamaño (320×240), ya derecha. (Ya no se usa: queda por si acaso.) */
     private fun nv21Half(nv: ByteArray, w: Int, h: Int, rot: Int): Bitmap? = runCatching {
         val hw = w / 2; val hh = h / 2
         val px = IntArray(hw * hh)
