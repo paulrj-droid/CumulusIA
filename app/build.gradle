@@ -15,6 +15,27 @@ if (!sherpaOnnxAar.exists()) {
     part.renameTo(sherpaOnnxAar)
 }
 
+// 🙋 (27-nov-2026) Gestos del usuario (Avatar visión): modelos de MediaPipe de Google (licencia Apache 2.0, uso comercial).
+// Se bajan solos al compilar a app/src/main/assets/mediapipe/ (si no se pueden bajar, la app se arma igual y los gestos
+// quedan apagados).
+def mpModels = [
+    "face_landmarker.task"   : "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+    "gesture_recognizer.task": "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task"
+]
+mpModels.each { name, url ->
+    def dest = file("src/main/assets/mediapipe/${name}")
+    if (!dest.exists()) {
+        try {
+            dest.parentFile.mkdirs()
+            def part = file("src/main/assets/mediapipe/${name}.part")
+            new URL(url).withInputStream { input -> part.withOutputStream { out -> out << input } }
+            part.renameTo(dest)
+        } catch (Exception e) {
+            println("⚠️ No pude bajar el modelo de MediaPipe ${name}: ${e.message}")
+        }
+    }
+}
+
 android {
     namespace 'com.paulrj.cumulusia'
     //  Android 16 (API 36): lo exige Google Play para apps nuevas y actualizaciones desde el 31 de agosto de 2026
@@ -106,6 +127,11 @@ android {
         jvmTarget = '17'
     }
 
+    // 🙋 (27-nov-2026) los modelos de MediaPipe se leen directo del APK: sin comprimir
+    androidResources {
+        noCompress 'task'
+    }
+
     packagingOptions {
         jniLibs {
             useLegacyPackaging true
@@ -162,6 +188,9 @@ dependencies {
     //  🏷️ Avatar visión: reconoce QUÉ cosas hay en lo que ve la cámara (avión, cielo, perro, taza...) y se lo dice a la IA,
     //  con cualquier modelo y en cualquier idioma (ML Kit, viene dentro de la app, sin internet ni descargas)
     implementation 'com.google.mlkit:image-labeling:17.0.9'
+    //  🙋 (27-nov-2026) Avatar visión: tus GESTOS (cejas, guiño, ojos cerrados, risa, nariz, enojo y saludo con la mano)
+    //  con MediaPipe de Google (dentro del teléfono, sin internet, licencia Apache 2.0). 0.10.26 = páginas de 16 KB (Android 15+)
+    implementation 'com.google.mediapipe:tasks-vision:0.10.26'
 
     // Voces descargadas o subidas (.onnx, Piper): motor sherpa-onnx (trae su propio motor ONNX)
     implementation files(sherpaOnnxAar)
@@ -177,3 +206,4 @@ dependencies {
     //  activity-ktx queda en la MISMA versión que traía Compose, para que nada más cambie)
     implementation 'androidx.activity:activity-ktx:1.8.2'
 }
+
